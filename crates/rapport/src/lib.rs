@@ -33,12 +33,12 @@ enum Verb {
 impl Verb {
     fn about(self) -> &'static str {
         match self {
-            Self::Fix => "Apply formatting fixes (cargo fmt)",
-            Self::Lint => "Check formatting and run clippy with -D warnings",
-            Self::Build => "Type-check the workspace (cargo check)",
-            Self::Test => "Run tests (cargo test)",
-            Self::Validate => "Run lint, build, and test",
-            Self::Audit => "Validate plus release build and docs",
+            Self::Fix => "Auto-fix issues (modifies code)",
+            Self::Lint => "Check style and conventions (read-only)",
+            Self::Build => "Verify the code compiles",
+            Self::Test => "Run the test suite",
+            Self::Validate => "Pre-commit check (lint + build + test)",
+            Self::Audit => "Pre-release check (validate + release-mode compile + docs)",
         }
     }
 
