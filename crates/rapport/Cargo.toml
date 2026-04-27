@@ -12,6 +12,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+rapport-cli = { path = "../rapport-cli" }
 
 [lints]
 workspace = true

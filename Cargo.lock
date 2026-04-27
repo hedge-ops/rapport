@@ -449,6 +449,9 @@ dependencies = [
 [[package]]
 name = "rapport"
 version = "0.0.1"
+dependencies = [
+ "rapport-cli",
+]
 
 [[package]]
 name = "rapport-cli"
