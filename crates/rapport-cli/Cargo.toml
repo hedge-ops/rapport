@@ -1,7 +1,10 @@
 [package]
 name = "rapport-cli"
 description = "easily build clis that humans and agents will love"
-version = "0.0.0"
+keywords = ["clap", "cli", "command-line", "agent", "ergonomic"]
+categories = ["command-line-interface", "development-tools"]
+readme = "README.md"
+version = "0.0.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

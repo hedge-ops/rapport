@@ -1,7 +1,10 @@
 [package]
 name = "rapport"
 description = "agent-friendly builder"
-version = "0.0.0"
+keywords = ["cli", "build", "agent", "developer-tools", "automation"]
+categories = ["command-line-utilities", "development-tools::build-utils"]
+readme = "README.md"
+version = "0.0.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
