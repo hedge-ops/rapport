@@ -1,7 +1,11 @@
-use rapport_cli::{ParseError, Parser as _, RealFileSystem, RepositoryPath, parse_validated};
+use rapport_cli::{
+    HelpTarget, Invocation, ParseError, Parser as _, RealFileSystem, RepositoryPath,
+    parse_validated,
+};
 use std::fmt::Display;
 use std::process::ExitCode;
 use std::time::Instant;
+use strum::IntoEnumIterator;
 
 const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit> <path>";
 
@@ -13,6 +17,43 @@ const TEST: &[&str] = &["test"];
 const BUILD_RELEASE: &[&str] = &["build", "--release"];
 const DOC: &[&str] = &["doc", "--no-deps"];
 
+#[derive(
+    Debug, Clone, Copy, strum::Display, strum::EnumString, strum::EnumIter, strum::AsRefStr,
+)]
+#[strum(serialize_all = "lowercase")]
+enum Verb {
+    Fix,
+    Lint,
+    Build,
+    Test,
+    Validate,
+    Audit,
+}
+
+impl Verb {
+    fn about(self) -> &'static str {
+        match self {
+            Self::Fix => "Apply formatting fixes (cargo fmt)",
+            Self::Lint => "Check formatting and run clippy with -D warnings",
+            Self::Build => "Type-check the workspace (cargo check)",
+            Self::Test => "Run tests (cargo test)",
+            Self::Validate => "Run lint, build, and test",
+            Self::Audit => "Validate plus release build and docs",
+        }
+    }
+
+    fn steps(self) -> &'static [&'static [&'static str]] {
+        match self {
+            Self::Fix => &[FMT],
+            Self::Lint => &[FMT_CHECK, CLIPPY],
+            Self::Build => &[CHECK],
+            Self::Test => &[TEST],
+            Self::Validate => &[FMT_CHECK, CLIPPY, CHECK, TEST],
+            Self::Audit => &[FMT_CHECK, CLIPPY, CHECK, TEST, BUILD_RELEASE, DOC],
+        }
+    }
+}
+
 #[derive(Debug)]
 enum Command {
     Fix { path: RepositoryPath },
@@ -23,41 +64,19 @@ enum Command {
     Audit { path: RepositoryPath },
 }
 
-impl rapport_cli::Parser for Command {
-    fn from_argv(verb: &str, rest: &[String]) -> Result<Self, ParseError> {
-        let [p] = rest else {
-            return Err(ParseError::MissingArg {
-                verb: verb.into(),
-                expected: "path",
-            });
-        };
-        let path: RepositoryPath = parse_validated(verb, p, &RealFileSystem)?;
-        Ok(match verb {
-            "fix" => Self::Fix { path },
-            "lint" => Self::Lint { path },
-            "build" => Self::Build { path },
-            "test" => Self::Test { path },
-            "validate" => Self::Validate { path },
-            "audit" => Self::Audit { path },
-            _ => return Err(ParseError::UnknownVerb(verb.into())),
-        })
-    }
-}
-
-impl Display for Command {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Fix { .. } => "fix",
-            Self::Lint { .. } => "lint",
-            Self::Build { .. } => "build",
-            Self::Test { .. } => "test",
-            Self::Validate { .. } => "validate",
-            Self::Audit { .. } => "audit",
-        })
-    }
-}
-
 impl Command {
+    #[must_use]
+    fn verb(&self) -> Verb {
+        match self {
+            Self::Fix { .. } => Verb::Fix,
+            Self::Lint { .. } => Verb::Lint,
+            Self::Build { .. } => Verb::Build,
+            Self::Test { .. } => Verb::Test,
+            Self::Validate { .. } => Verb::Validate,
+            Self::Audit { .. } => Verb::Audit,
+        }
+    }
+
     #[must_use]
     fn path(&self) -> &RepositoryPath {
         match self {
@@ -69,55 +88,114 @@ impl Command {
             | Self::Audit { path } => path,
         }
     }
+}
 
-    #[must_use]
-    fn steps(&self) -> &'static [&'static [&'static str]] {
-        match self {
-            Self::Fix { .. } => &[FMT],
-            Self::Lint { .. } => &[FMT_CHECK, CLIPPY],
-            Self::Build { .. } => &[CHECK],
-            Self::Test { .. } => &[TEST],
-            Self::Validate { .. } => &[FMT_CHECK, CLIPPY, CHECK, TEST],
-            Self::Audit { .. } => &[FMT_CHECK, CLIPPY, CHECK, TEST, BUILD_RELEASE, DOC],
-        }
+impl rapport_cli::Parser for Command {
+    type Verb = Verb;
+
+    fn parse_verb(name: &str) -> Result<Verb, ParseError> {
+        name.parse()
+            .map_err(|_| ParseError::UnknownVerb(name.into()))
+    }
+
+    fn from_argv(verb: Verb, rest: &[String]) -> Result<Self, ParseError> {
+        let [p] = rest else {
+            return Err(ParseError::MissingArg {
+                verb: verb.to_string(),
+                expected: "path",
+            });
+        };
+        let path: RepositoryPath = parse_validated(verb.as_ref(), p, &RealFileSystem)?;
+        Ok(match verb {
+            Verb::Fix => Self::Fix { path },
+            Verb::Lint => Self::Lint { path },
+            Verb::Build => Self::Build { path },
+            Verb::Test => Self::Test { path },
+            Verb::Validate => Self::Validate { path },
+            Verb::Audit => Self::Audit { path },
+        })
+    }
+}
+
+impl Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.verb().fmt(f)
     }
 }
 
 fn main() -> ExitCode {
-    let command = match Command::parse(std::env::args().skip(1)) {
-        Ok(c) => c,
-        Err(ParseError::NoVerb) => {
-            eprintln!("{USAGE}");
-            return ExitCode::from(2);
+    match Command::parse(std::env::args().skip(1)) {
+        Ok(Invocation::Run(command)) => run_command(&command),
+        Ok(Invocation::Help(target)) => {
+            print_help(&target);
+            ExitCode::SUCCESS
         }
-        Err(ParseError::UnknownVerb(v)) => {
+        Err(err) => report_error(&err),
+    }
+}
+
+fn print_help(target: &HelpTarget<Verb>) {
+    match target {
+        HelpTarget::Top => print_help_top(),
+        HelpTarget::Verb(v) => print_help_verb(*v),
+    }
+}
+
+fn print_help_top() {
+    println!("rapport — workspace command runner");
+    println!();
+    println!("USAGE:");
+    println!("    rapport <verb> <path>");
+    println!("    rapport help [<verb>]");
+    println!();
+    println!("VERBS:");
+    for verb in Verb::iter() {
+        println!("    {:<10} {}", verb.as_ref(), verb.about());
+    }
+    println!();
+    println!("Run `rapport help <verb>` for verb-specific details.");
+}
+
+fn print_help_verb(verb: Verb) {
+    println!("rapport {verb} — {}", verb.about());
+    println!();
+    println!("USAGE:");
+    println!("    rapport {verb} <path>");
+    println!();
+    println!("ARGS:");
+    println!("    <path>    Repository directory to operate on");
+}
+
+fn report_error(err: &ParseError) -> ExitCode {
+    match err {
+        ParseError::NoVerb => {
+            eprintln!("{USAGE}");
+        }
+        ParseError::UnknownVerb(v) => {
             eprintln!("'{v}' is not a recognized verb.");
             eprintln!("{USAGE}");
-            return ExitCode::from(2);
         }
-        Err(ParseError::MissingArg { verb, expected }) => {
+        ParseError::MissingArg { verb, expected } => {
             eprintln!("rapport {verb} requires a {expected} argument.");
             eprintln!("{USAGE}");
-            return ExitCode::from(2);
         }
-        Err(ParseError::InvalidArg {
+        ParseError::InvalidArg {
             verb,
             value,
             reason,
-        }) => {
+        } => {
             eprintln!("You ran: rapport {verb} {value}");
             eprintln!("{value} {reason}.");
-            return ExitCode::from(2);
         }
-    };
-
-    run_command(&command)
+    }
+    ExitCode::from(2)
 }
 
 fn run_command(command: &Command) -> ExitCode {
     let path = command.path();
+    let verb = command.verb();
     let started = Instant::now();
-    for step in command.steps() {
+    for step in verb.steps() {
         let output = std::process::Command::new("cargo")
             .args(*step)
             .current_dir(path.as_path())

@@ -457,6 +457,7 @@ name = "rapport"
 version = "0.0.1"
 dependencies = [
  "rapport-cli",
+ "strum",
 ]
 
 [[package]]

@@ -2,6 +2,6 @@
 
 mod args;
 pub use args::{
-    Argument, FileSystem, InMemoryFileSystem, ParseError, Parser, RealFileSystem, RepositoryPath,
-    ValidatedArgument, parse_arg, parse_validated,
+    Argument, FileSystem, HelpTarget, InMemoryFileSystem, Invocation, ParseError, Parser,
+    RealFileSystem, RepositoryPath, ValidatedArgument, parse_arg, parse_validated,
 };
