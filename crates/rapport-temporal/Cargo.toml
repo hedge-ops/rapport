@@ -1,6 +1,9 @@
 [package]
 name = "rapport-temporal"
-description = "Date, time, clock, and recurrence primitives for the rapport toolkit"
+description = "Deal with time without all the fuss. Includes date, time, recurrence, and language-oriented date math."
+keywords = ["date", "time", "recurrence", "calendar", "ergonomic"]
+categories = ["date-and-time"]
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

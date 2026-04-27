@@ -1,4 +1,6 @@
+//! Manage an event that repeats without losing your mind.
 mod daily;
+
 mod monthly;
 mod parser;
 mod weekly;

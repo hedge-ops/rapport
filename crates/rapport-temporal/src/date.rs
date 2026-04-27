@@ -1,5 +1,4 @@
-//! Invariants related to dates are used by the `NaiveDate` which is extended to treat the ISO
-//! format such as `2025-01-23` as a date representation in string value.
+//! Sensible approach to dates, the way a human would. Easily parses to and from the iso friendly `YYYY-mm-dd` format, such as `2026-04-27`.
 
 use std::str::FromStr;
 

@@ -1,3 +1,5 @@
+//! Simple way to deal with the current time, as an `Instant`.
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Local, TimeZone, Utc};
@@ -8,7 +10,7 @@ use crate::date::Date;
 
 #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Instant {
-    /// The number of seconds since the unix epoch, must be u64 to be compatible with crux.
+    /// The number of seconds since the unix epoch.
     pub seconds: u64,
     pub nanos: u32,
 }
