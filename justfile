@@ -24,12 +24,12 @@ build-release:
 # runs tests
 test:
     @echo '{{ style("command") }}test:{{ NORMAL }}'
-    cargo nextest run
+    cargo nextest run --workspace
 
 # runs tests with coverage report
 cover:
     @echo '{{ style("command") }}cover:{{ NORMAL }}'
-    cargo llvm-cov nextest --open
+    cargo llvm-cov nextest --workspace --open
 
 # auto-fix formatting issues
 fix:
