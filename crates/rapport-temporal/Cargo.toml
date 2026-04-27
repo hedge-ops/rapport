@@ -1,0 +1,31 @@
+[package]
+name = "rapport-temporal"
+description = "Date, time, clock, and recurrence primitives for the rapport toolkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+chrono.workspace = true
+derive_more.workspace = true
+facet.workspace = true
+nonempty.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+regex-macro.workspace = true
+serde.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+claims.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
+tracing-test.workspace = true
+
+[lints]
+workspace = true
