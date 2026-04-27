@@ -456,6 +456,7 @@ dependencies = [
 name = "rapport"
 version = "0.0.1"
 dependencies = [
+ "camino",
  "rapport-cli",
  "rapport-prose",
  "strum",

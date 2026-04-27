@@ -1,6 +1,10 @@
+mod runner;
+
+pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
+
 use rapport_cli::{
-    CommandOutcome, CommandRunner, HelpTarget, Invocation, ParseError, Parser as _,
-    RealFileSystem, RepositoryPath, parse_validated,
+    HelpTarget, Invocation, ParseError, Parser as _, RealFileSystem, RepositoryPath,
+    parse_validated,
 };
 use rapport_prose::{Column, OutputBuilder, ReportTable};
 use std::fmt::Display;
@@ -11,13 +15,34 @@ use strum::IntoEnumIterator;
 
 const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit> <path>";
 
-const FMT: &[&str] = &["fmt"];
-const FMT_CHECK: &[&str] = &["fmt", "--", "--check"];
-const CLIPPY: &[&str] = &["clippy", "--all-targets", "--", "-D", "warnings"];
-const CHECK: &[&str] = &["check"];
-const TEST: &[&str] = &["test"];
-const BUILD_RELEASE: &[&str] = &["build", "--release"];
-const DOC: &[&str] = &["doc", "--no-deps"];
+const FMT: CommandSpec = CommandSpec {
+    program: "cargo",
+    args: &["fmt"],
+};
+const FMT_CHECK: CommandSpec = CommandSpec {
+    program: "cargo",
+    args: &["fmt", "--", "--check"],
+};
+const CLIPPY: CommandSpec = CommandSpec {
+    program: "cargo",
+    args: &["clippy", "--all-targets", "--", "-D", "warnings"],
+};
+const CHECK: CommandSpec = CommandSpec {
+    program: "cargo",
+    args: &["check"],
+};
+const TEST: CommandSpec = CommandSpec {
+    program: "cargo",
+    args: &["test"],
+};
+const BUILD_RELEASE: CommandSpec = CommandSpec {
+    program: "cargo",
+    args: &["build", "--release"],
+};
+const DOC: CommandSpec = CommandSpec {
+    program: "cargo",
+    args: &["doc", "--no-deps"],
+};
 
 #[derive(
     Debug, Clone, Copy, strum::Display, strum::EnumString, strum::EnumIter, strum::AsRefStr,
@@ -44,7 +69,7 @@ impl Verb {
         }
     }
 
-    fn steps(self) -> &'static [&'static [&'static str]] {
+    fn steps(self) -> &'static [CommandSpec] {
         match self {
             Self::Fix => &[FMT],
             Self::Lint => &[FMT_CHECK, CLIPPY],
@@ -252,8 +277,8 @@ where
 {
     let path = command.path();
     let started = Instant::now();
-    for step in command.verb().steps() {
-        let outcome = match runner.run("cargo", step, path.as_path()) {
+    for spec in command.verb().steps() {
+        let outcome = match runner.run(spec, path.as_path()) {
             Ok(o) => o,
             Err(io_err) => {
                 let _ = writeln!(err, "{}", render_invoke_failure(command, path, &io_err));

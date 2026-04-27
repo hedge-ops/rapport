@@ -1,4 +1,4 @@
-use rapport_cli::RealCommandRunner;
+use rapport::RealCommandRunner;
 use std::io;
 use std::process::ExitCode;
 
