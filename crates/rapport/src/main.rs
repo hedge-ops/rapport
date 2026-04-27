@@ -2,7 +2,15 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
-const USAGE: &str = "usage: rapport <build|fix|lint> <path>";
+const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit> <path>";
+
+const FMT: &[&str] = &["fmt"];
+const FMT_CHECK: &[&str] = &["fmt", "--", "--check"];
+const CLIPPY: &[&str] = &["clippy", "--all-targets", "--", "-D", "warnings"];
+const CHECK: &[&str] = &["check"];
+const TEST: &[&str] = &["test"];
+const BUILD_RELEASE: &[&str] = &["build", "--release"];
+const DOC: &[&str] = &["doc", "--no-deps"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -14,12 +22,12 @@ fn main() -> ExitCode {
     let (verb, path) = (v.as_str(), p.as_str());
 
     let steps: &[&[&str]] = match verb {
-        "build" => &[&["build"]],
-        "fix" => &[&["fmt"]],
-        "lint" => &[
-            &["fmt", "--", "--check"],
-            &["clippy", "--all-targets", "--", "-D", "warnings"],
-        ],
+        "fix" => &[FMT],
+        "lint" => &[FMT_CHECK, CLIPPY],
+        "build" => &[CHECK],
+        "test" => &[TEST],
+        "validate" => &[FMT_CHECK, CLIPPY, CHECK, TEST],
+        "audit" => &[FMT_CHECK, CLIPPY, CHECK, TEST, BUILD_RELEASE, DOC],
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
