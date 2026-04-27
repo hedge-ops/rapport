@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/rapport"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hedge-ops/rapport"
+authors = ["Michael Hedgpeth <michael@hedge-ops.com>"]
+
+[workspace.dependencies]
+chrono = { version = "0.4.42", features = ["serde"] }
+derive_more = { version = "2.0.1", features = ["display", "from_str"] }
+facet = { version = "=0.31", features = ["uuid"] }
+nonempty = "0.12.0"
+parking_lot = "0.12.1"
+regex = { version = "1.12.2", features = ["unicode-perl"] }
+regex-macro = "0.3.0"
+serde = { version = "1.0.219", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.17"
+tracing = "0.1.41"
+
+# dev
+claims = "0.8.0"
+pretty_assertions = "1.4.1"
+rstest = "0.26.1"
+tracing-test = "0.2.5"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = 1 }
+missing_debug_implementations = "warn"
+missing_docs = "allow"
+dead_code = "warn"
+unused_imports = "warn"
+
+[workspace.lints.clippy]
+pedantic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"

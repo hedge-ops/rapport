@@ -1,0 +1,21 @@
+[package]
+name = "rapport-prose"
+description = "Talk to humans and agents in clean markdown."
+keywords = ["cli", "markdown", "output", "report", "ergonomic"]
+categories = ["command-line-interface", "value-formatting"]
+readme = "README.md"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+indoc = "2"
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true
