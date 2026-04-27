@@ -1,4 +1,4 @@
-use rapport_cli::{Argument as _, ParseError, Parser as _, RepositoryPath};
+use rapport_cli::{ParseError, Parser as _, RealFileSystem, RepositoryPath, parse_validated};
 use std::fmt::Display;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -31,11 +31,7 @@ impl rapport_cli::Parser for Command {
                 expected: "path",
             });
         };
-        let path = RepositoryPath::parse(p).map_err(|reason| ParseError::InvalidArg {
-            verb: verb.into(),
-            value: p.clone(),
-            reason,
-        })?;
+        let path: RepositoryPath = parse_validated(verb, p, &RealFileSystem)?;
         Ok(match verb {
             "fix" => Self::Fix { path },
             "lint" => Self::Lint { path },
