@@ -13,6 +13,7 @@ authors.workspace = true
 
 [dependencies]
 rapport-cli = { path = "../rapport-cli" }
+rapport-prose = { path = "../rapport-prose" }
 strum.workspace = true
 
 [lints]

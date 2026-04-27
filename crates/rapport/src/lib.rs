@@ -1,8 +1,10 @@
 use rapport_cli::{
-    HelpTarget, Invocation, ParseError, Parser as _, RealFileSystem, RepositoryPath,
-    parse_validated,
+    CommandOutcome, CommandRunner, HelpTarget, Invocation, ParseError, Parser as _,
+    RealFileSystem, RepositoryPath, parse_validated,
 };
+use rapport_prose::{Column, OutputBuilder, ReportTable};
 use std::fmt::Display;
+use std::io::{self, Write};
 use std::process::ExitCode;
 use std::time::Instant;
 use strum::IntoEnumIterator;
@@ -123,112 +125,146 @@ impl Display for Command {
     }
 }
 
-pub fn run<I>(argv: I) -> ExitCode
+pub fn run<I, O, E>(argv: I, runner: &dyn CommandRunner, out: &mut O, err: &mut E) -> ExitCode
 where
     I: IntoIterator<Item = String>,
+    O: Write,
+    E: Write,
 {
     match Command::parse(argv) {
-        Ok(Invocation::Run(command)) => run_command(&command),
+        Ok(Invocation::Run(command)) => run_command(&command, runner, out, err),
         Ok(Invocation::Help(target)) => {
-            print_help(&target);
+            let _ = writeln!(out, "{}", render_help(&target));
             ExitCode::SUCCESS
         }
-        Err(err) => report_error(&err),
+        Err(parse_err) => {
+            let _ = writeln!(err, "{}", render_error(&parse_err));
+            ExitCode::from(2)
+        }
     }
 }
 
-fn print_help(target: &HelpTarget<Verb>) {
+fn render_help(target: &HelpTarget<Verb>) -> String {
     match target {
-        HelpTarget::Top => print_help_top(),
-        HelpTarget::Verb(v) => print_help_verb(*v),
+        HelpTarget::Top => render_help_top(),
+        HelpTarget::Verb(v) => render_help_verb(*v),
     }
 }
 
-fn print_help_top() {
-    println!("rapport — workspace command runner");
-    println!();
-    println!("USAGE:");
-    println!("    rapport <verb> <path>");
-    println!("    rapport help [<verb>]");
-    println!();
-    println!("VERBS:");
-    for verb in Verb::iter() {
-        println!("    {:<10} {}", verb.as_ref(), verb.about());
+fn render_help_top() -> String {
+    let mut verbs = ReportTable::new(vec![
+        Column::new("Verb", 10),
+        Column::new("Description", 60),
+    ]);
+    for v in Verb::iter() {
+        verbs.push_row(vec![v.as_ref().to_string(), v.about().to_string()]);
     }
-    println!();
-    println!("Run `rapport help <verb>` for verb-specific details.");
+    OutputBuilder::new()
+        .h1("rapport — workspace command runner")
+        .h2("Usage")
+        .text("```")
+        .text("rapport <verb> <path>")
+        .text("rapport help [<verb>]")
+        .text("```")
+        .blank()
+        .h2("Verbs")
+        .text(verbs.render())
+        .blank()
+        .text("Run `rapport help <verb>` for verb-specific details.")
+        .build()
 }
 
-fn print_help_verb(verb: Verb) {
-    println!("rapport {verb} — {}", verb.about());
-    println!();
-    println!("USAGE:");
-    println!("    rapport {verb} <path>");
-    println!();
-    println!("ARGS:");
-    println!("    <path>    Repository directory to operate on");
+fn render_help_verb(verb: Verb) -> String {
+    OutputBuilder::new()
+        .h1(format!("rapport {verb} — {}", verb.about()))
+        .h2("Usage")
+        .text("```")
+        .text(format!("rapport {verb} <path>"))
+        .text("```")
+        .blank()
+        .h2("Args")
+        .text("- `<path>` — Repository directory to operate on")
+        .build()
 }
 
-fn report_error(err: &ParseError) -> ExitCode {
+fn render_error(err: &ParseError) -> String {
+    let b = OutputBuilder::new();
     match err {
-        ParseError::NoVerb => {
-            eprintln!("{USAGE}");
-        }
-        ParseError::UnknownVerb(v) => {
-            eprintln!("'{v}' is not a recognized verb.");
-            eprintln!("{USAGE}");
-        }
-        ParseError::MissingArg { verb, expected } => {
-            eprintln!("rapport {verb} requires a {expected} argument.");
-            eprintln!("{USAGE}");
-        }
+        ParseError::NoVerb => b.text(USAGE),
+        ParseError::UnknownVerb(v) => b
+            .text(format!("'{v}' is not a recognized verb."))
+            .text(USAGE),
+        ParseError::MissingArg { verb, expected } => b
+            .text(format!("rapport {verb} requires a {expected} argument."))
+            .text(USAGE),
         ParseError::InvalidArg {
             verb,
             value,
             reason,
-        } => {
-            eprintln!("You ran: rapport {verb} {value}");
-            eprintln!("{value} {reason}.");
-        }
+        } => b
+            .text(format!("You ran: rapport {verb} {value}"))
+            .text(format!("{value} {reason}.")),
     }
-    ExitCode::from(2)
+    .build()
 }
 
-fn run_command(command: &Command) -> ExitCode {
+fn render_pass(started: Instant) -> String {
+    OutputBuilder::new()
+        .field("status", "pass")
+        .field("duration", format!("{:.2}s", started.elapsed().as_secs_f64()))
+        .build()
+}
+
+fn render_step_failure(outcome: &CommandOutcome, started: Instant) -> String {
+    let mut b = OutputBuilder::new();
+    let has_stdout = !outcome.stdout.trim().is_empty();
+    let has_stderr = !outcome.stderr.trim().is_empty();
+    if has_stdout {
+        b = b.text(&outcome.stdout);
+    }
+    if has_stderr {
+        b = b.text(&outcome.stderr);
+    }
+    if has_stdout || has_stderr {
+        b = b.blank();
+    }
+    b.field("status", "FAIL")
+        .field("duration", format!("{:.2}s", started.elapsed().as_secs_f64()))
+        .build()
+}
+
+fn render_invoke_failure(command: &Command, path: &RepositoryPath, err: &io::Error) -> String {
+    OutputBuilder::new()
+        .text(format!("You ran: rapport {command} {path}"))
+        .text(format!("Failed to invoke cargo: {err}"))
+        .build()
+}
+
+fn run_command<O, E>(
+    command: &Command,
+    runner: &dyn CommandRunner,
+    out: &mut O,
+    err: &mut E,
+) -> ExitCode
+where
+    O: Write,
+    E: Write,
+{
     let path = command.path();
-    let verb = command.verb();
     let started = Instant::now();
-    for step in verb.steps() {
-        let output = std::process::Command::new("cargo")
-            .args(*step)
-            .current_dir(path.as_path())
-            .output();
-        let output = match output {
+    for step in command.verb().steps() {
+        let outcome = match runner.run("cargo", step, path.as_path()) {
             Ok(o) => o,
-            Err(err) => {
-                eprintln!("You ran: rapport {command} {path}");
-                eprintln!("Failed to invoke cargo: {err}");
+            Err(io_err) => {
+                let _ = writeln!(err, "{}", render_invoke_failure(command, path, &io_err));
                 return ExitCode::from(2);
             }
         };
-
-        if !output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stdout.trim().is_empty() {
-                eprint!("{stdout}");
-            }
-            if !stderr.trim().is_empty() {
-                eprint!("{stderr}");
-            }
-            eprintln!();
-            eprintln!("status: FAIL");
-            eprintln!("duration: {:.2}s", started.elapsed().as_secs_f64());
+        if !outcome.success {
+            let _ = writeln!(err, "{}", render_step_failure(&outcome, started));
             return ExitCode::from(1);
         }
     }
-
-    println!("status: pass");
-    println!("duration: {:.2}s", started.elapsed().as_secs_f64());
+    let _ = writeln!(out, "{}", render_pass(started));
     ExitCode::SUCCESS
 }
