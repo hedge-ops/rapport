@@ -1,8 +1,13 @@
 name: Publish
 
 # Triggered manually after a version bump is committed and merged to main.
-# Each invocation publishes one crate. Pick the crate from the dropdown.
-# Version is read from that crate's Cargo.toml — bump it before triggering.
+# Each invocation publishes one crate, then creates a matching GitHub release.
+# Pick the crate from the dropdown. Version is read from that crate's
+# Cargo.toml — bump it before triggering.
+#
+# When publishing a release that bumps both rapport-cli and rapport, run this
+# workflow for rapport-cli first. Then run it for rapport after rapport-cli is
+# available on crates.io.
 
 on:
   workflow_dispatch:
@@ -20,6 +25,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: write
 
 jobs:
   publish:
@@ -50,7 +58,27 @@ jobs:
       - name: Run CI before publish
         run: just ci
 
+      - name: Read crate version
+        id: crate
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "${{ github.event.inputs.crate }}") | .version')"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Could not determine version for crate '${{ github.event.inputs.crate }}'" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ github.event.inputs.crate }}-v$version" >> "$GITHUB_OUTPUT"
+
       - name: Publish to crates.io
         run: cargo publish -p ${{ github.event.inputs.crate }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub release
+        run: |
+          gh release create "${{ steps.crate.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ github.event.inputs.crate }} v${{ steps.crate.outputs.version }}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

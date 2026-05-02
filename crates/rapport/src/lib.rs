@@ -87,20 +87,18 @@ impl Verb {
         let p = path.as_str();
         let cmd = |verb: &str| RunHint::new(format!("rapport {verb} {p}"));
         match (self, outcome) {
-            (Self::Fix, Outcome::Pass) => nonempty![cmd("lint")],
-            (Self::Fix, Outcome::Fail) => nonempty![cmd("fix")],
+            (Self::Fix, Outcome::Pass) | (Self::Build, Outcome::Fail) => nonempty![cmd("lint")],
+            (Self::Fix | Self::Lint, Outcome::Fail) => nonempty![cmd("fix")],
             (Self::Lint, Outcome::Pass) => nonempty![cmd("build")],
-            (Self::Lint, Outcome::Fail) => nonempty![cmd("fix")],
-            (Self::Build, Outcome::Pass) => nonempty![cmd("test")],
-            (Self::Build, Outcome::Fail) => nonempty![cmd("lint")],
-            (Self::Test, Outcome::Pass) => nonempty![cmd("validate")],
-            (Self::Test, Outcome::Fail) => nonempty![cmd("test")],
+            (Self::Build, Outcome::Pass) | (Self::Test, Outcome::Fail) => nonempty![cmd("test")],
+            (Self::Test, Outcome::Pass) | (Self::Audit, Outcome::Fail) => {
+                nonempty![cmd("validate")]
+            }
             (Self::Validate, Outcome::Pass) => nonempty![cmd("audit")],
             (Self::Validate, Outcome::Fail) => {
                 nonempty![cmd("lint"), cmd("build"), cmd("test")]
             }
             (Self::Audit, Outcome::Pass) => nonempty![RunHint::new("git push")],
-            (Self::Audit, Outcome::Fail) => nonempty![cmd("validate")],
         }
     }
 }

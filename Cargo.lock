@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "rapport"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "camino",
  "indoc",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "rapport-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "camino",
  "rstest",
