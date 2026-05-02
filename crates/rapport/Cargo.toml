@@ -15,7 +15,12 @@ authors.workspace = true
 rapport-cli = { path = "../rapport-cli" }
 rapport-prose = { path = "../rapport-prose" }
 camino.workspace = true
+nonempty.workspace = true
 strum.workspace = true
+
+[dev-dependencies]
+indoc = "2.0"
+pretty_assertions.workspace = true
 
 [lints]
 workspace = true

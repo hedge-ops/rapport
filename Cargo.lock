@@ -457,6 +457,9 @@ name = "rapport"
 version = "0.0.1"
 dependencies = [
  "camino",
+ "indoc",
+ "nonempty",
+ "pretty_assertions",
  "rapport-cli",
  "rapport-prose",
  "strum",

@@ -1,17 +1,20 @@
 mod runner;
+mod view;
 
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 
+use camino::Utf8Path;
+use nonempty::{NonEmpty, nonempty};
 use rapport_cli::{
     HelpTarget, Invocation, ParseError, Parser as _, RealFileSystem, RepositoryPath,
     parse_validated,
 };
-use rapport_prose::{Column, OutputBuilder, ReportTable};
 use std::fmt::Display;
 use std::io::{self, Write};
 use std::process::ExitCode;
 use std::time::Instant;
 use strum::IntoEnumIterator;
+use view::{Outcome, RunHint, ViewBuilder};
 
 const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit> <path>";
 
@@ -77,6 +80,27 @@ impl Verb {
             Self::Test => &[TEST],
             Self::Validate => &[FMT_CHECK, CLIPPY, CHECK, TEST],
             Self::Audit => &[FMT_CHECK, CLIPPY, CHECK, TEST, BUILD_RELEASE, DOC],
+        }
+    }
+
+    fn hints(self, outcome: Outcome, path: &Utf8Path) -> NonEmpty<RunHint> {
+        let p = path.as_str();
+        let cmd = |verb: &str| RunHint::new(format!("rapport {verb} {p}"));
+        match (self, outcome) {
+            (Self::Fix, Outcome::Pass) => nonempty![cmd("lint")],
+            (Self::Fix, Outcome::Fail) => nonempty![cmd("fix")],
+            (Self::Lint, Outcome::Pass) => nonempty![cmd("build")],
+            (Self::Lint, Outcome::Fail) => nonempty![cmd("fix")],
+            (Self::Build, Outcome::Pass) => nonempty![cmd("test")],
+            (Self::Build, Outcome::Fail) => nonempty![cmd("lint")],
+            (Self::Test, Outcome::Pass) => nonempty![cmd("validate")],
+            (Self::Test, Outcome::Fail) => nonempty![cmd("test")],
+            (Self::Validate, Outcome::Pass) => nonempty![cmd("audit")],
+            (Self::Validate, Outcome::Fail) => {
+                nonempty![cmd("lint"), cmd("build"), cmd("test")]
+            }
+            (Self::Audit, Outcome::Pass) => nonempty![RunHint::new("git push")],
+            (Self::Audit, Outcome::Fail) => nonempty![cmd("validate")],
         }
     }
 }
@@ -177,92 +201,95 @@ fn render_help(target: &HelpTarget<Verb>) -> String {
 }
 
 fn render_help_top() -> String {
-    let mut verbs = ReportTable::new(vec![
-        Column::new("Verb", 10),
-        Column::new("Description", 60),
-    ]);
-    for v in Verb::iter() {
-        verbs.push_row(vec![v.as_ref().to_string(), v.about().to_string()]);
-    }
-    OutputBuilder::new()
-        .h1("rapport — workspace command runner")
-        .h2("Usage")
-        .text("```")
-        .text("rapport <verb> <path>")
-        .text("rapport help [<verb>]")
-        .text("```")
-        .blank()
-        .h2("Verbs")
-        .text(verbs.render())
-        .blank()
-        .text("Run `rapport help <verb>` for verb-specific details.")
+    ViewBuilder::new()
+        .title("rapport — workspace command runner")
+        .section("Usage", |b| {
+            b.usage(["rapport <verb> <path>", "rapport help [<verb>]"])
+        })
+        .section("Verbs", |b| {
+            b.entries(Verb::iter().map(|v| (v, v.about())))
+        })
+        .next_actions(nonempty![RunHint::new("rapport help build")])
         .build()
 }
 
 fn render_help_verb(verb: Verb) -> String {
-    OutputBuilder::new()
-        .h1(format!("rapport {verb} — {}", verb.about()))
-        .h2("Usage")
-        .text("```")
-        .text(format!("rapport {verb} <path>"))
-        .text("```")
-        .blank()
-        .h2("Args")
-        .text("- `<path>` — Repository directory to operate on")
+    ViewBuilder::new()
+        .title(format!("rapport {verb} — {}", verb.about()))
+        .section("Usage", |b| b.usage([format!("rapport {verb} <path>")]))
+        .section("Args", |b| {
+            b.entries([("<path>", "Repository directory to operate on")])
+        })
+        .next_actions(nonempty![RunHint::new(format!("rapport {verb} ."))])
         .build()
 }
 
 fn render_error(err: &ParseError) -> String {
-    let b = OutputBuilder::new();
-    match err {
-        ParseError::NoVerb => b.text(USAGE),
-        ParseError::UnknownVerb(v) => b
-            .text(format!("'{v}' is not a recognized verb."))
-            .text(USAGE),
-        ParseError::MissingArg { verb, expected } => b
-            .text(format!("rapport {verb} requires a {expected} argument."))
-            .text(USAGE),
+    let vb = ViewBuilder::new();
+    let (vb, hints) = match err {
+        ParseError::NoVerb => (vb.paragraph(USAGE), nonempty![RunHint::new("rapport help")]),
+        ParseError::UnknownVerb(v) => (
+            vb.paragraph(format!("'{v}' is not a recognized verb."))
+                .paragraph(USAGE),
+            nonempty![RunHint::new("rapport help")],
+        ),
+        ParseError::MissingArg { verb, expected } => (
+            vb.paragraph(format!("rapport {verb} requires a {expected} argument."))
+                .paragraph(USAGE),
+            nonempty![RunHint::new(format!("rapport help {verb}"))],
+        ),
         ParseError::InvalidArg {
             verb,
             value,
             reason,
-        } => b
-            .text(format!("You ran: rapport {verb} {value}"))
-            .text(format!("{value} {reason}.")),
-    }
-    .build()
+        } => (
+            vb.paragraph(format!("You ran: rapport {verb} {value}"))
+                .paragraph(format!("{value} {reason}.")),
+            nonempty![RunHint::new(format!("rapport help {verb}"))],
+        ),
+    };
+    vb.next_actions(hints).build()
 }
 
-fn render_pass(started: Instant) -> String {
-    OutputBuilder::new()
-        .field("status", "pass")
-        .field("duration", format!("{:.2}s", started.elapsed().as_secs_f64()))
+fn render_pass(started: Instant, hints: NonEmpty<RunHint>) -> String {
+    ViewBuilder::new()
+        .status(Outcome::Pass, started.elapsed())
+        .next_actions(hints)
         .build()
 }
 
-fn render_step_failure(outcome: &CommandOutcome, started: Instant) -> String {
-    let mut b = OutputBuilder::new();
-    let has_stdout = !outcome.stdout.trim().is_empty();
-    let has_stderr = !outcome.stderr.trim().is_empty();
-    if has_stdout {
-        b = b.text(&outcome.stdout);
+fn render_step_failure(
+    outcome: &CommandOutcome,
+    started: Instant,
+    hints: NonEmpty<RunHint>,
+) -> String {
+    let combined = combined_output(outcome);
+    let mut vb = ViewBuilder::new();
+    if !combined.is_empty() {
+        vb = vb.section("Output", |b| b.captured(combined));
     }
-    if has_stderr {
-        b = b.text(&outcome.stderr);
-    }
-    if has_stdout || has_stderr {
-        b = b.blank();
-    }
-    b.field("status", "FAIL")
-        .field("duration", format!("{:.2}s", started.elapsed().as_secs_f64()))
+    vb.status(Outcome::Fail, started.elapsed())
+        .next_actions(hints)
         .build()
 }
 
 fn render_invoke_failure(command: &Command, path: &RepositoryPath, err: &io::Error) -> String {
-    OutputBuilder::new()
-        .text(format!("You ran: rapport {command} {path}"))
-        .text(format!("Failed to invoke cargo: {err}"))
+    ViewBuilder::new()
+        .paragraph(format!("You ran: rapport {command} {path}"))
+        .paragraph(format!("Failed to invoke cargo: {err}"))
+        .next_actions(nonempty![RunHint::new("which cargo")])
         .build()
+}
+
+fn combined_output(outcome: &CommandOutcome) -> String {
+    let stderr = outcome.stderr.trim();
+    let stdout = outcome.stdout.trim();
+    match (stderr.is_empty(), stdout.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => stderr.to_owned(),
+        (true, false) => stdout.to_owned(),
+        (false, false) => format!("{stderr}\n\n{stdout}"),
+    }
 }
 
 fn run_command<O, E>(
@@ -286,10 +313,12 @@ where
             }
         };
         if !outcome.success {
-            let _ = writeln!(err, "{}", render_step_failure(&outcome, started));
+            let hints = command.verb().hints(Outcome::Fail, path.as_path());
+            let _ = writeln!(err, "{}", render_step_failure(&outcome, started, hints));
             return ExitCode::from(1);
         }
     }
-    let _ = writeln!(out, "{}", render_pass(started));
+    let hints = command.verb().hints(Outcome::Pass, path.as_path());
+    let _ = writeln!(out, "{}", render_pass(started, hints));
     ExitCode::SUCCESS
 }
