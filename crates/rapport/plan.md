@@ -24,6 +24,7 @@ directory exists and contains a justfile, runs `just <recipe>` in
 it, parses test output for counts, and prints a structured status
 line plus duration. The `list` recipe is a special case that
 delegates to `just --list`. Errors are plain strings to stderr.
+That is source context, not the adopted rapport v1 contract.
 
 ## Translation to rapport doctrine
 
@@ -31,20 +32,25 @@ delegates to `just --list`. Errors are plain strings to stderr.
 
 | Requirement | rapport implementation |
 |---|---|
-| R1.1 — bare CLI is summary | `rapport` (no args) shows the projects in the repo (directories with justfiles) and the recipe vocabulary the framework standardizes. |
-| R1.2 — `prime [topic]` | Embedded markdown. Default topic = "writing recipes for rapport." Subtopics: `verbs`, `recipes`, `output`, `test-parsing`. |
-| R1.3 — `doctor` | Checks: `just` on PATH, current dir is in a git repo, repo root resolvable. Each check produces ok/warn/fail. |
+| R1.1 — bare CLI is summary | `rapport` (no args) shows the current directory context, known verbs, and likely next actions. |
+| R1.2 — `prime [topic]` | Embedded markdown. Default topic = "using rapport." Subtopics: `verbs`, `discovery`, `output`, `test-parsing`. |
+| R1.3 — `doctor` | Checks: current dir is usable, repo context is understood when present, and required tools for the detected project type are available. Each check produces ok/warn/fail. |
 | R1.4 — single exec name | `rapport`. |
 
 ### R2. Command shape
 
 Rapport is a **zero-entity CLI**. It doesn't track records; it
-operates on paths in the repo. The lifecycle verbs
-(**format → check → build → test → release**, plus the composites
-`dev` and `ci`) take a typed `RepoPath` argument — a path relative
-to the git root that resolves to a directory containing a
-justfile. The path is the identifier; there is no separate ID
-type and no entity ceremony.
+operates on directories. The lifecycle verbs
+(**fix → lint → build → test → validate → audit**) take a typed
+`RepositoryPath` argument that currently validates only that the
+path exists and is a directory. The path is the identifier; there
+is no separate ID type and no entity ceremony.
+
+The current implementation is Rust-first: it maps verbs to cargo
+commands in the selected directory. A later discovery layer should
+choose the runner from local project markers (for example,
+`Cargo.toml` means Rust and therefore cargo). `just` can become one
+detected runner, but v1 is not built around a justfile requirement.
 
 **Verb enum (v1):**
 
@@ -54,20 +60,17 @@ enum Verb {
     Prime { topic: Option<Topic> },
     Doctor,
 
-    // Lifecycle actions — the standardized verb vocabulary
-    Format  { path: RepoPath },
-    Check   { path: RepoPath },
-    Build   { path: RepoPath },
-    Test    { path: RepoPath },
-    Release { path: RepoPath },
-
-    // Composite lifecycle actions
-    Dev { path: RepoPath },         // typical inner loop
-    Ci  { path: RepoPath },         // full pipeline
+    // Lifecycle actions
+    Fix      { path: RepositoryPath },
+    Lint     { path: RepositoryPath },
+    Build    { path: RepositoryPath },
+    Test     { path: RepositoryPath },
+    Validate { path: RepositoryPath },
+    Audit    { path: RepositoryPath },
 }
 ```
 
-Usage: `rapport format api_v2/crates/insights` — verb is `format`,
+Usage: `rapport build api_v2/crates/insights` — verb is `build`,
 path is `api_v2/crates/insights`.
 
 All lifecycle verbs are **actions** under R2.2 — they mutate the
@@ -75,15 +78,15 @@ build artifacts on disk. They report what changed (duration, test
 counts) plus next-actions in their result view.
 
 No `list` or `show` in v1. Agents can locate buildable directories
-via shell (`find . -name justfile`); humans can read `rapport prime`
-for orientation. If `list`/`show` prove needed, add them later.
+via shell (`find . -name Cargo.toml` for Rust today); humans can
+read `rapport prime` for orientation. If `list`/`show` prove
+needed, add them later.
 
 **Args:**
 
-- `RepoPath` — implements `Argument`; parses a path, resolves it
-  against the git root, validates the directory exists and contains
-  a justfile. Errors with a "not found" or "no justfile" view (per
-  R4) listing siblings or the nearest buildable ancestor.
+- `RepositoryPath` — implements `Argument`; parses a path and
+  validates that the directory exists. Later, project discovery can
+  report "no supported project marker" with contextual hints.
 
 - `Topic` — implements `Argument`; closed enum of prime topics.
 
@@ -99,8 +102,8 @@ write only the parts that vary.
 |---|---|---|
 | `prime` | (framework-rendered) | Topic markdown. |
 | `doctor` | `doctor_view` | Three checks; outcome badges. |
-| bare CLI | `summary_view` | Quick orientation: recipe vocabulary, "try `rapport build <path>`", pointer to `rapport prime`. |
-| `format`/`check`/`build`/`test`/`release`/`dev`/`ci` | `result_view` | Duration field, test summary section (when tests ran), next-actions: re-run, run sibling recipe, etc. |
+| bare CLI | `summary_view` | Quick orientation: lifecycle vocabulary, "try `rapport build <path>`", pointer to `rapport prime`. |
+| `fix`/`lint`/`build`/`test`/`validate`/`audit` | `result_view` | Duration field, test summary section (when tests ran), next-actions: re-run, move to the next lifecycle step, etc. |
 
 **Test summary as a section, not a layout.** The existing parser
 output (`47 passed, 0 failed, 2 skipped`) becomes a sectioned
@@ -118,17 +121,17 @@ Today's three error sites map to error views:
    └ run ls api_v2/crates
    ```
 
-2. **No justfile** —
+2. **Unsupported project type** — future discovery layer:
    ```
    You ran: rapport build app/some-dir
-   app/some-dir exists but has no justfile, so rapport can't build it.
+   app/some-dir exists but rapport did not find a supported project marker.
    └ run ls app/some-dir
-   └ run find app -name justfile
+   └ run find app/some-dir -maxdepth 2 -name Cargo.toml
    ```
 
-3. **Recipe failed** — the result view itself, but with the failure
+3. **Step failed** — the result view itself, but with the failure
    marker and the build output as a section. Next-actions: re-run,
-   run a more granular recipe (e.g., `check` instead of `dev`), see
+   run a more granular step (e.g., `lint` before `validate`), see
    the test summary.
 
 R4.3 (framework auto-captures the invocation) means the "You ran:"
@@ -139,15 +142,16 @@ line is not authored — rapport-cli inserts it.
 | Requirement | rapport |
 |---|---|
 | R5.1 no prompts | Already true. |
-| R5.2 actions are legible | Result view names the project, the recipe, and the duration; failures include the build output. An agent can tell from output alone whether a re-run is duplicating work. |
-| R5.3 prime offline, doctor degrades | Prime is embedded markdown. Doctor reports `just` missing as a failed check rather than crashing. |
-| R5.4 channels | Result views to stdout. Build output streams to stderr while running, so agents see progress; the final view on stdout is the canonical answer. |
+| R5.2 actions are legible | Result view names the directory, the verb, and the duration; failures include the build output. An agent can tell from output alone whether a re-run is duplicating work. |
+| R5.3 prime offline, doctor degrades | Prime is embedded markdown. Doctor reports missing project tools as failed checks rather than crashing. |
+| R5.4/R5.5 channels | Result views to stdout. Underlying tool output is captured; success stays concise, failure includes the relevant captured output. |
 
 ### R6. Discoverability
 
-`rapport prime` carries the framework's standardized recipe
-vocabulary (what `format`/`check`/`test`/`build`/`dev`/`ci` mean,
-what they expect from a justfile). `--help` excerpts from prime.
+`rapport prime` carries the framework's standardized lifecycle
+vocabulary (what `fix`/`lint`/`build`/`test`/`validate`/`audit`
+mean and how project discovery chooses the underlying runner).
+`--help` excerpts from prime.
 
 ## Implementation phases
 
@@ -156,21 +160,21 @@ what they expect from a justfile). `--help` excerpts from prime.
    the `Argument` trait, and the prose primitives. Out of scope
    here; tracked separately.
 
-2. **Phase 1 — single verb (`build`).** Wire one action verb end
-   to end: parse CLI input, validate `ProjectId`, invoke `just`,
-   compose a `result_view`, render. Proves the macro and the
-   prose pipeline.
+2. **Phase 1 — Rust cargo lifecycle.** Wire the current verbs end
+   to end for Rust directories: parse CLI input, validate
+   `RepositoryPath`, invoke cargo, compose result/error views,
+   render. Proves the parser, runner injection, captured output,
+   and prose pipeline.
 
-3. **Phase 2 — full lifecycle vocabulary.** Add `format`, `check`,
-   `test`, `release`, `dev`, `ci`. Each is the same shape with a
-   different recipe name. If this requires repetition, the macro
-   is wrong and we revisit.
+3. **Phase 2 — discovery.** Detect what is runnable in the current
+   directory. `Cargo.toml` maps to the Rust runner. Other markers
+   can add runners later without changing the verb vocabulary.
 
 4. **Phase 3 — prime.** Author the prime topics. `--help`
    derivation wired up so we don't drift.
 
-5. **Phase 4 — doctor.** Three checks: `just` on PATH, in a git
-   repo, repo root resolvable.
+5. **Phase 4 — doctor.** Checks: directory context, detected
+   project type, and required project tools.
 
 6. **Phase 5 — bare CLI summary.** Quick orientation view that
    ties everything together.
@@ -182,10 +186,10 @@ Surfacing these now while writing a real CLI against the doctrine.
 - **T1 — resolved.** Earlier framing: "Project is an entity but has
   no CRUD, so calling it an entity is a stretch." Resolution:
   rapport has no entity at all. It is a zero-entity CLI; its
-  verbs operate on paths via a typed `RepoPath` argument. The path
-  is the identifier — there is no separate ID type. Doctrine
-  handles zero-entity CLIs explicitly in R2.3, so no doctrine
-  change is needed.
+  verbs operate on directories via a typed `RepositoryPath`
+  argument. The path is the identifier — there is no separate ID
+  type. Doctrine handles zero-entity CLIs explicitly in R2.3, so no
+  doctrine change is needed.
 
 - **T2 — resolved.** Earlier framing: external-mutation actions
   (builds touch files on disk, not anything rapport tracks) make
@@ -206,28 +210,25 @@ Surfacing these now while writing a real CLI against the doctrine.
   Worth promoting to R5.4 as framework guidance for action verbs
   generally.
 
-- **T4 — resolved.** Earlier framing: `list`/`show` semantics
-  for filesystem-derived entities differ from CRUD entities.
+- **T4 — resolved, but discovery remains open.** Earlier framing:
+  `list`/`show` semantics for filesystem-derived entities differ
+  from CRUD entities.
   Resolution: doctrine is agnostic about where entity data lives.
-  Rapport discovers projects by walking the repo (any directory
-  with a justfile is a project; `ProjectId` is the relative path
-  to the git root). `list` walks; `show <path>` reads that
-  project's justfile. No manifest, no persistence — discovery
-  is cheap enough to do on every call. A manifest could be added
-  later as an optimization for daemon-mode or rapidly-repeated
-  calls, but it isn't needed to ship v1, and may not be needed
-  at all.
+  Rapport should discover project type from marker files near the
+  selected directory. Today only the direct Rust cargo mapping is
+  implemented; richer discovery is the next behavior slice.
 
 ## Acceptance criteria
 
 This port is done when:
 
 - `rapport build app/crates/people` produces the same correct
-  exit code and test counts as `builder app/crates/people dev`.
+  exit code and test counts as the equivalent Rust cargo command.
 - `rapport doctor` reports actionable failures when `just` is
-  missing, when not in a git repo, when run outside the worktree.
+  missing only if the detected project runner requires `just`; it
+  otherwise reports the detected project type and required tools.
 - `rapport prime` returns markdown that an agent can read once
-  and write a justfile that rapport understands.
+  and understand the lifecycle verbs and discovery rules.
 - A failed build's error view contains the build output, the test
   summary if applicable, and at least one re-run next-action.
 - `--help` text is derived from prime; no separately authored
@@ -237,11 +238,15 @@ This port is done when:
 
 ## Open from this exercise
 
-All four tensions resolved. One follow-up:
+The doctrine-level tensions are resolved. Follow-ups:
 
 - **R5.5 added** to the framework requirements: action verbs capture
   rather than stream underlying-tool output. Promotes T3's
   resolution from rapport-specific to framework-wide.
+
+- **Discovery still needs implementation.** The next behavior slice
+  is project detection from local markers, starting with
+  `Cargo.toml` for Rust.
 
 Setup-style verbs (init, login, anything that prompts a human)
 are deferred. The people pattern — `init` for discovery,

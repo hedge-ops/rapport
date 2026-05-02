@@ -206,9 +206,7 @@ fn render_help_top() -> String {
         .section("Usage", |b| {
             b.usage(["rapport <verb> <path>", "rapport help [<verb>]"])
         })
-        .section("Verbs", |b| {
-            b.entries(Verb::iter().map(|v| (v, v.about())))
-        })
+        .section("Verbs", |b| b.entries(Verb::iter().map(|v| (v, v.about()))))
         .next_actions(nonempty![RunHint::new("rapport help build")])
         .build()
 }
@@ -321,4 +319,241 @@ where
     let hints = command.verb().hints(Outcome::Pass, path.as_path());
     let _ = writeln!(out, "{}", render_pass(started, hints));
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use camino::{Utf8Path, Utf8PathBuf};
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEST_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Debug)]
+    struct TestDir {
+        path: Utf8PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let id = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = Utf8PathBuf::from_path_buf(
+                std::env::temp_dir().join(format!("rapport-test-{}-{id}", std::process::id())),
+            )
+            .expect("temp dir path should be utf8");
+            fs::create_dir_all(&path).expect("test directory should be created");
+            Self { path }
+        }
+
+        fn as_str(&self) -> &str {
+            self.path.as_str()
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct RecordedCommand {
+        program: String,
+        args: Vec<String>,
+        cwd: Utf8PathBuf,
+    }
+
+    #[derive(Debug)]
+    struct FakeRunner {
+        outcomes: RefCell<VecDeque<io::Result<CommandOutcome>>>,
+        calls: RefCell<Vec<RecordedCommand>>,
+    }
+
+    impl FakeRunner {
+        fn new(outcomes: Vec<io::Result<CommandOutcome>>) -> Self {
+            Self {
+                outcomes: RefCell::new(outcomes.into()),
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn all_pass(count: usize) -> Self {
+            let outcomes = (0..count).map(|_| Ok(pass())).collect();
+            Self::new(outcomes)
+        }
+
+        fn calls(&self) -> Vec<RecordedCommand> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl CommandRunner for FakeRunner {
+        fn run(&self, spec: &CommandSpec, cwd: &Utf8Path) -> io::Result<CommandOutcome> {
+            self.calls.borrow_mut().push(RecordedCommand {
+                program: spec.program.to_owned(),
+                args: spec.args.iter().map(|arg| (*arg).to_owned()).collect(),
+                cwd: cwd.to_owned(),
+            });
+            self.outcomes
+                .borrow_mut()
+                .pop_front()
+                .expect("fake runner should have an outcome for each command")
+        }
+    }
+
+    fn pass() -> CommandOutcome {
+        CommandOutcome {
+            success: true,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    fn fail(stdout: &str, stderr: &str) -> CommandOutcome {
+        CommandOutcome {
+            success: false,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        }
+    }
+
+    fn run_with(args: &[&str], runner: &dyn CommandRunner) -> (ExitCode, String, String) {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = run(
+            args.iter().map(|arg| (*arg).to_owned()),
+            runner,
+            &mut out,
+            &mut err,
+        );
+        (
+            code,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    #[test]
+    fn build_runs_cargo_check_in_the_given_directory() {
+        let dir = TestDir::new();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("status: pass"));
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn validate_runs_lint_build_test_pipeline() {
+        let dir = TestDir::new();
+        let runner = FakeRunner::all_pass(4);
+
+        let (code, out, err) = run_with(&["validate", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport audit {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["fmt".into(), "--".into(), "--check".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec![
+                        "clippy".into(),
+                        "--all-targets".into(),
+                        "--".into(),
+                        "-D".into(),
+                        "warnings".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["check".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["test".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn step_failure_stops_pipeline_and_reports_captured_output() {
+        let dir = TestDir::new();
+        let runner = FakeRunner::new(vec![
+            Ok(pass()),
+            Ok(fail("stdout details", "stderr details")),
+        ]);
+
+        let (code, out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(1));
+        assert_eq!(out, "");
+        assert!(err.contains("## Output"));
+        assert!(err.contains("stderr details"));
+        assert!(err.contains("stdout details"));
+        assert!(err.contains("status: FAIL"));
+        assert!(err.contains(&format!("└ run rapport fix {}", dir.as_str())));
+        assert_eq!(runner.calls().len(), 2);
+    }
+
+    #[test]
+    fn invoke_failure_reports_recovery_hint() {
+        let dir = TestDir::new();
+        let runner = FakeRunner::new(vec![Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "missing cargo",
+        ))]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains(&format!("You ran: rapport build {}", dir.as_str())));
+        assert!(err.contains("Failed to invoke cargo: missing cargo"));
+        assert!(err.contains("└ run which cargo"));
+    }
+
+    #[test]
+    fn missing_path_errors_before_running_any_commands() {
+        let missing = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "rapport-missing-{}",
+            TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
+        )))
+        .expect("temp dir path should be utf8");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", missing.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains(&format!("You ran: rapport build {missing}")));
+        assert!(err.contains("does not exist or is not a directory"));
+        assert!(err.contains("└ run rapport help build"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
 }
