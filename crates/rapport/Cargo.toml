@@ -4,7 +4,7 @@ description = "agent-friendly builder"
 keywords = ["cli", "build", "agent", "developer-tools", "automation"]
 categories = ["command-line-utilities", "development-tools::build-utils"]
 readme = "README.md"
-version = "0.0.1"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,6 +12,15 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+rapport-cli = { path = "../rapport-cli", version = "0.1.0" }
+rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
+camino.workspace = true
+nonempty.workspace = true
+strum.workspace = true
+
+[dev-dependencies]
+indoc = "2.0"
+pretty_assertions.workspace = true
 
 [lints]
 workspace = true

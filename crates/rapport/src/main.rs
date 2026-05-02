@@ -1,6 +1,14 @@
-fn main() {
-    println!("rapport — the agent-friendly builder.");
-    println!();
-    println!("This release reserves the name on crates.io while the real thing is");
-    println!("being built. Track progress at https://github.com/hedge-ops/rapport");
+use rapport::RealCommandRunner;
+use std::io;
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
+    rapport::run(
+        std::env::args().skip(1),
+        &RealCommandRunner,
+        &mut stdout,
+        &mut stderr,
+    )
 }
