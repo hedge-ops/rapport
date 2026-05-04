@@ -34,6 +34,12 @@ rapport audit <path>     # validate + cargo build --release + cargo doc --no-dep
 Project discovery is not implemented yet. For this checkpoint, `rapport`
 validates that the path exists and assumes cargo for the command runner.
 
+## Testing
+
+See [TESTING.md](TESTING.md) for the local test commands, Cargo end-to-end
+fixture and snapshot layout, snapshot stability rules, and GitHub Actions
+coverage.
+
 ## Principles
 
 - Human-driven - the best way to design for agents, is ergonomic,

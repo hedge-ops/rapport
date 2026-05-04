@@ -19,8 +19,11 @@ nonempty.workspace = true
 strum.workspace = true
 
 [dev-dependencies]
+assert_cmd = "2.2"
 indoc = "2.0"
+insta = { version = "1.47", default-features = false, features = ["filters"] }
 pretty_assertions.workspace = true
+tempfile = "3.27"
 
 [lints]
 workspace = true
