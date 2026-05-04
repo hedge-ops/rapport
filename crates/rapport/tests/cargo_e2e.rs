@@ -378,12 +378,15 @@ fn doc_error_audit_failure() -> TestResult {
 
 #[test]
 fn composite_stops_at_first_failing_fmt_step() -> TestResult {
-    assert_fixture_snapshot(
-        "cargo_fail_fmt_needed_validate",
-        "fail/fmt-needed",
-        "validate",
-        1,
-    )
+    let project = fixture("fail/fmt-needed")?;
+    let result = run_rapport(&project, "validate", 1)?;
+
+    assert!(
+        !project.target.join("debug").exists(),
+        "validate should stop after cargo fmt -- --check fails"
+    );
+    assert_snapshot("cargo_fail_fmt_needed_validate", &project, &result);
+    Ok(())
 }
 
 #[test]
