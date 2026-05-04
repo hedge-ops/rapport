@@ -1,3 +1,4 @@
+mod project;
 mod runner;
 mod view;
 
@@ -5,9 +6,10 @@ pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 
 use camino::Utf8Path;
 use nonempty::{NonEmpty, nonempty};
+use project::{CargoProjectMatcher, discover_project};
+use rapport_cli::files::{FileSystem, RealFileSystem};
 use rapport_cli::{
-    HelpTarget, Invocation, ParseError, Parser as _, RealFileSystem, RepositoryPath,
-    parse_validated,
+    HelpTarget, Invocation, ParseError, Parser as _, RepositoryPath, parse_validated,
 };
 use std::fmt::Display;
 use std::io::{self, Write};
@@ -137,6 +139,37 @@ impl Command {
             | Self::Audit { path } => path,
         }
     }
+
+    fn from_argv_with_file_system(
+        verb: Verb,
+        rest: &[String],
+        fs: &impl FileSystem,
+    ) -> Result<Self, ParseError> {
+        let [p] = rest else {
+            return Err(ParseError::MissingArg {
+                verb: verb.to_string(),
+                expected: "path",
+            });
+        };
+        let path: RepositoryPath = parse_validated(verb.as_ref(), p, fs)?;
+        let project =
+            discover_project(path.as_path(), &CargoProjectMatcher, fs).map_err(|reason| {
+                ParseError::InvalidArg {
+                    verb: verb.as_ref().into(),
+                    value: p.into(),
+                    reason,
+                }
+            })?;
+        let path = RepositoryPath::new(project);
+        Ok(match verb {
+            Verb::Fix => Self::Fix { path },
+            Verb::Lint => Self::Lint { path },
+            Verb::Build => Self::Build { path },
+            Verb::Test => Self::Test { path },
+            Verb::Validate => Self::Validate { path },
+            Verb::Audit => Self::Audit { path },
+        })
+    }
 }
 
 impl rapport_cli::Parser for Command {
@@ -148,21 +181,7 @@ impl rapport_cli::Parser for Command {
     }
 
     fn from_argv(verb: Verb, rest: &[String]) -> Result<Self, ParseError> {
-        let [p] = rest else {
-            return Err(ParseError::MissingArg {
-                verb: verb.to_string(),
-                expected: "path",
-            });
-        };
-        let path: RepositoryPath = parse_validated(verb.as_ref(), p, &RealFileSystem)?;
-        Ok(match verb {
-            Verb::Fix => Self::Fix { path },
-            Verb::Lint => Self::Lint { path },
-            Verb::Build => Self::Build { path },
-            Verb::Test => Self::Test { path },
-            Verb::Validate => Self::Validate { path },
-            Verb::Audit => Self::Audit { path },
-        })
+        Self::from_argv_with_file_system(verb, rest, &RealFileSystem)
     }
 }
 
@@ -178,7 +197,22 @@ where
     O: Write,
     E: Write,
 {
-    match Command::parse(argv) {
+    run_with_file_system(argv, runner, &RealFileSystem, out, err)
+}
+
+fn run_with_file_system<I, O, E>(
+    argv: I,
+    runner: &dyn CommandRunner,
+    fs: &impl FileSystem,
+    out: &mut O,
+    err: &mut E,
+) -> ExitCode
+where
+    I: IntoIterator<Item = String>,
+    O: Write,
+    E: Write,
+{
+    match parse_with_file_system(argv, fs) {
         Ok(Invocation::Run(command)) => run_command(&command, runner, out, err),
         Ok(Invocation::Help(target)) => {
             let _ = writeln!(out, "{}", render_help(&target));
@@ -189,6 +223,36 @@ where
             ExitCode::from(2)
         }
     }
+}
+
+fn parse_with_file_system<I>(
+    argv: I,
+    fs: &impl FileSystem,
+) -> Result<Invocation<Command>, ParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let argv: Vec<String> = argv.into_iter().collect();
+    match argv.as_slice() {
+        [] => Err(ParseError::NoVerb),
+        [a] if is_help_flag(a) || a == "help" => Ok(Invocation::Help(HelpTarget::Top)),
+        [first, verb_name] if first == "help" => {
+            let verb = Command::parse_verb(verb_name)?;
+            Ok(Invocation::Help(HelpTarget::Verb(verb)))
+        }
+        [name, rest @ ..] => {
+            let verb = Command::parse_verb(name)?;
+            if rest.iter().any(|a| is_help_flag(a)) {
+                Ok(Invocation::Help(HelpTarget::Verb(verb)))
+            } else {
+                Command::from_argv_with_file_system(verb, rest, fs).map(Invocation::Run)
+            }
+        }
+    }
+}
+
+fn is_help_flag(s: &str) -> bool {
+    s == "-h" || s == "--help"
 }
 
 fn render_help(target: &HelpTarget<Verb>) -> String {
@@ -324,39 +388,20 @@ where
 mod tests {
     use super::*;
     use camino::{Utf8Path, Utf8PathBuf};
+    use rapport_cli::files::InMemoryFileSystem;
     use std::cell::RefCell;
     use std::collections::VecDeque;
-    use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static TEST_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    #[derive(Debug)]
-    struct TestDir {
-        path: Utf8PathBuf,
-    }
-
-    impl TestDir {
-        fn new() -> Self {
-            let id = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = Utf8PathBuf::from_path_buf(
-                std::env::temp_dir().join(format!("rapport-test-{}-{id}", std::process::id())),
-            )
-            .expect("temp dir path should be utf8");
-            fs::create_dir_all(&path).expect("test directory should be created");
-            Self { path }
-        }
-
-        fn as_str(&self) -> &str {
-            self.path.as_str()
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
+    const ROOT: &str = "/work/repo";
+    const ROOT_GIT_MARKER: &str = "/work/repo/.git";
+    const ROOT_MANIFEST: &str = "/work/repo/Cargo.toml";
+    const ROOT_CHILD: &str = "/work/repo/src/deep";
+    const CRATE_DIR: &str = "/work/repo/crates/app";
+    const CRATE_CHILD: &str = "/work/repo/crates/app/src";
+    const CRATE_MANIFEST: &str = "/work/repo/crates/app/Cargo.toml";
+    const MISSING: &str = "/work/missing";
+    const OUTSIDE_REPO: &str = "/work/outside";
+    const OUTSIDE_MANIFEST: &str = "/work/outside/Cargo.toml";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct RecordedCommand {
@@ -419,12 +464,25 @@ mod tests {
         }
     }
 
-    fn run_with(args: &[&str], runner: &dyn CommandRunner) -> (ExitCode, String, String) {
+    fn cargo_project_fs() -> InMemoryFileSystem {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_directory(ROOT);
+        fs.add_file(ROOT_GIT_MARKER);
+        fs.add_file(ROOT_MANIFEST);
+        fs
+    }
+
+    fn run_with(
+        args: &[&str],
+        runner: &dyn CommandRunner,
+        fs: &impl FileSystem,
+    ) -> (ExitCode, String, String) {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = run(
+        let code = run_with_file_system(
             args.iter().map(|arg| (*arg).to_owned()),
             runner,
+            fs,
             &mut out,
             &mut err,
         );
@@ -437,42 +495,42 @@ mod tests {
 
     #[test]
     fn build_runs_cargo_check_in_the_given_directory() {
-        let dir = TestDir::new();
+        let fs = cargo_project_fs();
         let runner = FakeRunner::all_pass(1);
 
-        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+        let (code, out, err) = run_with(&["build", ROOT], &runner, &fs);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(err, "");
         assert!(out.contains("status: pass"));
-        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert!(out.contains(&format!("└ run rapport test {ROOT}")));
         assert_eq!(
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
                 args: vec!["check".into()],
-                cwd: dir.path.clone(),
+                cwd: Utf8PathBuf::from(ROOT),
             }]
         );
     }
 
     #[test]
     fn validate_runs_lint_build_test_pipeline() {
-        let dir = TestDir::new();
+        let fs = cargo_project_fs();
         let runner = FakeRunner::all_pass(4);
 
-        let (code, out, err) = run_with(&["validate", dir.as_str()], &runner);
+        let (code, out, err) = run_with(&["validate", ROOT], &runner, &fs);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(err, "");
-        assert!(out.contains(&format!("└ run rapport audit {}", dir.as_str())));
+        assert!(out.contains(&format!("└ run rapport audit {ROOT}")));
         assert_eq!(
             runner.calls(),
             vec![
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec!["fmt".into(), "--".into(), "--check".into()],
-                    cwd: dir.path.clone(),
+                    cwd: Utf8PathBuf::from(ROOT),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
@@ -483,31 +541,74 @@ mod tests {
                         "-D".into(),
                         "warnings".into(),
                     ],
-                    cwd: dir.path.clone(),
+                    cwd: Utf8PathBuf::from(ROOT),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec!["check".into()],
-                    cwd: dir.path.clone(),
+                    cwd: Utf8PathBuf::from(ROOT),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec!["test".into()],
-                    cwd: dir.path.clone(),
+                    cwd: Utf8PathBuf::from(ROOT),
                 },
             ]
         );
     }
 
     #[test]
+    fn child_directory_runs_nearest_parent_cargo_project() {
+        let mut fs = cargo_project_fs();
+        fs.add_directory(CRATE_DIR);
+        fs.add_file(CRATE_MANIFEST);
+        fs.add_directory(CRATE_CHILD);
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", CRATE_CHILD], &runner, &fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {CRATE_DIR}")));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into()],
+                cwd: Utf8PathBuf::from(CRATE_DIR),
+            }]
+        );
+    }
+
+    #[test]
+    fn git_root_is_used_when_it_is_the_only_cargo_project() {
+        let mut fs = cargo_project_fs();
+        fs.add_directory(ROOT_CHILD);
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", ROOT_CHILD], &runner, &fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into()],
+                cwd: Utf8PathBuf::from(ROOT),
+            }]
+        );
+    }
+
+    #[test]
     fn step_failure_stops_pipeline_and_reports_captured_output() {
-        let dir = TestDir::new();
+        let fs = cargo_project_fs();
         let runner = FakeRunner::new(vec![
             Ok(pass()),
             Ok(fail("stdout details", "stderr details")),
         ]);
 
-        let (code, out, err) = run_with(&["lint", dir.as_str()], &runner);
+        let (code, out, err) = run_with(&["lint", ROOT], &runner, &fs);
 
         assert_eq!(code, ExitCode::from(1));
         assert_eq!(out, "");
@@ -515,43 +616,74 @@ mod tests {
         assert!(err.contains("stderr details"));
         assert!(err.contains("stdout details"));
         assert!(err.contains("status: FAIL"));
-        assert!(err.contains(&format!("└ run rapport fix {}", dir.as_str())));
+        assert!(err.contains(&format!("└ run rapport fix {ROOT}")));
         assert_eq!(runner.calls().len(), 2);
     }
 
     #[test]
     fn invoke_failure_reports_recovery_hint() {
-        let dir = TestDir::new();
+        let fs = cargo_project_fs();
         let runner = FakeRunner::new(vec![Err(io::Error::new(
             io::ErrorKind::NotFound,
             "missing cargo",
         ))]);
 
-        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+        let (code, out, err) = run_with(&["build", ROOT], &runner, &fs);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains(&format!("You ran: rapport build {}", dir.as_str())));
+        assert!(err.contains(&format!("You ran: rapport build {ROOT}")));
         assert!(err.contains("Failed to invoke cargo: missing cargo"));
         assert!(err.contains("└ run which cargo"));
     }
 
     #[test]
     fn missing_path_errors_before_running_any_commands() {
-        let missing = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
-            "rapport-missing-{}",
-            TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
-        )))
-        .expect("temp dir path should be utf8");
+        let fs = InMemoryFileSystem::default();
         let runner = FakeRunner::all_pass(1);
 
-        let (code, out, err) = run_with(&["build", missing.as_str()], &runner);
+        let (code, out, err) = run_with(&["build", MISSING], &runner, &fs);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains(&format!("You ran: rapport build {missing}")));
+        assert!(err.contains(&format!("You ran: rapport build {MISSING}")));
         assert!(err.contains("does not exist or is not a directory"));
         assert!(err.contains("└ run rapport help build"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn path_outside_git_repository_errors_before_running_any_commands() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_directory(OUTSIDE_REPO);
+        fs.add_file(OUTSIDE_MANIFEST);
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", OUTSIDE_REPO], &runner, &fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains(&format!("You ran: rapport build {OUTSIDE_REPO}")));
+        assert!(err.contains("is not inside a git repository"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn git_repository_without_supported_project_errors_before_running_any_commands() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_directory(ROOT);
+        fs.add_file(ROOT_GIT_MARKER);
+        fs.add_directory(ROOT_CHILD);
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", ROOT_CHILD], &runner, &fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains(&format!("You ran: rapport build {ROOT_CHILD}")));
+        assert!(err.contains(&format!(
+            "has no supported project between it and git root {ROOT}"
+        )));
         assert_eq!(runner.calls(), Vec::new());
     }
 }

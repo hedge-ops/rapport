@@ -1,6 +1,8 @@
 # default target for local development
 default: dev
 
+mod cargo 'tests/cargo'
+
 # --------------------------------------------------------------------------
 # Development
 # --------------------------------------------------------------------------
@@ -26,6 +28,10 @@ test:
     @echo '{{ style("command") }}test:{{ NORMAL }}'
     cargo nextest run --workspace
 
+# runs all acceptance suites
+acceptance:
+    @just tests/cargo/acceptance
+
 # runs tests with coverage report
 cover:
     @echo '{{ style("command") }}cover:{{ NORMAL }}'
@@ -50,8 +56,8 @@ check-deps:
 # local development: fix, check, build, test
 dev: fix check build test
 
-# CI pipeline: check, build, test
-ci: check build test
+# CI pipeline: check, build, test, acceptance
+ci: check build test acceptance
 
 # Update Cargo dependencies and test
 update-deps:

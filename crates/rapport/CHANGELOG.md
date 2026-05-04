@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added git-root-bounded project discovery for Cargo projects via `Cargo.toml`.
+
 ## [0.1.0] - 2026-05-02
 
 ### Added

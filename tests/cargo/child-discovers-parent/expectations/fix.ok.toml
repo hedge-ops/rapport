@@ -1,0 +1,3 @@
+verb = "fix"
+status = "ok"
+stdout = "fix.stdout"

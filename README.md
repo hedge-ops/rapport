@@ -31,8 +31,22 @@ rapport validate <path>  # lint + build + test
 rapport audit <path>     # validate + cargo build --release + cargo doc --no-deps
 ```
 
-Project discovery is not implemented yet. For this checkpoint, `rapport`
-validates that the path exists and assumes cargo for the command runner.
+`rapport` walks upward from the path you pass until the git root, then runs the
+nearest supported project it finds. Cargo projects are detected by a
+`Cargo.toml` file.
+
+Acceptance fixtures live under `tests/cargo`. The parent acceptance target runs
+each acceptance suite:
+
+```text
+just acceptance
+```
+
+The cargo acceptance script builds `rapport` once, discovers fixture
+expectations, and runs the built binary directly against each fixture. Each
+fixture has a `rapport.toml` input path plus per-verb expectations under
+`expectations`, such as `build.ok.toml` with optional stdout/stderr snapshots.
+The cargo suite can also be run directly with `just tests/cargo/acceptance`.
 
 ## Testing
 
@@ -61,7 +75,7 @@ The initial crate scaffolding is in place:
 - [x] `rapport-prose` - markdown-ish output using the builder pattern
 - [x] `rapport-cli` - typed CLI parsing primitives
 - [x] `rapport` - first runnable cargo lifecycle CLI
-- [ ] project discovery from local markers such as `Cargo.toml`
+- [x] project discovery from local markers such as `Cargo.toml`
 
 ## Outstanding Questions
 

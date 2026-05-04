@@ -1,0 +1,3 @@
+verb = "lint"
+status = "ok"
+stdout = "lint.stdout"
