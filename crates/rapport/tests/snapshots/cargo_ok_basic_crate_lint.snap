@@ -1,0 +1,16 @@
+---
+source: crates/rapport/tests/cargo_e2e.rs
+expression: result.snapshot()
+---
+exit: 0
+stdout:
+---
+status: pass
+duration: [duration]
+
+## Next
+
+└ run rapport build [project]
+stderr:
+---
+(empty)

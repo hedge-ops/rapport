@@ -1,0 +1,26 @@
+---
+source: crates/rapport/tests/cargo_e2e.rs
+expression: result.snapshot()
+---
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+## Output
+
+```
+Diff in [project]/src/lib.rs:1:
+-pub fn answer()->u8{42}
++pub fn answer() -> u8 {
++    42
++}
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport fix [project]
