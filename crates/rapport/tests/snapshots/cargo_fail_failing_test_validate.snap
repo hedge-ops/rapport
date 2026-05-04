@@ -12,7 +12,7 @@ stderr:
 
 ```
 Compiling failing_test v0.1.0 ([project])
-    Finished `test` profile [unoptimized + debuginfo] target(s) in [duration]
+    Finished `test` profile [cargo-profile] target(s) in [duration]
      Running unittests src/lib.rs ([target]/debug/deps/failing_test-[hash])
 error: test failed, to rerun pass `--lib`
 

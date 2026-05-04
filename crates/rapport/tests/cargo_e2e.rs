@@ -142,6 +142,10 @@ fn assert_snapshot(name: &str, project: &FixtureProject, result: &RunResult) {
     settings.set_prepend_module_to_snapshot(false);
     settings.add_filter(r"duration: [0-9]+(\.[0-9]+)?s", "duration: [duration]");
     settings.add_filter(r"in [0-9]+(\.[0-9]+)?s", "in [duration]");
+    settings.add_filter(
+        r"Finished `([^`]+)` profile \[[^\]]+\] target\(s\)",
+        "Finished `$1` profile [cargo-profile] target(s)",
+    );
     settings.add_filter(r"rust-[0-9]+\.[0-9]+\.[0-9]+", "rust-[version]");
     settings.add_filter(
         r"thread '([^']+)' \([0-9]+\) panicked",
