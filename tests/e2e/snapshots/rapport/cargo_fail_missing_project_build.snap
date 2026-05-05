@@ -6,7 +6,7 @@ stderr:
 ---
 You ran: rapport build [project]
 No supported project marker was found between [project] and git root [project].
-Expected `Cargo.toml` for Cargo or `Package.swift` for SwiftPM or `fastlane/Fastfile` for Fastlane.
+Expected `Cargo.toml` for Cargo or `Package.swift` for SwiftPM or `fastlane/Fastfile` for Fastlane or `kustomization.yaml` for Kustomize or `kustomization.yml` for Kustomize.
 
 ## Next
 

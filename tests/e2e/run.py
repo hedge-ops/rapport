@@ -90,7 +90,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run rapport CLI e2e cases")
     parser.add_argument(
         "--convention",
-        choices=("cargo", "swift", "fastlane"),
+        choices=("cargo", "swift", "fastlane", "kustomize"),
         help="run only cases for one project convention",
     )
     parser.add_argument(
@@ -226,6 +226,8 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
             env, context = configure_swift(env, context, case)
         elif case.convention == "fastlane":
             env, context = configure_fastlane(env, context, case)
+        elif case.convention == "kustomize":
+            env, context = configure_kustomize(env, context, case)
         else:
             return f"\n--- {case.name} configuration error ---\nunsupported convention: {case.convention}"
 
@@ -333,6 +335,36 @@ def configure_fastlane(env: dict[str, str], context: RunContext, case: Case) -> 
         pass
     else:
         raise ValueError(f"unsupported fastlane toolchain mode: {mode}")
+
+    env["PATH"] = str(tool_root)
+    return env, RunContext(
+        temp_root=context.temp_root,
+        project=context.project,
+        toolchain=tool_root,
+    )
+
+
+def configure_kustomize(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
+    mode = case.toolchain or "full"
+    tool_root = context.temp_root / "toolchain"
+    tool_root.mkdir()
+
+    if mode == "full":
+        write_executable(tool_root / "kustomize", kustomize_script())
+        write_executable(tool_root / "kubectl", kubectl_script())
+        write_executable(tool_root / "kubeconform", kubeconform_script())
+    elif mode == "kubectl":
+        write_executable(tool_root / "kubectl", kubectl_script())
+        write_executable(tool_root / "kubeconform", kubeconform_script())
+    elif mode == "standalone":
+        write_executable(tool_root / "kustomize", kustomize_script())
+        write_executable(tool_root / "kubeconform", kubeconform_script())
+    elif mode == "missing_renderer":
+        write_executable(tool_root / "kubeconform", kubeconform_script())
+    elif mode == "missing_validator":
+        write_executable(tool_root / "kubectl", kubectl_script())
+    else:
+        raise ValueError(f"unsupported kustomize toolchain mode: {mode}")
 
     env["PATH"] = str(tool_root)
     return env, RunContext(
@@ -504,6 +536,135 @@ if /usr/bin/grep -q "xcodebuild" fastlane/Fastfile; then
 else
     echo "fastlane lane $lane passed"
 fi
+"""
+
+
+def kubectl_script() -> str:
+    return """#!/bin/sh
+set -u
+
+render_kustomize() {
+    dir="${1:-.}"
+    manifest="$dir/kustomization.yaml"
+    if [ ! -f "$manifest" ]; then
+        manifest="$dir/kustomization.yml"
+    fi
+    if [ ! -f "$manifest" ]; then
+        echo "error: no kustomization.yaml or kustomization.yml found in $dir" >&2
+        exit 1
+    fi
+    if /usr/bin/grep -q "malformed:" "$manifest"; then
+        echo "error: accumulating resources: yaml: line 2: did not find expected node content" >&2
+        exit 1
+    fi
+    if /usr/bin/grep -q "missing.yaml" "$manifest"; then
+        echo "Error: accumulating resources: accumulation err='accumulating resources from missing.yaml: no such file or directory'" >&2
+        exit 1
+    fi
+    kind="Deployment"
+    if /usr/bin/grep -R "kind: TotallyInvalid" "$dir" >/dev/null 2>&1; then
+        kind="TotallyInvalid"
+    fi
+    echo "---"
+    echo "apiVersion: apps/v1"
+    echo "kind: $kind"
+    echo "metadata:"
+    echo "  name: rapport-app"
+}
+
+case "${1:-}" in
+version)
+    if [ "${2:-}" = "--client" ]; then
+        echo "Client Version: v1.31.0"
+        exit 0
+    fi
+    echo "unexpected kubectl version args: $*" >&2
+    exit 2
+    ;;
+kustomize)
+    render_kustomize "${2:-.}"
+    ;;
+*)
+    echo "unexpected kubectl args: $*" >&2
+    exit 2
+    ;;
+esac
+"""
+
+
+def kustomize_script() -> str:
+    return """#!/bin/sh
+set -u
+
+render_kustomize() {
+    dir="${1:-.}"
+    manifest="$dir/kustomization.yaml"
+    if [ ! -f "$manifest" ]; then
+        manifest="$dir/kustomization.yml"
+    fi
+    if [ ! -f "$manifest" ]; then
+        echo "error: no kustomization.yaml or kustomization.yml found in $dir" >&2
+        exit 1
+    fi
+    if /usr/bin/grep -q "malformed:" "$manifest"; then
+        echo "error: accumulating resources: yaml: line 2: did not find expected node content" >&2
+        exit 1
+    fi
+    if /usr/bin/grep -q "missing.yaml" "$manifest"; then
+        echo "Error: accumulating resources: accumulation err='accumulating resources from missing.yaml: no such file or directory'" >&2
+        exit 1
+    fi
+    kind="Deployment"
+    if /usr/bin/grep -R "kind: TotallyInvalid" "$dir" >/dev/null 2>&1; then
+        kind="TotallyInvalid"
+    fi
+    echo "---"
+    echo "apiVersion: apps/v1"
+    echo "kind: $kind"
+    echo "metadata:"
+    echo "  name: rapport-app"
+}
+
+case "${1:-}" in
+version)
+    echo "v5.4.3"
+    ;;
+build)
+    render_kustomize "${2:-.}"
+    ;;
+*)
+    echo "unexpected kustomize args: $*" >&2
+    exit 2
+    ;;
+esac
+"""
+
+
+def kubeconform_script() -> str:
+    return """#!/bin/sh
+set -u
+
+if [ "${1:-}" = "-v" ]; then
+    echo "v0.6.7"
+    exit 0
+fi
+
+target="."
+for arg in "$@"; do
+    target="$arg"
+done
+if [ "$target" = "-" ]; then
+    input="$(/bin/cat)"
+    if printf "%s\n" "$input" | /usr/bin/grep "kind: TotallyInvalid" >/dev/null 2>&1; then
+        echo "stdin - Deployment rapport-app failed validation: could not find schema for TotallyInvalid" >&2
+        exit 1
+    fi
+elif /usr/bin/grep -R "kind: TotallyInvalid" "$target" >/dev/null 2>&1; then
+    echo "deployment.yaml - Deployment rapport-app failed validation: could not find schema for TotallyInvalid" >&2
+    exit 1
+fi
+
+echo "Summary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0"
 """
 
 

@@ -1,4 +1,4 @@
-use super::{LifecycleStep, Phase, Project, lifecycle_step};
+use super::{LifecycleAction, LifecycleStep, Phase, Project, ToolResolutionError, lifecycle_step};
 use crate::{CommandRunner, CommandSpec};
 use rapport_cli::FileSystem;
 use std::io;
@@ -10,8 +10,8 @@ pub(super) fn name() -> &'static str {
     "SwiftPM"
 }
 
-pub(super) fn marker() -> &'static str {
-    "Package.swift"
+pub(super) fn markers() -> &'static [&'static str] {
+    &["Package.swift"]
 }
 
 pub(super) fn primary_program() -> &'static str {
@@ -44,7 +44,7 @@ pub(super) fn validate_manifest(project: &Project, files: &impl FileSystem) -> R
 pub(super) fn fix(
     project: &Project,
     runner: &dyn CommandRunner,
-) -> Result<Vec<LifecycleStep>, FormatterResolutionError> {
+) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
     let formatter = resolve_formatter(project, runner)?;
     Ok(vec![formatter_step(
         Phase::Format,
@@ -58,7 +58,7 @@ pub(super) fn fix(
 pub(super) fn lint(
     project: &Project,
     runner: &dyn CommandRunner,
-) -> Result<Vec<LifecycleStep>, FormatterResolutionError> {
+) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
     let formatter = resolve_formatter(project, runner)?;
     Ok(vec![formatter_step(
         Phase::Lint,
@@ -87,16 +87,6 @@ enum SwiftFormatter {
     Direct,
 }
 
-#[derive(Debug)]
-pub(crate) enum FormatterResolutionError {
-    MissingSwift(io::Error),
-    MissingFormatter,
-    ProbeInvoke {
-        program: &'static str,
-        err: io::Error,
-    },
-}
-
 pub(crate) fn parse_swift_tools_version(contents: &str) -> Result<&str, &'static str> {
     let first_line = contents.lines().next().unwrap_or_default();
     let Some(raw_version) = first_line.strip_prefix("// swift-tools-version:") else {
@@ -112,16 +102,16 @@ pub(crate) fn parse_swift_tools_version(contents: &str) -> Result<&str, &'static
 fn resolve_formatter(
     project: &Project,
     runner: &(impl CommandRunner + ?Sized),
-) -> Result<SwiftFormatter, FormatterResolutionError> {
+) -> Result<SwiftFormatter, ToolResolutionError> {
     let driver_probe = CommandSpec::new(PRIMARY_PROGRAM, ["format", "--version"]);
     match runner.run(&driver_probe, &project.root) {
         Ok(outcome) if outcome.success => return Ok(SwiftFormatter::Driver),
         Ok(_) => {}
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            return Err(FormatterResolutionError::MissingSwift(err));
+            return Err(ToolResolutionError::MissingSwift(err));
         }
         Err(err) => {
-            return Err(FormatterResolutionError::ProbeInvoke {
+            return Err(ToolResolutionError::ProbeInvoke {
                 program: PRIMARY_PROGRAM,
                 err,
             });
@@ -131,11 +121,11 @@ fn resolve_formatter(
     let direct_probe = CommandSpec::new(DIRECT_FORMATTER_PROGRAM, ["--version"]);
     match runner.run(&direct_probe, &project.root) {
         Ok(outcome) if outcome.success => Ok(SwiftFormatter::Direct),
-        Ok(_) => Err(FormatterResolutionError::MissingFormatter),
+        Ok(_) => Err(ToolResolutionError::MissingFormatter),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            Err(FormatterResolutionError::MissingFormatter)
+            Err(ToolResolutionError::MissingFormatter)
         }
-        Err(err) => Err(FormatterResolutionError::ProbeInvoke {
+        Err(err) => Err(ToolResolutionError::ProbeInvoke {
             program: DIRECT_FORMATTER_PROGRAM,
             err,
         }),
@@ -165,7 +155,10 @@ fn formatter_step(
         SwiftFormatter::Driver => formatter_spec(PRIMARY_PROGRAM, driver_args, inputs),
         SwiftFormatter::Direct => formatter_spec(DIRECT_FORMATTER_PROGRAM, direct_args, inputs),
     };
-    LifecycleStep { phase, spec }
+    LifecycleStep {
+        phase,
+        action: LifecycleAction::Command(spec),
+    }
 }
 
 fn formatter_spec(
@@ -199,6 +192,7 @@ mod tests {
     fn swift_project(root: impl Into<Utf8PathBuf>) -> Project {
         Project {
             convention: ProjectConvention::SwiftPackageManager,
+            marker: "Package.swift",
             root: root.into(),
         }
     }

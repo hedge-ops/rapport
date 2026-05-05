@@ -1,0 +1,12 @@
+exit: 0
+stdout:
+---
+status: pass
+duration: [duration]
+
+## Next
+
+└ run rapport test [project]/platform
+stderr:
+---
+(empty)

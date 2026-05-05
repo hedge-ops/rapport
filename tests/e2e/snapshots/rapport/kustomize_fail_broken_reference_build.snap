@@ -1,0 +1,20 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Kustomize project: [project]
+Failing phase: build
+## Output
+
+```
+Error: accumulating resources: accumulation err='accumulating resources from missing.yaml: no such file or directory'
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

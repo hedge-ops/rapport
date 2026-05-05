@@ -1,8 +1,7 @@
 mod cargo;
 mod fastlane;
+mod kustomize;
 pub(crate) mod swift;
-
-pub(crate) use swift::FormatterResolutionError;
 
 use crate::{CommandRunner, CommandSpec, Verb};
 use rapport_cli::{FileSystem, Utf8Path, Utf8PathBuf};
@@ -12,12 +11,18 @@ static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
     ProjectConvention::Cargo,
     ProjectConvention::SwiftPackageManager,
     ProjectConvention::Fastlane,
+    ProjectConvention::Kustomize,
 ];
 
 pub(crate) fn describe_expected_markers() -> String {
     let entries = PROJECT_CONVENTIONS
         .iter()
-        .map(|convention| format!("`{}` for {}", convention.marker(), convention.name()))
+        .flat_map(|convention| {
+            convention
+                .markers()
+                .iter()
+                .map(|marker| format!("`{marker}` for {}", convention.name()))
+        })
         .collect::<Vec<_>>();
     entries.join(" or ")
 }
@@ -27,6 +32,7 @@ enum ProjectConvention {
     Cargo,
     SwiftPackageManager,
     Fastlane,
+    Kustomize,
 }
 
 impl ProjectConvention {
@@ -35,14 +41,16 @@ impl ProjectConvention {
             Self::Cargo => cargo::name(),
             Self::SwiftPackageManager => swift::name(),
             Self::Fastlane => fastlane::name(),
+            Self::Kustomize => kustomize::name(),
         }
     }
 
-    fn marker(self) -> &'static str {
+    fn markers(self) -> &'static [&'static str] {
         match self {
-            Self::Cargo => cargo::marker(),
-            Self::SwiftPackageManager => swift::marker(),
-            Self::Fastlane => fastlane::marker(),
+            Self::Cargo => cargo::markers(),
+            Self::SwiftPackageManager => swift::markers(),
+            Self::Fastlane => fastlane::markers(),
+            Self::Kustomize => kustomize::markers(),
         }
     }
 
@@ -51,13 +59,14 @@ impl ProjectConvention {
             Self::Cargo => cargo::primary_program(),
             Self::SwiftPackageManager => swift::primary_program(),
             Self::Fastlane => fastlane::primary_program(),
+            Self::Kustomize => kustomize::primary_program(),
         }
     }
 
     fn direct_formatter_program(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::direct_formatter_program()),
-            Self::Cargo | Self::Fastlane => None,
+            Self::Cargo | Self::Fastlane | Self::Kustomize => None,
         }
     }
 
@@ -66,13 +75,14 @@ impl ProjectConvention {
             Self::Cargo => None,
             Self::SwiftPackageManager => Some(swift::toolchain_install_hint()),
             Self::Fastlane => Some(fastlane::toolchain_install_hint()),
+            Self::Kustomize => Some(kustomize::renderer_install_hint()),
         }
     }
 
     fn formatter_install_hint(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::formatter_install_hint()),
-            Self::Cargo | Self::Fastlane => None,
+            Self::Cargo | Self::Fastlane | Self::Kustomize => None,
         }
     }
 
@@ -81,6 +91,7 @@ impl ProjectConvention {
             Self::Cargo => Ok(()),
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
             Self::Fastlane => fastlane::validate_manifest(project, files),
+            Self::Kustomize => kustomize::validate_manifest(project, files),
         }
     }
 
@@ -88,11 +99,12 @@ impl ProjectConvention {
         self,
         project: &Project,
         runner: &dyn CommandRunner,
-    ) -> Result<Vec<LifecycleStep>, FormatterResolutionError> {
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::fix()),
             Self::SwiftPackageManager => swift::fix(project, runner),
             Self::Fastlane => Ok(fastlane::fix()),
+            Self::Kustomize => Ok(kustomize::fix()),
         }
     }
 
@@ -100,19 +112,25 @@ impl ProjectConvention {
         self,
         project: &Project,
         runner: &dyn CommandRunner,
-    ) -> Result<Vec<LifecycleStep>, FormatterResolutionError> {
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::lint()),
             Self::SwiftPackageManager => swift::lint(project, runner),
             Self::Fastlane => Ok(fastlane::lint()),
+            Self::Kustomize => kustomize::lint(project, runner),
         }
     }
 
-    fn build(self) -> Vec<LifecycleStep> {
+    fn build(
+        self,
+        project: &Project,
+        runner: &dyn CommandRunner,
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
-            Self::Cargo => cargo::build(),
-            Self::SwiftPackageManager => swift::build(),
-            Self::Fastlane => fastlane::build(),
+            Self::Cargo => Ok(cargo::build()),
+            Self::SwiftPackageManager => Ok(swift::build()),
+            Self::Fastlane => Ok(fastlane::build()),
+            Self::Kustomize => kustomize::build(project, runner),
         }
     }
 
@@ -121,6 +139,7 @@ impl ProjectConvention {
             Self::Cargo => cargo::test(),
             Self::SwiftPackageManager => swift::test(),
             Self::Fastlane => fastlane::test(),
+            Self::Kustomize => kustomize::test(),
         }
     }
 
@@ -129,38 +148,61 @@ impl ProjectConvention {
             Self::Cargo => cargo::audit(),
             Self::SwiftPackageManager => swift::audit(),
             Self::Fastlane => fastlane::audit(),
+            Self::Kustomize => kustomize::audit(),
         }
+    }
+
+    fn matching_marker(self, root: &Utf8Path, files: &impl FileSystem) -> Option<&'static str> {
+        self.markers()
+            .iter()
+            .copied()
+            .find(|marker| files.is_file(root.join(marker)))
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Project {
     convention: ProjectConvention,
+    marker: &'static str,
     pub(crate) root: Utf8PathBuf,
 }
 
 impl Project {
-    pub(crate) fn discover(
+    pub(crate) fn discover_all(
         start: &Utf8Path,
         files: &impl FileSystem,
-    ) -> Result<Self, DiscoveryError> {
+    ) -> Result<Vec<Self>, DiscoveryError> {
         let mut current = absolute_path(start)?;
         let mut nearest_project = None;
 
         loop {
             for convention in PROJECT_CONVENTIONS {
-                if nearest_project.is_none() && files.is_file(current.join(convention.marker())) {
+                if nearest_project.is_none()
+                    && let Some(marker) = convention.matching_marker(&current, files)
+                {
                     nearest_project = Some(Self {
                         convention: *convention,
+                        marker,
                         root: current.clone(),
                     });
                 }
             }
             if files.exists(current.join(".git")) {
-                return nearest_project.ok_or_else(|| DiscoveryError::NoSupportedProject {
-                    start: start.to_owned(),
-                    git_root: current,
-                });
+                if let Some(project) = nearest_project {
+                    return Ok(vec![project]);
+                }
+
+                let root = absolute_path(start)?;
+                let mut projects = Vec::new();
+                discover_kustomize_targets(&root, files, &mut projects)?;
+                return if projects.is_empty() {
+                    Err(DiscoveryError::NoSupportedProject {
+                        start: start.to_owned(),
+                        git_root: current,
+                    })
+                } else {
+                    Ok(projects)
+                };
             }
             if !current.pop() {
                 return Err(DiscoveryError::OutsideGitRepository {
@@ -171,7 +213,7 @@ impl Project {
     }
 
     pub(crate) fn marker(&self) -> &'static str {
-        self.convention.marker()
+        self.marker
     }
 
     pub(crate) fn manifest_path(&self) -> Utf8PathBuf {
@@ -210,11 +252,11 @@ impl Project {
         &self,
         verb: Verb,
         runner: &dyn CommandRunner,
-    ) -> Result<Vec<LifecycleStep>, FormatterResolutionError> {
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match verb {
             Verb::Fix => self.convention.fix(self, runner),
             Verb::Lint => self.convention.lint(self, runner),
-            Verb::Build => Ok(self.convention.build()),
+            Verb::Build => self.convention.build(self, runner),
             Verb::Test => Ok(self.convention.test()),
             Verb::Validate => self.validate_steps(runner),
             Verb::Audit => {
@@ -235,15 +277,59 @@ impl Project {
     fn validate_steps(
         &self,
         runner: &dyn CommandRunner,
-    ) -> Result<Vec<LifecycleStep>, FormatterResolutionError> {
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         if self.convention == ProjectConvention::Fastlane {
             return Ok(fastlane::validate());
         }
         let mut steps = self.convention.lint(self, runner)?;
-        steps.extend(self.convention.build());
+        steps.extend(self.convention.build(self, runner)?);
         steps.extend(self.convention.test());
         Ok(steps)
     }
+}
+
+fn discover_kustomize_targets(
+    root: &Utf8Path,
+    files: &impl FileSystem,
+    projects: &mut Vec<Project>,
+) -> Result<(), DiscoveryError> {
+    if root.file_name() == Some(".git") {
+        return Ok(());
+    }
+
+    if let Some(marker) = ProjectConvention::Kustomize.matching_marker(root, files) {
+        projects.push(Project {
+            convention: ProjectConvention::Kustomize,
+            marker,
+            root: root.to_owned(),
+        });
+        return Ok(());
+    }
+
+    for entry in files
+        .read_dir(root)
+        .map_err(|err| DiscoveryError::UnreadableDirectory {
+            path: root.to_owned(),
+            err,
+        })?
+    {
+        if files.is_dir(&entry) {
+            discover_kustomize_targets(&entry, files, projects)?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+pub(crate) enum ToolResolutionError {
+    MissingSwift(io::Error),
+    MissingFormatter,
+    MissingKustomizeRenderer,
+    MissingKubernetesValidator,
+    ProbeInvoke {
+        program: &'static str,
+        err: io::Error,
+    },
 }
 
 #[derive(Debug)]
@@ -259,6 +345,10 @@ pub(crate) enum DiscoveryError {
         start: Utf8PathBuf,
     },
     UnreadableStart {
+        path: Utf8PathBuf,
+        err: io::Error,
+    },
+    UnreadableDirectory {
         path: Utf8PathBuf,
         err: io::Error,
     },
@@ -299,13 +389,29 @@ pub(crate) enum Phase {
 #[derive(Debug, Clone)]
 pub(crate) struct LifecycleStep {
     pub(crate) phase: Phase,
-    pub(crate) spec: CommandSpec,
+    pub(crate) action: LifecycleAction,
 }
 
 impl LifecycleStep {
-    fn new(phase: Phase, spec: CommandSpec) -> Self {
-        Self { phase, spec }
+    fn command(phase: Phase, spec: CommandSpec) -> Self {
+        Self {
+            phase,
+            action: LifecycleAction::Command(spec),
+        }
     }
+
+    fn message(phase: Phase, message: impl Into<String>) -> Self {
+        Self {
+            phase,
+            action: LifecycleAction::Message(message.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum LifecycleAction {
+    Command(CommandSpec),
+    Message(String),
 }
 
 fn lifecycle_step<I, S>(phase: Phase, program: impl Into<String>, args: I) -> LifecycleStep
@@ -313,5 +419,9 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
-    LifecycleStep::new(phase, CommandSpec::new(program, args))
+    LifecycleStep::command(phase, CommandSpec::new(program, args))
+}
+
+fn message_step(phase: Phase, message: impl Into<String>) -> LifecycleStep {
+    LifecycleStep::message(phase, message)
 }

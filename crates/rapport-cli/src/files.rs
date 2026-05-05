@@ -1,7 +1,7 @@
 //! Testable filesystem primitives for rapport CLIs.
 
 pub use camino::{Utf8Path, Utf8PathBuf};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io;
 
 pub trait FileSystem {
@@ -15,6 +15,13 @@ pub trait FileSystem {
     ///
     /// Returns the underlying filesystem error when the path cannot be read.
     fn read_to_string(&self, path: impl AsRef<Utf8Path>) -> io::Result<String>;
+
+    /// Read the immediate children of a directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the directory cannot be read.
+    fn read_dir(&self, path: impl AsRef<Utf8Path>) -> io::Result<Vec<Utf8PathBuf>>;
 
     fn exists(&self, path: impl AsRef<Utf8Path>) -> bool {
         self.is_dir(path.as_ref()) || self.is_file(path)
@@ -36,6 +43,22 @@ impl FileSystem for RealFileSystem {
     fn read_to_string(&self, path: impl AsRef<Utf8Path>) -> io::Result<String> {
         std::fs::read_to_string(path.as_ref())
     }
+
+    fn read_dir(&self, path: impl AsRef<Utf8Path>) -> io::Result<Vec<Utf8PathBuf>> {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(path.as_ref())? {
+            let entry = entry?;
+            let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{} is not a UTF-8 path", path.display()),
+                )
+            })?;
+            entries.push(path);
+        }
+        entries.sort();
+        Ok(entries)
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -46,7 +69,9 @@ pub struct InMemoryFileSystem {
 
 impl InMemoryFileSystem {
     pub fn add_directory(&mut self, path: impl AsRef<Utf8Path>) {
-        self.directories.insert(path.as_ref().to_path_buf());
+        let path = path.as_ref();
+        self.add_parent_directories(path);
+        self.directories.insert(path.to_path_buf());
     }
 
     pub fn add_file(&mut self, path: impl AsRef<Utf8Path>) {
@@ -58,8 +83,22 @@ impl InMemoryFileSystem {
         path: impl AsRef<Utf8Path>,
         contents: impl Into<String>,
     ) {
+        if let Some(parent) = path.as_ref().parent() {
+            self.add_directory(parent);
+        }
         self.files
             .insert(path.as_ref().to_path_buf(), contents.into());
+    }
+
+    fn add_parent_directories(&mut self, path: &Utf8Path) {
+        let mut current = path.parent();
+        while let Some(parent) = current {
+            if parent.as_str().is_empty() {
+                break;
+            }
+            self.directories.insert(parent.to_path_buf());
+            current = parent.parent();
+        }
     }
 }
 
@@ -79,6 +118,29 @@ impl FileSystem for InMemoryFileSystem {
                 format!("{} not found", path.as_ref()),
             )
         })
+    }
+
+    fn read_dir(&self, path: impl AsRef<Utf8Path>) -> io::Result<Vec<Utf8PathBuf>> {
+        let path = path.as_ref();
+        if !self.is_dir(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{path} not found"),
+            ));
+        }
+
+        let mut entries = BTreeSet::new();
+        for directory in &self.directories {
+            if directory.parent() == Some(path) {
+                entries.insert(directory.clone());
+            }
+        }
+        for file in self.files.keys() {
+            if file.parent() == Some(path) {
+                entries.insert(file.clone());
+            }
+        }
+        Ok(entries.into_iter().collect())
     }
 }
 

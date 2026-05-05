@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rapport-app
+spec:
+  selector:
+    matchLabels:
+      app: rapport
+  template:
+    metadata:
+      labels:
+        app: rapport
+    spec:
+      containers:
+        - name: app
+          image: example.com/rapport/app:latest

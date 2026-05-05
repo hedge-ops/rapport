@@ -1,0 +1,20 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Kustomize project: [project]
+Failing phase: build
+## Output
+
+```
+error: accumulating resources: yaml: line 2: did not find expected node content
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

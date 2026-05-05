@@ -5,7 +5,7 @@ mod view;
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 
 use convention::{
-    DiscoveryError, FormatterResolutionError, Phase, Project, describe_expected_markers,
+    DiscoveryError, LifecycleAction, Phase, Project, ToolResolutionError, describe_expected_markers,
 };
 use nonempty::{NonEmpty, nonempty};
 use rapport_cli::{
@@ -288,6 +288,9 @@ fn render_discovery_failure(command: &Command, path: &Utf8Path, err: &DiscoveryE
         DiscoveryError::UnreadableStart { path, err } => {
             vb.paragraph(format!("Failed to inspect {path}: {err}."))
         }
+        DiscoveryError::UnreadableDirectory { path, err } => {
+            vb.paragraph(format!("Failed to inspect directory {path}: {err}."))
+        }
     };
     vb.next_actions(nonempty![RunHint::new(format!(
         "rapport help {}",
@@ -309,21 +312,21 @@ fn render_convention_failure(command: &Command, project: &Project, reason: &str)
         .build()
 }
 
-fn render_formatter_resolution_failure(
+fn render_tool_resolution_failure(
     command: &Command,
     project: &Project,
-    err: &FormatterResolutionError,
+    err: &ToolResolutionError,
 ) -> String {
     let vb = ViewBuilder::new()
         .paragraph(format!("You ran: rapport {command} {}", project.root))
         .paragraph(project.label());
     match err {
-        FormatterResolutionError::MissingSwift(io_err) => vb
+        ToolResolutionError::MissingSwift(io_err) => vb
             .paragraph(format!("Failed to invoke swift: {io_err}"))
             .paragraph(project.toolchain_install_hint().unwrap_or_default())
             .next_actions(nonempty![RunHint::new("swift --version")])
             .build(),
-        FormatterResolutionError::MissingFormatter => vb
+        ToolResolutionError::MissingFormatter => vb
             .paragraph("SwiftPM formatter tooling was not found.")
             .paragraph(project.formatter_install_hint().unwrap_or_default())
             .next_actions(nonempty![
@@ -331,16 +334,34 @@ fn render_formatter_resolution_failure(
                 RunHint::new("swift-format --version")
             ])
             .build(),
-        FormatterResolutionError::ProbeInvoke { program, err } => vb
+        ToolResolutionError::MissingKustomizeRenderer => vb
+            .paragraph("Kustomize renderer tooling was not found.")
+            .paragraph(project.toolchain_install_hint().unwrap_or_default())
+            .next_actions(nonempty![
+                RunHint::new("kustomize version"),
+                RunHint::new("kubectl version --client")
+            ])
+            .build(),
+        ToolResolutionError::MissingKubernetesValidator => vb
+            .paragraph("Kubernetes static validation tooling was not found.")
+            .paragraph(
+                "Install kubeconform from https://github.com/yannh/kubeconform and make sure `kubeconform` is on PATH.",
+            )
+            .next_actions(nonempty![RunHint::new("kubeconform -v")])
+            .build(),
+        ToolResolutionError::ProbeInvoke { program, err } => vb
             .paragraph(format!("Failed to invoke {program}: {err}"))
             .next_actions(nonempty![RunHint::new(format!("{program} --version"))])
             .build(),
     }
 }
 
-fn render_pass(started: Instant, hints: NonEmpty<RunHint>) -> String {
-    ViewBuilder::new()
-        .status(Outcome::Pass, started.elapsed())
+fn render_pass(started: Instant, messages: &[String], hints: NonEmpty<RunHint>) -> String {
+    let mut vb = ViewBuilder::new();
+    if !messages.is_empty() {
+        vb = vb.section("Output", |b| b.captured(messages.join("\n")));
+    }
+    vb.status(Outcome::Pass, started.elapsed())
         .next_actions(hints)
         .build()
 }
@@ -429,8 +450,8 @@ where
     E: Write,
 {
     let requested_path = command.path().as_path();
-    let project = match Project::discover(requested_path, fs) {
-        Ok(project) => project,
+    let projects = match Project::discover_all(requested_path, fs) {
+        Ok(projects) => projects,
         Err(discovery_err) => {
             let _ = writeln!(
                 err,
@@ -440,52 +461,68 @@ where
             return ExitCode::from(2);
         }
     };
-    if let Err(reason) = project.validate_manifest(fs) {
-        let _ = writeln!(
-            err,
-            "{}",
-            render_convention_failure(command, &project, &reason)
-        );
-        return ExitCode::from(2);
-    }
 
-    let steps = match project.lifecycle_steps(command.verb(), runner) {
-        Ok(steps) => steps,
-        Err(formatter_err) => {
+    let mut messages = Vec::new();
+    let started = Instant::now();
+    for project in &projects {
+        if let Err(reason) = project.validate_manifest(fs) {
             let _ = writeln!(
                 err,
                 "{}",
-                render_formatter_resolution_failure(command, &project, &formatter_err)
+                render_convention_failure(command, project, &reason)
             );
             return ExitCode::from(2);
         }
-    };
 
-    let started = Instant::now();
-    for step in steps {
-        let outcome = match runner.run(&step.spec, &project.root) {
-            Ok(o) => o,
-            Err(io_err) => {
+        let steps = match project.lifecycle_steps(command.verb(), runner) {
+            Ok(steps) => steps,
+            Err(tool_err) => {
                 let _ = writeln!(
                     err,
                     "{}",
-                    render_invoke_failure(command, &project, &step.spec, &io_err)
+                    render_tool_resolution_failure(command, project, &tool_err)
                 );
                 return ExitCode::from(2);
             }
         };
-        if !outcome.success {
-            let hints = command.verb().hints(Outcome::Fail, &project.root);
-            let _ = writeln!(
-                err,
-                "{}",
-                render_step_failure(&project, step.phase, &outcome, started, hints)
-            );
-            return ExitCode::from(1);
+
+        for step in steps {
+            match step.action {
+                LifecycleAction::Command(spec) => {
+                    let outcome = match runner.run(&spec, &project.root) {
+                        Ok(o) => o,
+                        Err(io_err) => {
+                            let _ = writeln!(
+                                err,
+                                "{}",
+                                render_invoke_failure(command, project, &spec, &io_err)
+                            );
+                            return ExitCode::from(2);
+                        }
+                    };
+                    if !outcome.success {
+                        let hints = command.verb().hints(Outcome::Fail, &project.root);
+                        let _ = writeln!(
+                            err,
+                            "{}",
+                            render_step_failure(project, step.phase, &outcome, started, hints)
+                        );
+                        return ExitCode::from(1);
+                    }
+                }
+                LifecycleAction::Message(message) => {
+                    messages.push(format!("{}: {message}", project.label()));
+                }
+            }
         }
     }
-    let hints = command.verb().hints(Outcome::Pass, &project.root);
-    let _ = writeln!(out, "{}", render_pass(started, hints));
+    let hint_path = if let [project] = projects.as_slice() {
+        project.root.as_path()
+    } else {
+        requested_path
+    };
+    let hints = command.verb().hints(Outcome::Pass, hint_path);
+    let _ = writeln!(out, "{}", render_pass(started, &messages, hints));
     ExitCode::SUCCESS
 }
 
@@ -555,6 +592,16 @@ mod tests {
                 "source \"https://rubygems.org\"\ngem \"fastlane\", \"2.228.0\"\n",
             );
             dir.write("fastlane/Fastfile", standard_fastfile());
+            dir
+        }
+
+        fn kustomize_project() -> Self {
+            let dir = Self::new();
+            dir.write("kustomization.yaml", "resources:\n  - deployment.yaml\n");
+            dir.write(
+                "deployment.yaml",
+                "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\n",
+            );
             dir
         }
 
@@ -826,6 +873,7 @@ mod tests {
         assert!(err.contains("Cargo.toml"));
         assert!(err.contains("Package.swift"));
         assert!(err.contains("fastlane/Fastfile"));
+        assert!(err.contains("kustomization.yaml"));
         assert_eq!(runner.calls(), Vec::new());
     }
 
@@ -1240,6 +1288,206 @@ mod tests {
         assert!(err.contains("Failed to invoke bundle: missing bundle"));
         assert!(err.contains("gem install bundler"));
         assert!(err.contains("└ run which bundle"));
+    }
+
+    #[test]
+    fn kustomize_build_prefers_standalone_renderer() {
+        let dir = TestDir::kustomize_project();
+        let runner = FakeRunner::all_pass(2);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["build".into(), ".".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn kustomize_build_falls_back_to_kubectl_renderer() {
+        let dir = TestDir::kustomize_project();
+        let runner = FakeRunner::new(vec![
+            Err(io::Error::new(io::ErrorKind::NotFound, "missing kustomize")),
+            Ok(pass()),
+            Ok(pass()),
+        ]);
+
+        let (code, _out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "kubectl".into(),
+                    args: vec!["version".into(), "--client".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "kubectl".into(),
+                    args: vec!["kustomize".into(), ".".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn kustomize_lint_renders_then_validates() {
+        let dir = TestDir::kustomize_project();
+        let runner = FakeRunner::all_pass(3);
+
+        let (code, _out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "kubeconform".into(),
+                    args: vec!["-v".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "/bin/sh".into(),
+                    args: vec![
+                        "-c".into(),
+                        "set -e; rendered=\"$(kustomize build .)\"; printf '%s\\n' \"$rendered\" | kubeconform -strict -summary -ignore-missing-schemas -".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn kustomize_fix_and_test_are_clear_noops() {
+        let dir = TestDir::kustomize_project();
+        let runner = FakeRunner::all_pass(0);
+
+        let (fix_code, fix_out, fix_err) = run_with(&["fix", dir.as_str()], &runner);
+        let (test_code, test_out, test_err) = run_with(&["test", dir.as_str()], &runner);
+
+        assert_eq!(fix_code, ExitCode::SUCCESS);
+        assert_eq!(test_code, ExitCode::SUCCESS);
+        assert_eq!(fix_err, "");
+        assert_eq!(test_err, "");
+        assert!(fix_out.contains("Kustomize has no autofix"));
+        assert!(test_out.contains("No Kubernetes tests configured"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn kustomize_missing_renderer_reports_install_hint() {
+        let dir = TestDir::kustomize_project();
+        let runner = FakeRunner::new(vec![
+            Err(io::Error::new(io::ErrorKind::NotFound, "missing kustomize")),
+            Err(io::Error::new(io::ErrorKind::NotFound, "missing kubectl")),
+        ]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Kustomize renderer tooling was not found"));
+        assert!(err.contains("Install standalone Kustomize"));
+        assert!(err.contains("└ run kustomize version"));
+        assert!(err.contains("└ run kubectl version --client"));
+    }
+
+    #[test]
+    fn kustomize_missing_validator_reports_install_hint() {
+        let dir = TestDir::kustomize_project();
+        let runner = FakeRunner::new(vec![
+            Ok(pass()),
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "missing kubeconform",
+            )),
+        ]);
+
+        let (code, out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Kubernetes static validation tooling was not found"));
+        assert!(err.contains("kubeconform"));
+        assert!(err.contains("└ run kubeconform -v"));
+    }
+
+    #[test]
+    fn kustomize_umbrella_discovery_runs_child_targets() {
+        let dir = TestDir::new();
+        dir.write(
+            "platform/base/kustomization.yaml",
+            "resources:\n  - deployment.yaml\n",
+        );
+        dir.write(
+            "platform/base/deployment.yaml",
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\n",
+        );
+        dir.write(
+            "platform/overlays/dev/kustomization.yaml",
+            "resources:\n  - ../../base\n",
+        );
+        let platform = dir.path.join("platform");
+        let runner = FakeRunner::all_pass(4);
+
+        let (code, _out, err) = run_with(&["build", platform.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["version".into()],
+                    cwd: dir.path.join("platform/base"),
+                },
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["build".into(), ".".into()],
+                    cwd: dir.path.join("platform/base"),
+                },
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["version".into()],
+                    cwd: dir.path.join("platform/overlays/dev"),
+                },
+                RecordedCommand {
+                    program: "kustomize".into(),
+                    args: vec!["build".into(), ".".into()],
+                    cwd: dir.path.join("platform/overlays/dev"),
+                },
+            ]
+        );
     }
 
     #[test]

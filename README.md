@@ -20,8 +20,8 @@ internal repository. This ports that and makes it better:
 
 ## Current checkpoint
 
-`rapport` currently discovers Cargo, SwiftPM, and Fastlane projects from the
-path you pass, walking upward to the nearest supported project marker.
+`rapport` currently discovers Cargo, SwiftPM, Fastlane, and Kustomize projects
+from the path you pass, walking upward to the nearest supported project marker.
 
 ```text
 rapport fix <path>       # cargo fmt
@@ -66,6 +66,28 @@ Xcode app projects follow the Fastlane convention: keep the `.xcworkspace` or
 `.xcodeproj` alongside `fastlane/Fastfile`, and let the standard lanes wrap the
 project-specific `xcodebuild`, lint, formatting, and release steps.
 
+Kustomize targets are detected by `kustomization.yaml` or `kustomization.yml`.
+When you pass an umbrella directory without its own marker, rapport recursively
+runs child Kustomize targets beneath it. The initial Kubernetes runner is
+offline-only: it renders manifests and performs static validation, but never
+runs `kubectl apply`, prunes resources, or depends on a live cluster.
+This is shaped for platform-style directories that aggregate services,
+observability, ingress, and application overlays through a top-level
+`kustomization.yaml`.
+
+```text
+rapport fix <path>       # no-op; Kustomize has no autofix
+rapport lint <path>      # render, then kubeconform -strict -summary -ignore-missing-schemas -
+rapport build <path>     # kustomize build . or kubectl kustomize .
+rapport test <path>      # no-op; no Kubernetes tests configured
+rapport validate <path>  # lint + build + test
+rapport audit <path>     # validate
+```
+
+Rendering prefers standalone `kustomize build .` and falls back to
+`kubectl kustomize .`. Static validation uses `kubeconform` against the
+rendered manifest stream.
+
 CLI end-to-end fixtures run outside Cargo's test runner so `rapport` can invoke
 Cargo projects without nesting Cargo inside `cargo test`. The e2e target builds
 `rapport` once, copies each fixture into a temporary directory, and compares
@@ -77,12 +99,12 @@ just e2e
 
 Cases live under `tests/e2e/cases`, snapshots live under
 `tests/e2e/snapshots`, and project fixtures live under
-`crates/rapport/tests/fixtures`. SwiftPM and Fastlane e2e cases use generated
-fake toolchains so the suite does not require Swift, Ruby, Bundler, Fastlane, or
-Xcode on the host. Python tooling for the harness is managed with uv through
-`pyproject.toml` and `uv.lock`. The old `just acceptance` command remains as a
-compatibility alias for `just e2e`; `just tests/cargo/acceptance` runs only the
-Cargo subset.
+`crates/rapport/tests/fixtures`. SwiftPM, Fastlane, and Kustomize e2e cases use
+generated fake toolchains so the suite does not require Swift, Ruby, Bundler,
+Fastlane, Xcode, kubectl, Kustomize, kubeconform, or a Kubernetes cluster on the
+host. Python tooling for the harness is managed with uv through `pyproject.toml`
+and `uv.lock`. The old `just acceptance` command remains as a compatibility
+alias for `just e2e`; `just tests/cargo/acceptance` runs only the Cargo subset.
 
 ## Testing
 
@@ -111,7 +133,7 @@ The initial crate scaffolding is in place:
 - [x] `rapport-cli` - typed CLI parsing primitives
 - [x] `rapport` - first runnable cargo lifecycle CLI
 - [x] project discovery from local markers such as `Cargo.toml`, `Package.swift`,
-  and `fastlane/Fastfile`
+  `fastlane/Fastfile`, and `kustomization.yaml`
 
 ## Outstanding Questions
 
