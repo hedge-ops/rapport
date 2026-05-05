@@ -1,0 +1,10 @@
+[project]
+name = "rapport-dev"
+version = "0.0.0"
+description = "Python developer tooling for Rapport."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false

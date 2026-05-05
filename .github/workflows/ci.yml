@@ -38,5 +38,13 @@ jobs:
         with:
           tool: nextest
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install
+
       - name: Run CI
         run: just ci

@@ -1,31 +1,25 @@
 # Testing
 
-Rapport's own unit and integration tests are Rust-native. Acceptance coverage is
-script-driven: the harness builds `rapport` once, then runs the compiled binary
-against fixture projects so Rapport can invoke Cargo without being nested inside
-Cargo's test runner.
+Rapport's unit and Rust integration tests stay Rust-native. CLI end-to-end
+coverage is script-driven: the e2e harness builds `rapport` once, then runs the
+compiled binary against copied fixture projects so Rapport can invoke Cargo or
+SwiftPM tools without being nested inside Cargo's test runner.
 
 ## Commands
 
-Run the repository's standard test command:
+Run the repository's Rust test suite:
 
 ```bash
 just test
 ```
 
-Run the Cargo acceptance fixtures:
+Run the CLI end-to-end suite:
 
 ```bash
-just acceptance
+just e2e
 ```
 
-Run the Cargo end-to-end integration tests directly:
-
-```bash
-cargo test -p rapport --test cargo_e2e -- --test-threads=1
-```
-
-Run the Cargo acceptance fixtures directly:
+Run only the Cargo e2e subset:
 
 ```bash
 just tests/cargo/acceptance
@@ -37,77 +31,67 @@ Run the same checks GitHub Actions runs:
 just ci
 ```
 
-`just ci` runs formatting checks, clippy, a workspace build, the workspace test
-suite, and the script-backed acceptance suite.
+`just ci` runs formatting checks, clippy, a workspace build, the workspace Rust
+test suite, and the external CLI e2e suite.
 
-## Cargo End-to-End Tests
+The Python harness environment is managed with uv. `just e2e` runs through
+`uv run --locked`, so update `uv.lock` whenever Python tooling dependencies
+change:
 
-The Cargo end-to-end harness lives in
-`crates/rapport/tests/cargo_e2e.rs`. It is a normal Cargo integration test, so
-it is discovered by `cargo test` and `cargo nextest run --workspace`.
+```bash
+uv lock
+```
 
-The harness uses `assert_cmd` to invoke the compiled `rapport` binary. Each test
-copies a fixture project into a fresh temporary directory before running a verb,
-so commands like `cargo fmt`, generated `Cargo.lock` files, and `target/`
-artifacts never mutate checked-in fixtures.
+## CLI End-to-End Tests
 
-Cargo fixtures live under:
+The e2e harness lives in `tests/e2e/run.py`. It discovers TOML case manifests
+under:
 
 ```text
-crates/rapport/tests/fixtures/cargo/{ok,fail}/...
+tests/e2e/cases/**/*.toml
 ```
+
+Each case names the convention, fixture, verb, expected exit code, and snapshot
+file. Cargo and SwiftPM project fixtures live under:
+
+```text
+crates/rapport/tests/fixtures/{cargo,swift}/...
+```
+
+The child-path Cargo discovery fixture remains under `tests/cargo` because that
+path is still the backwards-compatible Cargo-only entrypoint.
 
 Snapshots live under:
 
 ```text
-crates/rapport/tests/snapshots/
+tests/e2e/snapshots/rapport/
 ```
 
 Update accepted snapshots with:
 
 ```bash
-INSTA_UPDATE=always cargo test -p rapport --test cargo_e2e
+uv run --locked python tests/e2e/run.py --update
 ```
 
-Review snapshot changes before committing them. They are part of the public
+Review snapshot changes before committing them. They are the command-level
 behavior contract for exit codes, stdout, stderr, failure messages, and
 next-action hints.
 
-## Cargo Acceptance Tests
-
-The Cargo acceptance harness lives in `tests/cargo/acceptance.sh`. It builds the
-`rapport` binary once, discovers expectation files, runs each expectation
-directly, and prints one pass/fail line per expectation before reporting all
-failures at the end.
-
-Acceptance fixtures live under:
-
-```text
-tests/cargo/<case>/
-```
-
-Each fixture has a `rapport.toml` input path and per-verb expectation files
-under `expectations/`, such as `build.ok.toml` or `lint.fail.toml`. Optional
-stdout and stderr snapshots sit next to those expectation files.
-
-Run the cargo acceptance suite with:
+For focused iteration, run one case by name:
 
 ```bash
-just tests/cargo/acceptance
+uv run --locked python tests/e2e/run.py --case cargo_ok_basic_crate_build
 ```
 
-The script gives each expectation its own temporary `CARGO_TARGET_DIR` and
-`CARGO_HOME`, disables color and ambient Rust flags, and normalizes repository
-paths plus durations before comparing snapshots. It intentionally runs outside
-Cargo's test harness because the binary under test invokes Cargo itself.
+The harness also honors `RAPPORT_BIN=/path/to/rapport` when you want to test a
+prebuilt binary instead of rebuilding first.
 
-## Snapshot Stability
+## Harness Behavior
 
-End-to-end tests should control the environment first, then filter any remaining
-volatile output.
+Every e2e case copies its fixture into a temporary directory and writes a small
+`.git` marker so project discovery behaves like it is inside a repository.
 
-The Cargo harness isolates Cargo with temporary directories and deterministic
-environment values:
+Cargo cases use isolated, per-case tool state:
 
 - `CARGO_TARGET_DIR` points at a temp target directory
 - `CARGO_HOME` points at a temp cargo home
@@ -115,53 +99,44 @@ environment values:
 - `CARGO_INCREMENTAL=0`
 - `CARGO_BUILD_JOBS=1`
 
-It also removes ambient Rust configuration such as `RUSTFLAGS`, `RUSTDOCFLAGS`,
-`RUSTC_WRAPPER`, and related variables that could change output on one machine
-but not another.
+The harness also removes ambient Rust configuration such as `RUSTFLAGS`,
+`RUSTDOCFLAGS`, `RUSTC_WRAPPER`, and related variables that could change output
+on one machine but not another.
 
-Snapshot filters redact unstable values, including:
+SwiftPM cases use generated fake `swift` and `swift-format` tools. That keeps
+Swift e2e coverage available on machines and CI runners that do not have a real
+Swift toolchain installed.
 
-- temp project, target, and cargo-home paths
-- repository and crate absolute paths
+## Snapshot Stability
+
+End-to-end tests should control the environment first, then filter any remaining
+volatile output.
+
+The e2e runner normalizes:
+
+- temp project, target, cargo-home, toolchain, repository, and crate paths
 - durations
 - rustup toolchain paths
-- Rust patch versions in rustdoc/clippy URLs
+- Rust patch versions in rustdoc or clippy URLs
 - Cargo test binary hashes
 - Cargo target labels that vary by toolchain output
 
-When adding a new end-to-end harness, use the same pattern: isolate any tool
-caches, keep generated files inside temp directories, disable color and
-machine-specific configuration, then add runner-specific snapshot filters for
-paths, timestamps, versions, generated IDs, ports, or cache locations.
-
-## Future Runner Coverage
-
-Cargo remains the outer test runner for Rapport itself. Future ecosystem
-runners should add their own integration test modules and fixtures while keeping
-the same shape:
-
-```text
-just test runs Rapport's tests
-  -> npm_e2e.rs invokes rapport on npm fixtures
-  -> go_e2e.rs invokes rapport on Go fixtures
-  -> cargo_e2e.rs invokes rapport on Cargo fixtures
-```
-
-If the next runner duplicates enough harness code, extract shared helpers under
-`crates/rapport/tests/support/` for fixture copying, binary invocation,
-environment isolation, and common snapshot filters.
+When adding a new e2e convention, use the same pattern: isolate tool caches,
+keep generated files inside temp directories, disable color and machine-specific
+configuration, then add runner-specific snapshot filters for paths, timestamps,
+versions, generated IDs, ports, or cache locations.
 
 ## CI
 
 GitHub Actions runs the test suite through `.github/workflows/ci.yml`.
 
 The `CI` workflow runs on pull requests and pushes to `main`. It installs the
-stable Rust toolchain, `just`, and `nextest`, then runs:
+stable Rust toolchain, `just`, `nextest`, uv, and the project Python version,
+then runs:
 
 ```bash
 just ci
 ```
 
-The Cargo acceptance fixtures are part of CI through `just ci`, which invokes
-`just acceptance`. If a future runner depends on another toolchain, such as
-Node, Go, or Python, the workflow must install that toolchain before `just ci`.
+Future e2e conventions should add fixture cases to `tests/e2e/cases` and update
+the workflow if they require another external toolchain.

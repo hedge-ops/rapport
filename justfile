@@ -28,9 +28,13 @@ test:
     @echo '{{ style("command") }}test:{{ NORMAL }}'
     cargo nextest run --workspace
 
-# runs all acceptance suites
-acceptance:
-    @just tests/cargo/acceptance
+# runs CLI end-to-end fixtures outside Cargo's test runner
+e2e:
+    @echo '{{ style("command") }}e2e:{{ NORMAL }}'
+    uv run --locked python tests/e2e/run.py
+
+# backwards-compatible alias for the e2e suite
+acceptance: e2e
 
 # runs tests with coverage report
 cover:
@@ -56,8 +60,8 @@ check-deps:
 # local development: fix, check, build, test
 dev: fix check build test
 
-# CI pipeline: check, build, test, acceptance
-ci: check build test acceptance
+# CI pipeline: check, build, test, e2e
+ci: check build test e2e
 
 # Update Cargo dependencies and test
 update-deps:

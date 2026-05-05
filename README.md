@@ -49,24 +49,26 @@ rapport audit <path>     # validate + swift build -c release
 SwiftPM formatting uses `swift format` first and falls back to `swift-format`
 when installed separately. Build and test do not require formatter tooling.
 
-Acceptance fixtures live under `tests/cargo`. The parent acceptance target runs
-each acceptance suite:
+CLI end-to-end fixtures run outside Cargo's test runner so `rapport` can invoke
+Cargo projects without nesting Cargo inside `cargo test`. The e2e target builds
+`rapport` once, copies each fixture into a temporary directory, and compares
+normalized command-session snapshots:
 
 ```text
-just acceptance
+just e2e
 ```
 
-The cargo acceptance script builds `rapport` once, discovers fixture
-expectations, and runs the built binary directly against each fixture. Each
-fixture has a `rapport.toml` input path plus per-verb expectations under
-`expectations`, such as `build.ok.toml` with optional stdout/stderr snapshots.
-The cargo suite can also be run directly with `just tests/cargo/acceptance`.
+Cases live under `tests/e2e/cases`, snapshots live under
+`tests/e2e/snapshots`, and project fixtures live under
+`crates/rapport/tests/fixtures`. Python tooling for the harness is managed with
+uv through `pyproject.toml` and `uv.lock`. The old `just acceptance` command
+remains as a compatibility alias for `just e2e`; `just tests/cargo/acceptance`
+runs only the Cargo subset.
 
 ## Testing
 
-See [TESTING.md](TESTING.md) for the local test commands, Cargo end-to-end
-fixture and snapshot layout, snapshot stability rules, and GitHub Actions
-coverage.
+See [TESTING.md](TESTING.md) for local test commands, e2e fixture and snapshot
+layout, snapshot stability rules, and GitHub Actions coverage.
 
 ## Principles
 

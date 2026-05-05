@@ -1,0 +1,234 @@
+[[case]]
+name = "cargo_ok_basic_crate_fix"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_fix.snap"
+
+[[case]]
+name = "cargo_ok_basic_crate_lint"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_lint.snap"
+
+[[case]]
+name = "cargo_ok_basic_crate_build"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_build.snap"
+
+[[case]]
+name = "cargo_ok_basic_crate_test"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_test.snap"
+
+[[case]]
+name = "cargo_ok_basic_crate_validate"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_validate.snap"
+
+[[case]]
+name = "cargo_ok_basic_crate_audit"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_audit.snap"
+
+[[case]]
+name = "cargo_ok_workspace_build"
+convention = "cargo"
+fixture = "ok/workspace"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_workspace_build.snap"
+
+[[case]]
+name = "cargo_ok_workspace_test"
+convention = "cargo"
+fixture = "ok/workspace"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_workspace_test.snap"
+
+[[case]]
+name = "cargo_ok_workspace_validate"
+convention = "cargo"
+fixture = "ok/workspace"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_workspace_validate.snap"
+
+[[case]]
+name = "cargo_fail_missing_project_build"
+convention = "cargo"
+fixture = "fail/missing-project"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/cargo_fail_missing_project_build.snap"
+
+[[case]]
+name = "cargo_fail_fmt_needed_lint"
+convention = "cargo"
+fixture = "fail/fmt-needed"
+verb = "lint"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_fmt_needed_lint.snap"
+
+[[case]]
+name = "cargo_fail_fmt_needed_fix"
+convention = "cargo"
+fixture = "fail/fmt-needed"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/cargo_fail_fmt_needed_fix.snap"
+
+[[case.assert_contains]]
+path = "src/lib.rs"
+text = '''
+pub fn answer() -> u8 {
+    42
+}
+'''
+
+[[case]]
+name = "cargo_fail_clippy_warning_lint"
+convention = "cargo"
+fixture = "fail/clippy-warning"
+verb = "lint"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_clippy_warning_lint.snap"
+
+[[case]]
+name = "cargo_fail_compile_error_build"
+convention = "cargo"
+fixture = "fail/compile-error"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_compile_error_build.snap"
+
+[[case]]
+name = "cargo_fail_compile_error_validate"
+convention = "cargo"
+fixture = "fail/compile-error"
+verb = "validate"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_compile_error_validate.snap"
+
+[[case]]
+name = "cargo_fail_compile_error_audit"
+convention = "cargo"
+fixture = "fail/compile-error"
+verb = "audit"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_compile_error_audit.snap"
+
+[[case]]
+name = "cargo_fail_failing_test_test"
+convention = "cargo"
+fixture = "fail/failing-test"
+verb = "test"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_failing_test_test.snap"
+
+[[case]]
+name = "cargo_fail_failing_test_validate"
+convention = "cargo"
+fixture = "fail/failing-test"
+verb = "validate"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_failing_test_validate.snap"
+
+[[case]]
+name = "cargo_fail_doc_error_audit"
+convention = "cargo"
+fixture = "fail/doc-error"
+verb = "audit"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_doc_error_audit.snap"
+
+[[case]]
+name = "cargo_fail_fmt_needed_validate"
+convention = "cargo"
+fixture = "fail/fmt-needed"
+verb = "validate"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_fmt_needed_validate.snap"
+
+[[case.assert_absent]]
+root = "cargo_target"
+path = "debug"
+
+[[case]]
+name = "cargo_missing_cargo_on_path"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/cargo_missing_cargo_on_path.snap"
+path_env = "empty"
+
+[[case]]
+name = "cargo_child_discovers_parent_fix"
+convention = "cargo"
+source = "tests/cargo/child-discovers-parent"
+path = "src/nested"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/cargo_child_discovers_parent_fix.snap"
+
+[[case]]
+name = "cargo_child_discovers_parent_lint"
+convention = "cargo"
+source = "tests/cargo/child-discovers-parent"
+path = "src/nested"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/cargo_child_discovers_parent_lint.snap"
+
+[[case]]
+name = "cargo_child_discovers_parent_build"
+convention = "cargo"
+source = "tests/cargo/child-discovers-parent"
+path = "src/nested"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_child_discovers_parent_build.snap"
+
+[[case]]
+name = "cargo_child_discovers_parent_test"
+convention = "cargo"
+source = "tests/cargo/child-discovers-parent"
+path = "src/nested"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/cargo_child_discovers_parent_test.snap"
+
+[[case]]
+name = "cargo_child_discovers_parent_validate"
+convention = "cargo"
+source = "tests/cargo/child-discovers-parent"
+path = "src/nested"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/cargo_child_discovers_parent_validate.snap"
+
+[[case]]
+name = "cargo_child_discovers_parent_audit"
+convention = "cargo"
+source = "tests/cargo/child-discovers-parent"
+path = "src/nested"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/cargo_child_discovers_parent_audit.snap"
