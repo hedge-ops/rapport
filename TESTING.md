@@ -52,10 +52,10 @@ tests/e2e/cases/**/*.toml
 ```
 
 Each case names the convention, fixture, verb, expected exit code, and snapshot
-file. Cargo, SwiftPM, and Fastlane project fixtures live under:
+file. Cargo, SwiftPM, Fastlane, and Kustomize project fixtures live under:
 
 ```text
-crates/rapport/tests/fixtures/{cargo,swift}/...
+crates/rapport/tests/fixtures/{cargo,swift,fastlane,kustomize}/...
 ```
 
 The child-path Cargo discovery fixture remains under `tests/cargo` because that
@@ -105,8 +105,10 @@ on one machine but not another.
 
 SwiftPM cases use generated fake `swift` and `swift-format` tools. Fastlane
 cases use a generated fake `bundle` tool that simulates `bundle exec fastlane`.
-That keeps Swift and Fastlane e2e coverage available on machines and CI runners
-that do not have those toolchains installed.
+Kustomize cases use generated fake `kubectl`, standalone `kustomize`, and
+`kubeconform` tools. That keeps Swift, Fastlane, and Kubernetes e2e coverage
+available on machines and CI runners that do not have those toolchains
+installed.
 
 ## Snapshot Stability
 

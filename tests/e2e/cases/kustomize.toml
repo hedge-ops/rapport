@@ -1,0 +1,124 @@
+[[case]]
+name = "kustomize_ok_base_fix"
+convention = "kustomize"
+fixture = "ok/base"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_base_fix.snap"
+
+[[case]]
+name = "kustomize_ok_base_lint"
+convention = "kustomize"
+fixture = "ok/base"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_base_lint.snap"
+
+[[case]]
+name = "kustomize_ok_base_build"
+convention = "kustomize"
+fixture = "ok/base"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_base_build.snap"
+
+[[case]]
+name = "kustomize_ok_base_test"
+convention = "kustomize"
+fixture = "ok/base"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_base_test.snap"
+
+[[case]]
+name = "kustomize_ok_base_validate"
+convention = "kustomize"
+fixture = "ok/base"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_base_validate.snap"
+
+[[case]]
+name = "kustomize_ok_base_audit"
+convention = "kustomize"
+fixture = "ok/base"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_base_audit.snap"
+
+[[case]]
+name = "kustomize_ok_overlay_build"
+convention = "kustomize"
+fixture = "ok/overlay"
+path = "overlays/dev"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_overlay_build.snap"
+
+[[case]]
+name = "kustomize_ok_standalone_build"
+convention = "kustomize"
+fixture = "ok/base"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_standalone_build.snap"
+toolchain = "standalone"
+
+[[case]]
+name = "kustomize_ok_umbrella_build"
+convention = "kustomize"
+fixture = "ok/umbrella"
+path = "platform"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_umbrella_build.snap"
+
+[[case]]
+name = "kustomize_ok_platform_root_build"
+convention = "kustomize"
+fixture = "ok/platform-root"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/kustomize_ok_platform_root_build.snap"
+
+[[case]]
+name = "kustomize_fail_malformed_yaml_build"
+convention = "kustomize"
+fixture = "fail/malformed-yaml"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/kustomize_fail_malformed_yaml_build.snap"
+
+[[case]]
+name = "kustomize_fail_broken_reference_build"
+convention = "kustomize"
+fixture = "fail/broken-reference"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/kustomize_fail_broken_reference_build.snap"
+
+[[case]]
+name = "kustomize_fail_validation_lint"
+convention = "kustomize"
+fixture = "fail/validation"
+verb = "lint"
+expected_exit = 1
+snapshot = "rapport/kustomize_fail_validation_lint.snap"
+
+[[case]]
+name = "kustomize_fail_missing_renderer_build"
+convention = "kustomize"
+fixture = "fail/missing-tools"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/kustomize_fail_missing_renderer_build.snap"
+toolchain = "missing_renderer"
+
+[[case]]
+name = "kustomize_fail_missing_validator_lint"
+convention = "kustomize"
+fixture = "fail/missing-tools"
+verb = "lint"
+expected_exit = 2
+snapshot = "rapport/kustomize_fail_missing_validator_lint.snap"
+toolchain = "missing_validator"

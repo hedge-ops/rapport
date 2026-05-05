@@ -8,8 +8,8 @@ pub(super) fn name() -> &'static str {
     "Fastlane"
 }
 
-pub(super) fn marker() -> &'static str {
-    "fastlane/Fastfile"
+pub(super) fn markers() -> &'static [&'static str] {
+    &["fastlane/Fastfile"]
 }
 
 pub(super) fn primary_program() -> &'static str {
@@ -137,6 +137,7 @@ mod tests {
     fn fastlane_project(root: impl Into<Utf8PathBuf>) -> Project {
         Project {
             convention: super::super::ProjectConvention::Fastlane,
+            marker: "fastlane/Fastfile",
             root: root.into(),
         }
     }

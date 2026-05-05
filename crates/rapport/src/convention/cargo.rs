@@ -4,8 +4,8 @@ pub(super) fn name() -> &'static str {
     "Cargo"
 }
 
-pub(super) fn marker() -> &'static str {
-    "Cargo.toml"
+pub(super) fn markers() -> &'static [&'static str] {
+    &["Cargo.toml"]
 }
 
 pub(super) fn primary_program() -> &'static str {

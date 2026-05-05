@@ -1,0 +1,18 @@
+exit: 0
+stdout:
+---
+## Output
+
+```
+Kustomize project: [project]: Kustomize has no autofix; leaving manifests unchanged.
+```
+
+status: pass
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]
+stderr:
+---
+(empty)
