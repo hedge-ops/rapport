@@ -1,4 +1,0 @@
-verb = "build"
-status = "ok"
-stdout = "build.stdout"
-stderr = "build.stderr"

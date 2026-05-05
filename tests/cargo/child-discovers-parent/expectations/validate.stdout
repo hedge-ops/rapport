@@ -1,6 +1,0 @@
-status: pass
-duration: <duration>
-
-## Next
-
-└ run rapport audit {repo}/tests/cargo/child-discovers-parent
