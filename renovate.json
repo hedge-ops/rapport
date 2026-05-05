@@ -14,6 +14,9 @@
   "labels": [
     "dependencies"
   ],
+  "lockFileMaintenance": {
+    "enabled": true
+  },
   "ignorePaths": [
     "crates/rapport/tests/fixtures/**",
     "tests/cargo/**"
@@ -56,9 +59,24 @@
       "commitMessagePrefix": "chore(ci):"
     },
     {
+      "description": "Group uv Python project updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "groupName": "uv",
+      "commitMessagePrefix": "chore(deps):"
+    },
+    {
       "description": "Update Cargo lockfile even when range is satisfied",
       "matchManagers": [
         "cargo"
+      ],
+      "rangeStrategy": "update-lockfile"
+    },
+    {
+      "description": "Update uv lockfile even when range is satisfied",
+      "matchManagers": [
+        "pep621"
       ],
       "rangeStrategy": "update-lockfile"
     }
