@@ -51,6 +51,7 @@ fn fixture(relative: &str) -> Result<FixtureProject, Box<dyn Error>> {
         .join(relative);
     let project = root.path().join("project");
     copy_dir(&source, &project)?;
+    fs::write(project.join(".git"), "gitdir: test")?;
 
     let target = root.path().join("target");
     let cargo_home = root.path().join("cargo-home");
@@ -295,7 +296,7 @@ fn missing_project_build_failure() -> TestResult {
         "cargo_fail_missing_project_build",
         "fail/missing-project",
         "build",
-        1,
+        2,
     )
 }
 

@@ -1,0 +1,6 @@
+status: pass
+duration: <duration>
+
+## Next
+
+└ run git push

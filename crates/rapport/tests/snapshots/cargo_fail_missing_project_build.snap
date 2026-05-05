@@ -2,21 +2,15 @@
 source: crates/rapport/tests/cargo_e2e.rs
 expression: result.snapshot()
 ---
-exit: 1
+exit: 2
 stdout:
 ---
 (empty)
 stderr:
 ---
-## Output
-
-```
-error: could not find `Cargo.toml` in `[project]` or any parent directory
-```
-
-status: FAIL
-duration: [duration]
+You ran: rapport build [project]
+[project] has no supported project between it and git root [project].
 
 ## Next
 
-└ run rapport lint [project]
+└ run rapport help build

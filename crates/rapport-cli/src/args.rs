@@ -1,5 +1,5 @@
+use crate::files::FileSystem;
 use camino::{Utf8Path, Utf8PathBuf};
-use std::collections::HashSet;
 use std::fmt::Display;
 
 pub trait Argument: Sized {
@@ -79,40 +79,15 @@ pub enum ParseError {
     },
 }
 
-pub trait FileSystem {
-    fn is_dir(&self, path: &Utf8Path) -> bool;
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RealFileSystem;
-
-impl FileSystem for RealFileSystem {
-    fn is_dir(&self, path: &Utf8Path) -> bool {
-        path.is_dir()
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct InMemoryFileSystem {
-    directories: HashSet<Utf8PathBuf>,
-}
-
-impl InMemoryFileSystem {
-    pub fn add_directory(&mut self, path: impl Into<Utf8PathBuf>) {
-        self.directories.insert(path.into());
-    }
-}
-
-impl FileSystem for InMemoryFileSystem {
-    fn is_dir(&self, path: &Utf8Path) -> bool {
-        self.directories.contains(path)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct RepositoryPath(Utf8PathBuf);
 
 impl RepositoryPath {
+    #[must_use]
+    pub fn new(path: impl Into<Utf8PathBuf>) -> Self {
+        Self(path.into())
+    }
+
     #[must_use]
     pub fn as_path(&self) -> &Utf8Path {
         &self.0
@@ -145,6 +120,7 @@ impl Display for RepositoryPath {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::files::InMemoryFileSystem;
     use rstest::rstest;
 
     #[rstest]

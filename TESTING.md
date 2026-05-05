@@ -1,17 +1,11 @@
 # Testing
 
-Rapport's own test suite is Rust-native: Cargo builds the workspace and runs
-unit and integration tests. End-to-end coverage still goes through Cargo's test
-harness, but the tests invoke the compiled `rapport` binary and let `rapport`
-run the real project tools.
+Rapport's own unit and integration tests are Rust-native. Acceptance coverage is
+script-driven: the harness builds `rapport` once, then runs the compiled binary
+against fixture projects so Rapport can invoke Cargo without being nested inside
+Cargo's test runner.
 
 ## Commands
-
-Run the full local test suite:
-
-```bash
-cargo test --workspace
-```
 
 Run the repository's standard test command:
 
@@ -19,10 +13,22 @@ Run the repository's standard test command:
 just test
 ```
 
+Run the Cargo acceptance fixtures:
+
+```bash
+just acceptance
+```
+
 Run the Cargo end-to-end integration tests directly:
 
 ```bash
-cargo test -p rapport --test cargo_e2e
+cargo test -p rapport --test cargo_e2e -- --test-threads=1
+```
+
+Run the Cargo acceptance fixtures directly:
+
+```bash
+just tests/cargo/acceptance
 ```
 
 Run the same checks GitHub Actions runs:
@@ -31,8 +37,8 @@ Run the same checks GitHub Actions runs:
 just ci
 ```
 
-`just ci` runs formatting checks, clippy, a workspace build, and the workspace
-test suite.
+`just ci` runs formatting checks, clippy, a workspace build, the workspace test
+suite, and the script-backed acceptance suite.
 
 ## Cargo End-to-End Tests
 
@@ -66,6 +72,34 @@ INSTA_UPDATE=always cargo test -p rapport --test cargo_e2e
 Review snapshot changes before committing them. They are part of the public
 behavior contract for exit codes, stdout, stderr, failure messages, and
 next-action hints.
+
+## Cargo Acceptance Tests
+
+The Cargo acceptance harness lives in `tests/cargo/acceptance.sh`. It builds the
+`rapport` binary once, discovers expectation files, runs each expectation
+directly, and prints one pass/fail line per expectation before reporting all
+failures at the end.
+
+Acceptance fixtures live under:
+
+```text
+tests/cargo/<case>/
+```
+
+Each fixture has a `rapport.toml` input path and per-verb expectation files
+under `expectations/`, such as `build.ok.toml` or `lint.fail.toml`. Optional
+stdout and stderr snapshots sit next to those expectation files.
+
+Run the cargo acceptance suite with:
+
+```bash
+just tests/cargo/acceptance
+```
+
+The script gives each expectation its own temporary `CARGO_TARGET_DIR` and
+`CARGO_HOME`, disables color and ambient Rust flags, and normalizes repository
+paths plus durations before comparing snapshots. It intentionally runs outside
+Cargo's test harness because the binary under test invokes Cargo itself.
 
 ## Snapshot Stability
 
@@ -107,7 +141,7 @@ runners should add their own integration test modules and fixtures while keeping
 the same shape:
 
 ```text
-cargo/nextest runs Rapport's tests
+just test runs Rapport's tests
   -> npm_e2e.rs invokes rapport on npm fixtures
   -> go_e2e.rs invokes rapport on Go fixtures
   -> cargo_e2e.rs invokes rapport on Cargo fixtures
@@ -128,6 +162,6 @@ stable Rust toolchain, `just`, and `nextest`, then runs:
 just ci
 ```
 
-Because the end-to-end tests are normal Cargo integration tests, they are part
-of CI automatically. If a future runner depends on another toolchain, such as
+The Cargo acceptance fixtures are part of CI through `just ci`, which invokes
+`just acceptance`. If a future runner depends on another toolchain, such as
 Node, Go, or Python, the workflow must install that toolchain before `just ci`.
