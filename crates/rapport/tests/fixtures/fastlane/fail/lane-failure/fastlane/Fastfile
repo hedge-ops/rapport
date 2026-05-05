@@ -1,0 +1,25 @@
+default_platform(:ios)
+
+lane :build do
+  UI.user_error!("simulated Fastlane lane failure")
+end
+
+lane :test do
+  UI.message("test")
+end
+
+lane :lint do
+  UI.message("lint")
+end
+
+lane :fix do
+  UI.message("fix")
+end
+
+lane :validate do
+  UI.message("validate")
+end
+
+lane :audit do
+  UI.message("audit")
+end

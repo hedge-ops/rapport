@@ -1,0 +1,144 @@
+[[case]]
+name = "fastlane_ok_basic_fix"
+convention = "fastlane"
+fixture = "ok/basic"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_basic_fix.snap"
+
+[[case]]
+name = "fastlane_ok_basic_lint"
+convention = "fastlane"
+fixture = "ok/basic"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_basic_lint.snap"
+
+[[case]]
+name = "fastlane_ok_basic_build"
+convention = "fastlane"
+fixture = "ok/basic"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_basic_build.snap"
+
+[[case]]
+name = "fastlane_ok_basic_test"
+convention = "fastlane"
+fixture = "ok/basic"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_basic_test.snap"
+
+[[case]]
+name = "fastlane_ok_basic_validate"
+convention = "fastlane"
+fixture = "ok/basic"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_basic_validate.snap"
+
+[[case]]
+name = "fastlane_ok_basic_audit"
+convention = "fastlane"
+fixture = "ok/basic"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_basic_audit.snap"
+
+[[case]]
+name = "fastlane_fail_missing_project_build"
+convention = "fastlane"
+fixture = "fail/missing-project"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/fastlane_fail_missing_project_build.snap"
+
+[[case]]
+name = "fastlane_fail_missing_lane_build"
+convention = "fastlane"
+fixture = "fail/missing-lane"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/fastlane_fail_missing_lane_build.snap"
+
+[[case]]
+name = "fastlane_fail_missing_gemfile_build"
+convention = "fastlane"
+fixture = "fail/missing-gemfile"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/fastlane_fail_missing_gemfile_build.snap"
+
+[[case]]
+name = "fastlane_fail_missing_tools_build"
+convention = "fastlane"
+fixture = "fail/missing-tools"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/fastlane_fail_missing_tools_build.snap"
+toolchain = "missing_bundle"
+
+[[case]]
+name = "fastlane_fail_lane_failure_build"
+convention = "fastlane"
+fixture = "fail/lane-failure"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/fastlane_fail_lane_failure_build.snap"
+
+[[case]]
+name = "fastlane_ok_xcode_workspace_fix"
+convention = "fastlane"
+fixture = "ok/xcode-workspace"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_xcode_workspace_fix.snap"
+
+[[case]]
+name = "fastlane_ok_xcode_workspace_lint"
+convention = "fastlane"
+fixture = "ok/xcode-workspace"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_xcode_workspace_lint.snap"
+
+[[case]]
+name = "fastlane_ok_xcode_workspace_build"
+convention = "fastlane"
+fixture = "ok/xcode-workspace"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_xcode_workspace_build.snap"
+
+[[case]]
+name = "fastlane_ok_xcode_workspace_test"
+convention = "fastlane"
+fixture = "ok/xcode-workspace"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_xcode_workspace_test.snap"
+
+[[case]]
+name = "fastlane_ok_xcode_workspace_validate"
+convention = "fastlane"
+fixture = "ok/xcode-workspace"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_xcode_workspace_validate.snap"
+
+[[case]]
+name = "fastlane_ok_xcode_workspace_audit"
+convention = "fastlane"
+fixture = "ok/xcode-workspace"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_xcode_workspace_audit.snap"
+
+[[case]]
+name = "fastlane_ok_xcode_project_build"
+convention = "fastlane"
+fixture = "ok/xcode-project"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/fastlane_ok_xcode_project_build.snap"

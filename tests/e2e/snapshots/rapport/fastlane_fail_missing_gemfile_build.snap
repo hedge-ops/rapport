@@ -1,0 +1,13 @@
+exit: 2
+stdout:
+---
+(empty)
+stderr:
+---
+You ran: rapport build [project]
+Fastlane project: [project]
+Fastlane projects must include a `Gemfile` pinning Fastlane so rapport can run `bundle exec fastlane`.
+
+## Next
+
+└ run edit [project]/fastlane/Fastfile

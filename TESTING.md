@@ -52,7 +52,7 @@ tests/e2e/cases/**/*.toml
 ```
 
 Each case names the convention, fixture, verb, expected exit code, and snapshot
-file. Cargo and SwiftPM project fixtures live under:
+file. Cargo, SwiftPM, and Fastlane project fixtures live under:
 
 ```text
 crates/rapport/tests/fixtures/{cargo,swift}/...
@@ -103,9 +103,10 @@ The harness also removes ambient Rust configuration such as `RUSTFLAGS`,
 `RUSTDOCFLAGS`, `RUSTC_WRAPPER`, and related variables that could change output
 on one machine but not another.
 
-SwiftPM cases use generated fake `swift` and `swift-format` tools. That keeps
-Swift e2e coverage available on machines and CI runners that do not have a real
-Swift toolchain installed.
+SwiftPM cases use generated fake `swift` and `swift-format` tools. Fastlane
+cases use a generated fake `bundle` tool that simulates `bundle exec fastlane`.
+That keeps Swift and Fastlane e2e coverage available on machines and CI runners
+that do not have those toolchains installed.
 
 ## Snapshot Stability
 

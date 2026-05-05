@@ -90,7 +90,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run rapport CLI e2e cases")
     parser.add_argument(
         "--convention",
-        choices=("cargo", "swift"),
+        choices=("cargo", "swift", "fastlane"),
         help="run only cases for one project convention",
     )
     parser.add_argument(
@@ -224,6 +224,8 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
             env, context = configure_cargo(env, context, case)
         elif case.convention == "swift":
             env, context = configure_swift(env, context, case)
+        elif case.convention == "fastlane":
+            env, context = configure_fastlane(env, context, case)
         else:
             return f"\n--- {case.name} configuration error ---\nunsupported convention: {case.convention}"
 
@@ -311,6 +313,26 @@ def configure_swift(env: dict[str, str], context: RunContext, case: Case) -> tup
         pass
     else:
         raise ValueError(f"unsupported swift toolchain mode: {mode}")
+
+    env["PATH"] = str(tool_root)
+    return env, RunContext(
+        temp_root=context.temp_root,
+        project=context.project,
+        toolchain=tool_root,
+    )
+
+
+def configure_fastlane(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
+    mode = case.toolchain or "bundle"
+    tool_root = context.temp_root / "toolchain"
+    tool_root.mkdir()
+
+    if mode == "bundle":
+        write_executable(tool_root / "bundle", fastlane_bundle_script())
+    elif mode == "missing_bundle":
+        pass
+    else:
+        raise ValueError(f"unsupported fastlane toolchain mode: {mode}")
 
     env["PATH"] = str(tool_root)
     return env, RunContext(
@@ -451,6 +473,37 @@ if [ "$subcommand" = "lint" ]; then
 fi
 echo "unexpected swift-format args: $*" >&2
 exit 2
+"""
+
+
+def fastlane_bundle_script() -> str:
+    return """#!/bin/sh
+set -u
+
+if [ "${1:-}" != "exec" ] || [ "${2:-}" != "fastlane" ]; then
+    echo "unexpected bundle args: $*" >&2
+    exit 2
+fi
+
+lane="${3:-}"
+if [ -z "$lane" ]; then
+    echo "missing fastlane lane" >&2
+    exit 2
+fi
+
+echo "fastlane lane $lane started"
+
+if [ "$lane" = "build" ] && /usr/bin/grep -q "UI.user_error!" fastlane/Fastfile; then
+    echo "Error in lane '$lane': simulated Fastlane lane failure" >&2
+    echo "fastlane lane $lane failed" >&2
+    exit 1
+fi
+
+if /usr/bin/grep -q "xcodebuild" fastlane/Fastfile; then
+    echo "fastlane lane $lane invoked xcodebuild wrapper"
+else
+    echo "fastlane lane $lane passed"
+fi
 """
 
 

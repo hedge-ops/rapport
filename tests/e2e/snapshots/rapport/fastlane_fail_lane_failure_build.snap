@@ -1,0 +1,23 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Fastlane project: [project]
+Failing phase: build
+## Output
+
+```
+Error in lane 'build': simulated Fastlane lane failure
+fastlane lane build failed
+
+fastlane lane build started
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]
