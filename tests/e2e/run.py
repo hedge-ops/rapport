@@ -90,7 +90,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run rapport CLI e2e cases")
     parser.add_argument(
         "--convention",
-        choices=("cargo", "swift", "fastlane", "kustomize"),
+        choices=("cargo", "swift", "fastlane", "kustomize", "terraform"),
         help="run only cases for one project convention",
     )
     parser.add_argument(
@@ -228,6 +228,8 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
             env, context = configure_fastlane(env, context, case)
         elif case.convention == "kustomize":
             env, context = configure_kustomize(env, context, case)
+        elif case.convention == "terraform":
+            env, context = configure_terraform(env, context, case)
         else:
             return f"\n--- {case.name} configuration error ---\nunsupported convention: {case.convention}"
 
@@ -365,6 +367,31 @@ def configure_kustomize(env: dict[str, str], context: RunContext, case: Case) ->
         write_executable(tool_root / "kubectl", kubectl_script())
     else:
         raise ValueError(f"unsupported kustomize toolchain mode: {mode}")
+
+    env["PATH"] = str(tool_root)
+    return env, RunContext(
+        temp_root=context.temp_root,
+        project=context.project,
+        toolchain=tool_root,
+    )
+
+
+def configure_terraform(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
+    mode = case.toolchain or "full"
+    tool_root = context.temp_root / "toolchain"
+    tool_root.mkdir()
+
+    if mode == "full":
+        write_executable(tool_root / "terraform", terraform_script())
+        write_executable(tool_root / "tflint", tflint_script())
+    elif mode == "terraform_only":
+        write_executable(tool_root / "terraform", terraform_script())
+    elif mode == "missing_terraform":
+        write_executable(tool_root / "tflint", tflint_script())
+    elif mode == "missing_tflint":
+        write_executable(tool_root / "terraform", terraform_script())
+    else:
+        raise ValueError(f"unsupported terraform toolchain mode: {mode}")
 
     env["PATH"] = str(tool_root)
     return env, RunContext(
@@ -665,6 +692,114 @@ elif /usr/bin/grep -R "kind: TotallyInvalid" "$target" >/dev/null 2>&1; then
 fi
 
 echo "Summary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0"
+"""
+
+
+def terraform_script() -> str:
+    return """#!/bin/sh
+set -u
+
+find_tf_files() {
+    /usr/bin/find . -type f -name '*.tf' ! -path './.terraform/*' ! -path './.terragrunt-cache/*' ! -path './.terraform-cache/*' -print | /usr/bin/sort
+}
+
+has_format_issue() {
+    for file in $(find_tf_files); do
+        if /usr/bin/grep -q "bad_format=true" "$file"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+print_format_issues() {
+    for file in $(find_tf_files); do
+        if /usr/bin/grep -q "bad_format=true" "$file"; then
+            echo "${file#./}"
+        fi
+    done
+}
+
+fix_format_issue() {
+    for file in $(find_tf_files); do
+        if /usr/bin/grep -q "bad_format=true" "$file"; then
+            /usr/bin/awk '{ gsub("bad_format=true", "bad_format = true"); print }' "$file" > "$file.tmp" && /bin/mv "$file.tmp" "$file"
+        fi
+    done
+}
+
+has_validation_issue() {
+    for file in $(find_tf_files); do
+        if /usr/bin/grep -q "invalid_reference" "$file"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+case "${1:-}" in
+version)
+    echo "Terraform v1.8.5"
+    ;;
+fmt)
+    check=false
+    for arg in "$@"; do
+        if [ "$arg" = "-check" ]; then
+            check=true
+        fi
+    done
+    if has_format_issue; then
+        if [ "$check" = "true" ]; then
+            print_format_issues
+            exit 3
+        fi
+        fix_format_issue
+        exit 0
+    fi
+    exit 0
+    ;;
+validate)
+    if has_validation_issue; then
+        echo "Error: Reference to undeclared resource" >&2
+        echo "A managed resource named invalid_reference has not been declared in the root module." >&2
+        exit 1
+    fi
+    echo "Success! The configuration is valid."
+    ;;
+*)
+    echo "unexpected terraform args: $*" >&2
+    exit 2
+    ;;
+esac
+"""
+
+
+def tflint_script() -> str:
+    return """#!/bin/sh
+set -u
+
+find_tf_files() {
+    /usr/bin/find . -type f -name '*.tf' ! -path './.terraform/*' ! -path './.terragrunt-cache/*' ! -path './.terraform-cache/*' -print | /usr/bin/sort
+}
+
+case "${1:-}" in
+--version)
+    echo "TFLint version 0.51.1"
+    ;;
+--recursive)
+    for file in $(find_tf_files); do
+        if /usr/bin/grep -q "bad_tflint" "$file"; then
+            echo "${file#./}:1:1: Warning - simulated Terraform lint failure" >&2
+            exit 1
+        fi
+    done
+    echo "TFLint passed"
+    ;;
+*)
+    echo "unexpected tflint args: $*" >&2
+    exit 2
+    ;;
+esac
 """
 
 
