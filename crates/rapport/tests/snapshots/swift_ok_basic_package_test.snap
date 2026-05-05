@@ -1,0 +1,16 @@
+---
+source: crates/rapport/tests/swift_e2e.rs
+expression: result.snapshot()
+---
+exit: 0
+stdout:
+---
+status: pass
+duration: [duration]
+
+## Next
+
+└ run rapport validate [project]
+stderr:
+---
+(empty)

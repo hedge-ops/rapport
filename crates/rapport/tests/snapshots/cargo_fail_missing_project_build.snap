@@ -9,7 +9,8 @@ stdout:
 stderr:
 ---
 You ran: rapport build [project]
-[project] has no supported project between it and git root [project].
+No supported project marker was found between [project] and git root [project].
+Expected `Cargo.toml` for Cargo or `Package.swift` for SwiftPM.
 
 ## Next
 

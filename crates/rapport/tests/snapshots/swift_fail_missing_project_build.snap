@@ -1,0 +1,17 @@
+---
+source: crates/rapport/tests/swift_e2e.rs
+expression: result.snapshot()
+---
+exit: 2
+stdout:
+---
+(empty)
+stderr:
+---
+You ran: rapport build [project]
+No supported project marker was found between [project] and git root [project].
+Expected `Cargo.toml` for Cargo or `Package.swift` for SwiftPM.
+
+## Next
+
+└ run rapport help build

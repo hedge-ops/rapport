@@ -1,15 +1,16 @@
-mod project;
+mod convention;
 mod runner;
 mod view;
 
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 
-use camino::Utf8Path;
+use convention::{
+    DiscoveryError, FormatterResolutionError, Phase, Project, describe_expected_markers,
+};
 use nonempty::{NonEmpty, nonempty};
-use project::{CargoProjectMatcher, discover_project};
-use rapport_cli::files::{FileSystem, RealFileSystem};
 use rapport_cli::{
-    HelpTarget, Invocation, ParseError, Parser as _, RepositoryPath, parse_validated,
+    FileSystem, HelpTarget, Invocation, ParseError, Parser as _, RealFileSystem, RepositoryPath,
+    Utf8Path, parse_validated,
 };
 use std::fmt::Display;
 use std::io::{self, Write};
@@ -20,40 +21,19 @@ use view::{Outcome, RunHint, ViewBuilder};
 
 const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit> <path>";
 
-const FMT: CommandSpec = CommandSpec {
-    program: "cargo",
-    args: &["fmt"],
-};
-const FMT_CHECK: CommandSpec = CommandSpec {
-    program: "cargo",
-    args: &["fmt", "--", "--check"],
-};
-const CLIPPY: CommandSpec = CommandSpec {
-    program: "cargo",
-    args: &["clippy", "--all-targets", "--", "-D", "warnings"],
-};
-const CHECK: CommandSpec = CommandSpec {
-    program: "cargo",
-    args: &["check"],
-};
-const TEST: CommandSpec = CommandSpec {
-    program: "cargo",
-    args: &["test"],
-};
-const BUILD_RELEASE: CommandSpec = CommandSpec {
-    program: "cargo",
-    args: &["build", "--release"],
-};
-const DOC: CommandSpec = CommandSpec {
-    program: "cargo",
-    args: &["doc", "--no-deps"],
-};
-
 #[derive(
-    Debug, Clone, Copy, strum::Display, strum::EnumString, strum::EnumIter, strum::AsRefStr,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::EnumIter,
+    strum::AsRefStr,
 )]
 #[strum(serialize_all = "lowercase")]
-enum Verb {
+pub(crate) enum Verb {
     Fix,
     Lint,
     Build,
@@ -70,18 +50,7 @@ impl Verb {
             Self::Build => "Verify the code compiles",
             Self::Test => "Run the test suite",
             Self::Validate => "Pre-commit check (lint + build + test)",
-            Self::Audit => "Pre-release check (validate + release-mode compile + docs)",
-        }
-    }
-
-    fn steps(self) -> &'static [CommandSpec] {
-        match self {
-            Self::Fix => &[FMT],
-            Self::Lint => &[FMT_CHECK, CLIPPY],
-            Self::Build => &[CHECK],
-            Self::Test => &[TEST],
-            Self::Validate => &[FMT_CHECK, CLIPPY, CHECK, TEST],
-            Self::Audit => &[FMT_CHECK, CLIPPY, CHECK, TEST, BUILD_RELEASE, DOC],
+            Self::Audit => "Pre-release check (validate + release-mode compile)",
         }
     }
 
@@ -152,15 +121,6 @@ impl Command {
             });
         };
         let path: RepositoryPath = parse_validated(verb.as_ref(), p, fs)?;
-        let project =
-            discover_project(path.as_path(), &CargoProjectMatcher, fs).map_err(|reason| {
-                ParseError::InvalidArg {
-                    verb: verb.as_ref().into(),
-                    value: p.into(),
-                    reason,
-                }
-            })?;
-        let path = RepositoryPath::new(project);
         Ok(match verb {
             Verb::Fix => Self::Fix { path },
             Verb::Lint => Self::Lint { path },
@@ -213,7 +173,7 @@ where
     E: Write,
 {
     match parse_with_file_system(argv, fs) {
-        Ok(Invocation::Run(command)) => run_command(&command, runner, out, err),
+        Ok(Invocation::Run(command)) => run_command(&command, runner, fs, out, err),
         Ok(Invocation::Help(target)) => {
             let _ = writeln!(out, "{}", render_help(&target));
             ExitCode::SUCCESS
@@ -311,6 +271,73 @@ fn render_error(err: &ParseError) -> String {
     vb.next_actions(hints).build()
 }
 
+fn render_discovery_failure(command: &Command, path: &Utf8Path, err: &DiscoveryError) -> String {
+    let vb = ViewBuilder::new().paragraph(format!("You ran: rapport {command} {path}"));
+    let vb = match err {
+        DiscoveryError::NoSupportedProject { start, git_root } => vb
+            .paragraph(format!(
+                "No supported project marker was found between {start} and git root {git_root}."
+            ))
+            .paragraph(format!("Expected {}.", describe_expected_markers())),
+        DiscoveryError::NonUtf8Start { path } => {
+            vb.paragraph(format!("{path} is not a UTF-8 path."))
+        }
+        DiscoveryError::OutsideGitRepository { start } => {
+            vb.paragraph(format!("{start} is not inside a git repository."))
+        }
+        DiscoveryError::UnreadableStart { path, err } => {
+            vb.paragraph(format!("Failed to inspect {path}: {err}."))
+        }
+    };
+    vb.next_actions(nonempty![RunHint::new(format!(
+        "rapport help {}",
+        command.verb()
+    ))])
+    .build()
+}
+
+fn render_convention_failure(command: &Command, project: &Project, reason: &str) -> String {
+    ViewBuilder::new()
+        .paragraph(format!("You ran: rapport {command} {}", project.root))
+        .paragraph(project.label())
+        .paragraph(reason)
+        .next_actions(nonempty![RunHint::new(format!(
+            "edit {}/{}",
+            project.root,
+            project.marker()
+        ))])
+        .build()
+}
+
+fn render_formatter_resolution_failure(
+    command: &Command,
+    project: &Project,
+    err: &FormatterResolutionError,
+) -> String {
+    let vb = ViewBuilder::new()
+        .paragraph(format!("You ran: rapport {command} {}", project.root))
+        .paragraph(project.label());
+    match err {
+        FormatterResolutionError::MissingSwift(io_err) => vb
+            .paragraph(format!("Failed to invoke swift: {io_err}"))
+            .paragraph(project.toolchain_install_hint().unwrap_or_default())
+            .next_actions(nonempty![RunHint::new("swift --version")])
+            .build(),
+        FormatterResolutionError::MissingFormatter => vb
+            .paragraph("SwiftPM formatter tooling was not found.")
+            .paragraph(project.formatter_install_hint().unwrap_or_default())
+            .next_actions(nonempty![
+                RunHint::new("swift format --version"),
+                RunHint::new("swift-format --version")
+            ])
+            .build(),
+        FormatterResolutionError::ProbeInvoke { program, err } => vb
+            .paragraph(format!("Failed to invoke {program}: {err}"))
+            .next_actions(nonempty![RunHint::new(format!("{program} --version"))])
+            .build(),
+    }
+}
+
 fn render_pass(started: Instant, hints: NonEmpty<RunHint>) -> String {
     ViewBuilder::new()
         .status(Outcome::Pass, started.elapsed())
@@ -319,12 +346,19 @@ fn render_pass(started: Instant, hints: NonEmpty<RunHint>) -> String {
 }
 
 fn render_step_failure(
+    project: &Project,
+    phase: Phase,
     outcome: &CommandOutcome,
     started: Instant,
     hints: NonEmpty<RunHint>,
 ) -> String {
     let combined = combined_output(outcome);
     let mut vb = ViewBuilder::new();
+    if project.is_swift_package_manager() {
+        vb = vb
+            .paragraph(project.label())
+            .paragraph(format!("Failing phase: {phase}"));
+    }
     if !combined.is_empty() {
         vb = vb.section("Output", |b| b.captured(combined));
     }
@@ -333,12 +367,38 @@ fn render_step_failure(
         .build()
 }
 
-fn render_invoke_failure(command: &Command, path: &RepositoryPath, err: &io::Error) -> String {
-    ViewBuilder::new()
-        .paragraph(format!("You ran: rapport {command} {path}"))
-        .paragraph(format!("Failed to invoke cargo: {err}"))
-        .next_actions(nonempty![RunHint::new("which cargo")])
+fn render_invoke_failure(
+    command: &Command,
+    project: &Project,
+    spec: &CommandSpec,
+    err: &io::Error,
+) -> String {
+    let vb = ViewBuilder::new().paragraph(format!("You ran: rapport {command} {}", project.root));
+    let vb = if project.is_swift_package_manager() {
+        vb.paragraph(project.label())
+    } else {
+        vb
+    }
+    .paragraph(format!("Failed to invoke {}: {err}", spec.program));
+
+    if project.is_swift_package_manager() && spec.program == project.primary_program() {
+        vb.paragraph(project.toolchain_install_hint().unwrap_or_default())
+            .next_actions(nonempty![RunHint::new("swift --version")])
+            .build()
+    } else if project.direct_formatter_program() == Some(spec.program.as_str()) {
+        vb.paragraph(project.formatter_install_hint().unwrap_or_default())
+            .next_actions(nonempty![RunHint::new("swift-format --version")])
+            .build()
+    } else if spec.program == project.primary_program() {
+        vb.next_actions(nonempty![RunHint::new(format!(
+            "which {}",
+            project.primary_program()
+        ))])
         .build()
+    } else {
+        vb.next_actions(nonempty![RunHint::new(format!("which {}", spec.program))])
+            .build()
+    }
 }
 
 fn combined_output(outcome: &CommandOutcome) -> String {
@@ -355,6 +415,7 @@ fn combined_output(outcome: &CommandOutcome) -> String {
 fn run_command<O, E>(
     command: &Command,
     runner: &dyn CommandRunner,
+    fs: &impl FileSystem,
     out: &mut O,
     err: &mut E,
 ) -> ExitCode
@@ -362,23 +423,63 @@ where
     O: Write,
     E: Write,
 {
-    let path = command.path();
+    let requested_path = command.path().as_path();
+    let project = match Project::discover(requested_path, fs) {
+        Ok(project) => project,
+        Err(discovery_err) => {
+            let _ = writeln!(
+                err,
+                "{}",
+                render_discovery_failure(command, requested_path, &discovery_err)
+            );
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(reason) = project.validate_manifest(fs) {
+        let _ = writeln!(
+            err,
+            "{}",
+            render_convention_failure(command, &project, &reason)
+        );
+        return ExitCode::from(2);
+    }
+
+    let steps = match project.lifecycle_steps(command.verb(), runner) {
+        Ok(steps) => steps,
+        Err(formatter_err) => {
+            let _ = writeln!(
+                err,
+                "{}",
+                render_formatter_resolution_failure(command, &project, &formatter_err)
+            );
+            return ExitCode::from(2);
+        }
+    };
+
     let started = Instant::now();
-    for spec in command.verb().steps() {
-        let outcome = match runner.run(spec, path.as_path()) {
+    for step in steps {
+        let outcome = match runner.run(&step.spec, &project.root) {
             Ok(o) => o,
             Err(io_err) => {
-                let _ = writeln!(err, "{}", render_invoke_failure(command, path, &io_err));
+                let _ = writeln!(
+                    err,
+                    "{}",
+                    render_invoke_failure(command, &project, &step.spec, &io_err)
+                );
                 return ExitCode::from(2);
             }
         };
         if !outcome.success {
-            let hints = command.verb().hints(Outcome::Fail, path.as_path());
-            let _ = writeln!(err, "{}", render_step_failure(&outcome, started, hints));
+            let hints = command.verb().hints(Outcome::Fail, &project.root);
+            let _ = writeln!(
+                err,
+                "{}",
+                render_step_failure(&project, step.phase, &outcome, started, hints)
+            );
             return ExitCode::from(1);
         }
     }
-    let hints = command.verb().hints(Outcome::Pass, path.as_path());
+    let hints = command.verb().hints(Outcome::Pass, &project.root);
     let _ = writeln!(out, "{}", render_pass(started, hints));
     ExitCode::SUCCESS
 }
@@ -387,21 +488,79 @@ where
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use camino::{Utf8Path, Utf8PathBuf};
-    use rapport_cli::files::InMemoryFileSystem;
+    use rapport_cli::{Utf8Path, Utf8PathBuf};
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    const ROOT: &str = "/work/repo";
-    const ROOT_GIT_MARKER: &str = "/work/repo/.git";
-    const ROOT_MANIFEST: &str = "/work/repo/Cargo.toml";
-    const ROOT_CHILD: &str = "/work/repo/src/deep";
-    const CRATE_DIR: &str = "/work/repo/crates/app";
-    const CRATE_CHILD: &str = "/work/repo/crates/app/src";
-    const CRATE_MANIFEST: &str = "/work/repo/crates/app/Cargo.toml";
-    const MISSING: &str = "/work/missing";
-    const OUTSIDE_REPO: &str = "/work/outside";
-    const OUTSIDE_MANIFEST: &str = "/work/outside/Cargo.toml";
+    static TEST_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Debug)]
+    struct TestDir {
+        path: Utf8PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let dir = Self::new_without_git();
+            dir.write(".git", "gitdir: test\n");
+            dir
+        }
+
+        fn new_without_git() -> Self {
+            let id = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = Utf8PathBuf::from_path_buf(
+                std::env::temp_dir().join(format!("rapport-test-{}-{id}", std::process::id())),
+            )
+            .expect("temp dir path should be utf8");
+            fs::create_dir_all(&path).expect("test directory should be created");
+            let path = Utf8PathBuf::from_path_buf(
+                fs::canonicalize(&path).expect("test directory should canonicalize"),
+            )
+            .expect("canonical test directory should be utf8");
+            Self { path }
+        }
+
+        fn cargo_project() -> Self {
+            let dir = Self::new();
+            dir.write(
+                "Cargo.toml",
+                "[package]\nname = \"sample\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            );
+            dir
+        }
+
+        fn swift_project() -> Self {
+            let dir = Self::new();
+            dir.write(
+                "Package.swift",
+                "// swift-tools-version: 6.0\nimport PackageDescription\n",
+            );
+            fs::create_dir_all(dir.path.join("Sources"))
+                .expect("Sources directory should be created");
+            dir.write("Sources/main.swift", "print(\"hello\")\n");
+            dir
+        }
+
+        fn as_str(&self) -> &str {
+            self.path.as_str()
+        }
+
+        fn write(&self, relative: &str, contents: &str) {
+            let path = self.path.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("parent directory should be created");
+            }
+            fs::write(path, contents).expect("test file should be written");
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct RecordedCommand {
@@ -437,8 +596,8 @@ mod tests {
     impl CommandRunner for FakeRunner {
         fn run(&self, spec: &CommandSpec, cwd: &Utf8Path) -> io::Result<CommandOutcome> {
             self.calls.borrow_mut().push(RecordedCommand {
-                program: spec.program.to_owned(),
-                args: spec.args.iter().map(|arg| (*arg).to_owned()).collect(),
+                program: spec.program.clone(),
+                args: spec.args.clone(),
                 cwd: cwd.to_owned(),
             });
             self.outcomes
@@ -464,25 +623,12 @@ mod tests {
         }
     }
 
-    fn cargo_project_fs() -> InMemoryFileSystem {
-        let mut fs = InMemoryFileSystem::default();
-        fs.add_directory(ROOT);
-        fs.add_file(ROOT_GIT_MARKER);
-        fs.add_file(ROOT_MANIFEST);
-        fs
-    }
-
-    fn run_with(
-        args: &[&str],
-        runner: &dyn CommandRunner,
-        fs: &impl FileSystem,
-    ) -> (ExitCode, String, String) {
+    fn run_with(args: &[&str], runner: &dyn CommandRunner) -> (ExitCode, String, String) {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let code = run_with_file_system(
+        let code = run(
             args.iter().map(|arg| (*arg).to_owned()),
             runner,
-            fs,
             &mut out,
             &mut err,
         );
@@ -495,42 +641,42 @@ mod tests {
 
     #[test]
     fn build_runs_cargo_check_in_the_given_directory() {
-        let fs = cargo_project_fs();
+        let dir = TestDir::cargo_project();
         let runner = FakeRunner::all_pass(1);
 
-        let (code, out, err) = run_with(&["build", ROOT], &runner, &fs);
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(err, "");
         assert!(out.contains("status: pass"));
-        assert!(out.contains(&format!("└ run rapport test {ROOT}")));
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
         assert_eq!(
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
                 args: vec!["check".into()],
-                cwd: Utf8PathBuf::from(ROOT),
+                cwd: dir.path.clone(),
             }]
         );
     }
 
     #[test]
     fn validate_runs_lint_build_test_pipeline() {
-        let fs = cargo_project_fs();
+        let dir = TestDir::cargo_project();
         let runner = FakeRunner::all_pass(4);
 
-        let (code, out, err) = run_with(&["validate", ROOT], &runner, &fs);
+        let (code, out, err) = run_with(&["validate", dir.as_str()], &runner);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(err, "");
-        assert!(out.contains(&format!("└ run rapport audit {ROOT}")));
+        assert!(out.contains(&format!("└ run rapport audit {}", dir.as_str())));
         assert_eq!(
             runner.calls(),
             vec![
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec!["fmt".into(), "--".into(), "--check".into()],
-                    cwd: Utf8PathBuf::from(ROOT),
+                    cwd: dir.path.clone(),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
@@ -541,17 +687,17 @@ mod tests {
                         "-D".into(),
                         "warnings".into(),
                     ],
-                    cwd: Utf8PathBuf::from(ROOT),
+                    cwd: dir.path.clone(),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec!["check".into()],
-                    cwd: Utf8PathBuf::from(ROOT),
+                    cwd: dir.path.clone(),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec!["test".into()],
-                    cwd: Utf8PathBuf::from(ROOT),
+                    cwd: dir.path.clone(),
                 },
             ]
         );
@@ -559,34 +705,40 @@ mod tests {
 
     #[test]
     fn child_directory_runs_nearest_parent_cargo_project() {
-        let mut fs = cargo_project_fs();
-        fs.add_directory(CRATE_DIR);
-        fs.add_file(CRATE_MANIFEST);
-        fs.add_directory(CRATE_CHILD);
+        let dir = TestDir::cargo_project();
+        let crate_dir = dir.path.join("crates/app");
+        fs::create_dir_all(crate_dir.join("src")).expect("crate src directory should be created");
+        fs::write(
+            crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .expect("nested Cargo.toml should be written");
+        let crate_child = crate_dir.join("src");
         let runner = FakeRunner::all_pass(1);
 
-        let (code, out, err) = run_with(&["build", CRATE_CHILD], &runner, &fs);
+        let (code, out, err) = run_with(&["build", crate_child.as_str()], &runner);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(err, "");
-        assert!(out.contains(&format!("└ run rapport test {CRATE_DIR}")));
+        assert!(out.contains(&format!("└ run rapport test {crate_dir}")));
         assert_eq!(
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
                 args: vec!["check".into()],
-                cwd: Utf8PathBuf::from(CRATE_DIR),
+                cwd: crate_dir,
             }]
         );
     }
 
     #[test]
     fn git_root_is_used_when_it_is_the_only_cargo_project() {
-        let mut fs = cargo_project_fs();
-        fs.add_directory(ROOT_CHILD);
+        let dir = TestDir::cargo_project();
+        fs::create_dir_all(dir.path.join("src/deep")).expect("child directory should be created");
+        let child = dir.path.join("src/deep");
         let runner = FakeRunner::all_pass(1);
 
-        let (code, _out, err) = run_with(&["build", ROOT_CHILD], &runner, &fs);
+        let (code, _out, err) = run_with(&["build", child.as_str()], &runner);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(err, "");
@@ -595,20 +747,20 @@ mod tests {
             vec![RecordedCommand {
                 program: "cargo".into(),
                 args: vec!["check".into()],
-                cwd: Utf8PathBuf::from(ROOT),
+                cwd: dir.path.clone(),
             }]
         );
     }
 
     #[test]
     fn step_failure_stops_pipeline_and_reports_captured_output() {
-        let fs = cargo_project_fs();
+        let dir = TestDir::cargo_project();
         let runner = FakeRunner::new(vec![
             Ok(pass()),
             Ok(fail("stdout details", "stderr details")),
         ]);
 
-        let (code, out, err) = run_with(&["lint", ROOT], &runner, &fs);
+        let (code, out, err) = run_with(&["lint", dir.as_str()], &runner);
 
         assert_eq!(code, ExitCode::from(1));
         assert_eq!(out, "");
@@ -616,37 +768,360 @@ mod tests {
         assert!(err.contains("stderr details"));
         assert!(err.contains("stdout details"));
         assert!(err.contains("status: FAIL"));
-        assert!(err.contains(&format!("└ run rapport fix {ROOT}")));
+        assert!(err.contains(&format!("└ run rapport fix {}", dir.as_str())));
         assert_eq!(runner.calls().len(), 2);
     }
 
     #[test]
     fn invoke_failure_reports_recovery_hint() {
-        let fs = cargo_project_fs();
+        let dir = TestDir::cargo_project();
         let runner = FakeRunner::new(vec![Err(io::Error::new(
             io::ErrorKind::NotFound,
             "missing cargo",
         ))]);
 
-        let (code, out, err) = run_with(&["build", ROOT], &runner, &fs);
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains(&format!("You ran: rapport build {ROOT}")));
+        assert!(err.contains(&format!("You ran: rapport build {}", dir.as_str())));
         assert!(err.contains("Failed to invoke cargo: missing cargo"));
         assert!(err.contains("└ run which cargo"));
     }
 
     #[test]
-    fn missing_path_errors_before_running_any_commands() {
-        let fs = InMemoryFileSystem::default();
+    fn missing_project_marker_errors_before_running_any_commands() {
+        let dir = TestDir::new();
         let runner = FakeRunner::all_pass(1);
 
-        let (code, out, err) = run_with(&["build", MISSING], &runner, &fs);
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains(&format!("You ran: rapport build {MISSING}")));
+        assert!(err.contains("No supported project marker was found"));
+        assert!(err.contains("Cargo.toml"));
+        assert!(err.contains("Package.swift"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn cargo_discovery_walks_up_from_child_path() {
+        let dir = TestDir::cargo_project();
+        fs::create_dir_all(dir.path.join("src/bin")).expect("child directory should be created");
+        let child = dir.path.join("src/bin");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", child.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn malformed_swift_tools_version_errors_before_running_any_commands() {
+        let dir = TestDir::new();
+        dir.write("Package.swift", "import PackageDescription\n");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Package.swift"));
+        assert!(err.contains("swift-tools-version"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn swift_build_runs_without_resolving_formatter() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "swift".into(),
+                args: vec!["build".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn swift_test_runs_without_resolving_formatter() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["test", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "swift".into(),
+                args: vec!["test".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn swift_lint_prefers_driver_formatter() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::all_pass(2);
+
+        let (code, _out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["format".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec![
+                        "format".into(),
+                        "lint".into(),
+                        "--strict".into(),
+                        "--recursive".into(),
+                        "--no-color-diagnostics".into(),
+                        "Package.swift".into(),
+                        "Sources".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn swift_fix_falls_back_to_direct_formatter() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::new(vec![
+            Ok(fail("", "unknown subcommand")),
+            Ok(pass()),
+            Ok(pass()),
+        ]);
+
+        let (code, _out, err) = run_with(&["fix", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["format".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift-format".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift-format".into(),
+                    args: vec![
+                        "format".into(),
+                        "--in-place".into(),
+                        "--recursive".into(),
+                        "--no-color-diagnostics".into(),
+                        "Package.swift".into(),
+                        "Sources".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn swift_validate_runs_lint_build_test_pipeline() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::all_pass(4);
+
+        let (code, _out, err) = run_with(&["validate", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["format".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec![
+                        "format".into(),
+                        "lint".into(),
+                        "--strict".into(),
+                        "--recursive".into(),
+                        "--no-color-diagnostics".into(),
+                        "Package.swift".into(),
+                        "Sources".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["build".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["test".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn swift_audit_runs_validate_then_release_build() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::all_pass(5);
+
+        let (code, _out, err) = run_with(&["audit", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["format".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec![
+                        "format".into(),
+                        "lint".into(),
+                        "--strict".into(),
+                        "--recursive".into(),
+                        "--no-color-diagnostics".into(),
+                        "Package.swift".into(),
+                        "Sources".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["build".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["test".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["build".into(), "-c".into(), "release".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn swift_missing_tool_reports_cross_platform_install_hint() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::new(vec![Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "missing swift",
+        ))]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Failed to invoke swift: missing swift"));
+        assert!(err.contains("https://www.swift.org/install/"));
+        assert!(!err.contains("Homebrew"));
+    }
+
+    #[test]
+    fn swift_missing_formatter_blocks_lint_but_not_build() {
+        let dir = TestDir::swift_project();
+        let runner = FakeRunner::new(vec![
+            Ok(fail("", "unknown subcommand")),
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "missing swift-format",
+            )),
+        ]);
+
+        let (code, out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("SwiftPM formatter tooling was not found"));
+        assert!(err.contains("swift format --version"));
+        assert!(err.contains("swift-format --version"));
+        assert_eq!(runner.calls().len(), 2);
+    }
+
+    #[test]
+    fn swift_discovery_walks_up_from_child_path() {
+        let dir = TestDir::swift_project();
+        fs::create_dir_all(dir.path.join("Sources/App"))
+            .expect("child directory should be created");
+        let child = dir.path.join("Sources/App");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", child.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "swift".into(),
+                args: vec!["build".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn missing_path_errors_before_running_any_commands() {
+        let missing = Utf8PathBuf::from_path_buf(std::env::temp_dir().join(format!(
+            "rapport-missing-{}",
+            TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
+        )))
+        .expect("temp dir path should be utf8");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", missing.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains(&format!("You ran: rapport build {missing}")));
         assert!(err.contains("does not exist or is not a directory"));
         assert!(err.contains("└ run rapport help build"));
         assert_eq!(runner.calls(), Vec::new());
@@ -654,36 +1129,36 @@ mod tests {
 
     #[test]
     fn path_outside_git_repository_errors_before_running_any_commands() {
-        let mut fs = InMemoryFileSystem::default();
-        fs.add_directory(OUTSIDE_REPO);
-        fs.add_file(OUTSIDE_MANIFEST);
+        let dir = TestDir::new_without_git();
+        dir.write(
+            "Cargo.toml",
+            "[package]\nname = \"sample\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
         let runner = FakeRunner::all_pass(1);
 
-        let (code, out, err) = run_with(&["build", OUTSIDE_REPO], &runner, &fs);
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains(&format!("You ran: rapport build {OUTSIDE_REPO}")));
+        assert!(err.contains(&format!("You ran: rapport build {}", dir.as_str())));
         assert!(err.contains("is not inside a git repository"));
         assert_eq!(runner.calls(), Vec::new());
     }
 
     #[test]
     fn git_repository_without_supported_project_errors_before_running_any_commands() {
-        let mut fs = InMemoryFileSystem::default();
-        fs.add_directory(ROOT);
-        fs.add_file(ROOT_GIT_MARKER);
-        fs.add_directory(ROOT_CHILD);
+        let dir = TestDir::new();
+        fs::create_dir_all(dir.path.join("src/deep")).expect("child directory should be created");
+        let child = dir.path.join("src/deep");
         let runner = FakeRunner::all_pass(1);
 
-        let (code, out, err) = run_with(&["build", ROOT_CHILD], &runner, &fs);
+        let (code, out, err) = run_with(&["build", child.as_str()], &runner);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains(&format!("You ran: rapport build {ROOT_CHILD}")));
-        assert!(err.contains(&format!(
-            "has no supported project between it and git root {ROOT}"
-        )));
+        assert!(err.contains(&format!("You ran: rapport build {child}")));
+        assert!(err.contains("No supported project marker was found"));
+        assert!(err.contains("git root"));
         assert_eq!(runner.calls(), Vec::new());
     }
 }
