@@ -15,6 +15,7 @@ authors.workspace = true
 camino.workspace = true
 
 [dev-dependencies]
+claims.workspace = true
 rstest.workspace = true
 
 [lints]

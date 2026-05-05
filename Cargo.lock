@@ -629,6 +629,8 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "camino",
+ "claims",
+ "derive_more",
  "indoc",
  "insta",
  "nonempty",
@@ -637,6 +639,7 @@ dependencies = [
  "rapport-prose",
  "strum",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -644,6 +647,7 @@ name = "rapport-cli"
 version = "0.1.0"
 dependencies = [
  "camino",
+ "claims",
  "rstest",
 ]
 

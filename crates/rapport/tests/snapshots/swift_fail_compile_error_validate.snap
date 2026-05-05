@@ -1,0 +1,26 @@
+---
+source: crates/rapport/tests/swift_e2e.rs
+expression: result.snapshot()
+---
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+SwiftPM project: [project]
+Failing phase: build
+## Output
+
+```
+error: simulated Swift compile failure
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]
+└ run rapport build [project]
+└ run rapport test [project]

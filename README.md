@@ -20,7 +20,8 @@ internal repository. This ports that and makes it better:
 
 ## Current checkpoint
 
-`rapport` currently runs cargo lifecycle commands in the directory you pass:
+`rapport` currently discovers Cargo and SwiftPM projects from the path you pass,
+walking upward to the nearest supported project marker.
 
 ```text
 rapport fix <path>       # cargo fmt
@@ -32,8 +33,21 @@ rapport audit <path>     # validate + cargo build --release + cargo doc --no-dep
 ```
 
 `rapport` walks upward from the path you pass until the git root, then runs the
-nearest supported project it finds. Cargo projects are detected by a
-`Cargo.toml` file.
+nearest supported project it finds. Cargo projects are detected by
+`Cargo.toml`; SwiftPM projects are detected by `Package.swift` with a leading
+`// swift-tools-version:` declaration.
+
+```text
+rapport fix <path>       # swift format format --in-place ...
+rapport lint <path>      # swift format lint --strict ...
+rapport build <path>     # swift build
+rapport test <path>      # swift test
+rapport validate <path>  # lint + build + test
+rapport audit <path>     # validate + swift build -c release
+```
+
+SwiftPM formatting uses `swift format` first and falls back to `swift-format`
+when installed separately. Build and test do not require formatter tooling.
 
 Acceptance fixtures live under `tests/cargo`. The parent acceptance target runs
 each acceptance suite:
@@ -75,7 +89,7 @@ The initial crate scaffolding is in place:
 - [x] `rapport-prose` - markdown-ish output using the builder pattern
 - [x] `rapport-cli` - typed CLI parsing primitives
 - [x] `rapport` - first runnable cargo lifecycle CLI
-- [x] project discovery from local markers such as `Cargo.toml`
+- [x] project discovery from local markers such as `Cargo.toml` and `Package.swift`
 
 ## Outstanding Questions
 

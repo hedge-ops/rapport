@@ -3,12 +3,25 @@ use std::io;
 
 /// A command to run: a program plus its arguments.
 ///
-/// Paired with [`CommandOutcome`] across the [`CommandRunner`] trait — spec
+/// Paired with [`CommandOutcome`] across the [`CommandRunner`] trait: spec
 /// describes what to run, outcome describes what happened.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
-    pub program: &'static str,
-    pub args: &'static [&'static str],
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl CommandSpec {
+    pub fn new<I, S>(program: impl Into<String>, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            program: program.into(),
+            args: args.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 /// The result of a single command invocation.
@@ -41,8 +54,8 @@ pub struct RealCommandRunner;
 
 impl CommandRunner for RealCommandRunner {
     fn run(&self, spec: &CommandSpec, cwd: &Utf8Path) -> io::Result<CommandOutcome> {
-        let output = std::process::Command::new(spec.program)
-            .args(spec.args)
+        let output = std::process::Command::new(&spec.program)
+            .args(&spec.args)
             .current_dir(cwd)
             .output()?;
         Ok(CommandOutcome {

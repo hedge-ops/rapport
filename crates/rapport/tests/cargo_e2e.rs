@@ -1,91 +1,51 @@
-use assert_cmd::Command;
-use std::error::Error;
+mod e2e_support;
+
+use e2e_support::RunResult;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use tempfile::TempDir;
 
-type TestResult = Result<(), Box<dyn Error>>;
+type TestResult<T = ()> = Result<T, TestError>;
+
+#[derive(Debug, thiserror::Error)]
+enum TestError {
+    #[error("cargo fixture command lock poisoned")]
+    CargoCommandLockPoisoned,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Support(#[from] e2e_support::TestError),
+}
 
 #[derive(Debug)]
 struct FixtureProject {
-    root: TempDir,
-    project: PathBuf,
+    base: e2e_support::FixtureProject,
     target: PathBuf,
     cargo_home: PathBuf,
 }
 
-#[derive(Debug)]
-struct RunResult {
-    exit: String,
-    stdout: String,
-    stderr: String,
-}
-
-impl RunResult {
-    fn snapshot(&self) -> String {
-        format!(
-            "exit: {}\nstdout:\n---\n{}stderr:\n---\n{}",
-            self.exit,
-            normalize_trailing_newline(&self.stdout),
-            normalize_trailing_newline(&self.stderr),
-        )
+impl FixtureProject {
+    fn project_path(&self) -> &Path {
+        &self.base.project
     }
 }
 
-fn normalize_trailing_newline(s: &str) -> String {
-    if s.is_empty() {
-        "(empty)\n".to_owned()
-    } else if s.ends_with('\n') {
-        s.to_owned()
-    } else {
-        format!("{s}\n")
-    }
-}
-
-fn fixture(relative: &str) -> Result<FixtureProject, Box<dyn Error>> {
-    let root = tempfile::tempdir()?;
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/cargo")
-        .join(relative);
-    let project = root.path().join("project");
-    copy_dir(&source, &project)?;
-    fs::write(project.join(".git"), "gitdir: test")?;
-
-    let target = root.path().join("target");
-    let cargo_home = root.path().join("cargo-home");
+fn fixture(relative: &str) -> TestResult<FixtureProject> {
+    let base = e2e_support::FixtureProject::copy("cargo", relative)?;
+    let target = base.root.path().join("target");
+    let cargo_home = base.root.path().join("cargo-home");
     fs::create_dir_all(&target)?;
     fs::create_dir_all(&cargo_home)?;
 
     Ok(FixtureProject {
-        root,
-        project,
+        base,
         target,
         cargo_home,
     })
 }
 
-fn copy_dir(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let destination_path = destination.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir(&entry.path(), &destination_path)?;
-        } else {
-            fs::copy(entry.path(), destination_path)?;
-        }
-    }
-    Ok(())
-}
-
-fn run_rapport(
-    project: &FixtureProject,
-    verb: &str,
-    expected_exit: i32,
-) -> Result<RunResult, Box<dyn Error>> {
+fn run_rapport(project: &FixtureProject, verb: &str, expected_exit: i32) -> TestResult<RunResult> {
     run_rapport_with_path(project, verb, expected_exit, None::<&OsStr>)
 }
 
@@ -94,43 +54,33 @@ fn run_rapport_with_path<P>(
     verb: &str,
     expected_exit: i32,
     path: Option<P>,
-) -> Result<RunResult, Box<dyn Error>>
+) -> TestResult<RunResult>
 where
     P: AsRef<OsStr>,
 {
-    let mut command = Command::cargo_bin("rapport")?;
-    command
-        .arg(verb)
-        .arg(&project.project)
-        .env("CARGO_TARGET_DIR", &project.target)
-        .env("CARGO_HOME", &project.cargo_home)
-        .env("CARGO_BUILD_JOBS", "1")
-        .env("CARGO_TERM_COLOR", "never")
-        .env("CARGO_INCREMENTAL", "0")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .env_remove("CARGO_BUILD_TARGET")
-        .env_remove("RUSTC_WRAPPER")
-        .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .env_remove("RUSTFLAGS")
-        .env_remove("RUSTDOCFLAGS");
-
-    if let Some(path) = path {
-        command.env("PATH", path);
-    }
-
     let _guard = cargo_command_lock()
         .lock()
-        .map_err(|_| std::io::Error::other("cargo fixture command lock poisoned"))?;
-    let assertion = command.assert().code(expected_exit);
-    let output = assertion.get_output();
-    Ok(RunResult {
-        exit: output
-            .status
-            .code()
-            .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
-        stdout: String::from_utf8(output.stdout.clone())?,
-        stderr: String::from_utf8(output.stderr.clone())?,
-    })
+        .map_err(|_| TestError::CargoCommandLockPoisoned)?;
+    let result =
+        e2e_support::run_rapport(project.project_path(), verb, expected_exit, |command| {
+            command
+                .env("CARGO_TARGET_DIR", &project.target)
+                .env("CARGO_HOME", &project.cargo_home)
+                .env("CARGO_BUILD_JOBS", "1")
+                .env("CARGO_TERM_COLOR", "never")
+                .env("CARGO_INCREMENTAL", "0")
+                .env_remove("CARGO_ENCODED_RUSTFLAGS")
+                .env_remove("CARGO_BUILD_TARGET")
+                .env_remove("RUSTC_WRAPPER")
+                .env_remove("RUSTC_WORKSPACE_WRAPPER")
+                .env_remove("RUSTFLAGS")
+                .env_remove("RUSTDOCFLAGS");
+
+            if let Some(path) = path {
+                command.env("PATH", path);
+            }
+        })?;
+    Ok(result)
 }
 
 fn cargo_command_lock() -> &'static Mutex<()> {
@@ -138,94 +88,46 @@ fn cargo_command_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn assert_snapshot(name: &str, project: &FixtureProject, result: &RunResult) {
-    let mut settings = insta::Settings::clone_current();
-    settings.set_prepend_module_to_snapshot(false);
-    settings.add_filter(r"duration: [0-9]+(\.[0-9]+)?s", "duration: [duration]");
-    settings.add_filter(r"in [0-9]+(\.[0-9]+)?s", "in [duration]");
-    settings.add_filter(
+const CARGO_BEFORE_PATH_FILTERS: &[(&str, &str)] = &[
+    (r"in [0-9]+(\.[0-9]+)?s", "in [duration]"),
+    (
         r"Finished `([^`]+)` profile \[[^\]]+\] target\(s\)",
         "Finished `$1` profile [cargo-profile] target(s)",
-    );
-    settings.add_filter(r"rust-[0-9]+\.[0-9]+\.[0-9]+", "rust-[version]");
-    settings.add_filter(
+    ),
+    (r"rust-[0-9]+\.[0-9]+\.[0-9]+", "rust-[version]"),
+    (
         r"thread '([^']+)' \([0-9]+\) panicked",
         "thread '$1' panicked",
-    );
-    settings.add_filter(
+    ),
+    (
         r"could not compile `([^`]+)` \((lib|lib test)\)",
         "could not compile `$1` ([cargo-target])",
-    );
-    settings.add_filter(
+    ),
+    (
         r"/[^[:space:]`']*\.rustup/toolchains/[^[:space:]`']+",
         "[toolchain]",
-    );
+    ),
+];
 
-    for (path, replacement) in snapshot_paths(project) {
-        settings.add_filter(&regex_escape(&path.to_string_lossy()), replacement);
-    }
-    settings.add_filter(
-        r"\[target\]/debug/deps/([A-Za-z0-9_-]+)-[0-9a-f]+",
-        "[target]/debug/deps/$1-[hash]",
+const CARGO_AFTER_PATH_FILTERS: &[(&str, &str)] = &[(
+    r"\[target\]/debug/deps/([A-Za-z0-9_-]+)-[0-9a-f]+",
+    "[target]/debug/deps/$1-[hash]",
+)];
+
+fn assert_snapshot(name: &str, project: &FixtureProject, result: &RunResult) {
+    let settings = e2e_support::snapshot_settings(
+        &project.base,
+        &[
+            (project.target.as_path(), "[target]"),
+            (project.cargo_home.as_path(), "[cargo-home]"),
+        ],
+        CARGO_BEFORE_PATH_FILTERS,
+        CARGO_AFTER_PATH_FILTERS,
     );
 
     settings.bind(|| {
         insta::assert_snapshot!(name, result.snapshot());
     });
-}
-
-fn snapshot_paths(project: &FixtureProject) -> Vec<(PathBuf, &'static str)> {
-    let mut paths: Vec<_> = [
-        (project.target.as_path(), "[target]"),
-        (project.cargo_home.as_path(), "[cargo-home]"),
-        (project.project.as_path(), "[project]"),
-        (project.root.path(), "[tmp]"),
-        (workspace_root().as_path(), "[repo]"),
-        (Path::new(env!("CARGO_MANIFEST_DIR")), "[crate]"),
-    ]
-    .into_iter()
-    .flat_map(|(path, replacement)| {
-        let canonical = fs::canonicalize(path).ok();
-        std::iter::once((path.to_path_buf(), replacement)).chain(
-            canonical
-                .filter(|canonical_path| canonical_path != path)
-                .map(|canonical_path| (canonical_path, replacement)),
-        )
-    })
-    .collect();
-
-    paths.sort_by(|(left, _), (right, _)| {
-        right
-            .to_string_lossy()
-            .len()
-            .cmp(&left.to_string_lossy().len())
-    });
-    paths
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .map_or_else(
-            || PathBuf::from(env!("CARGO_MANIFEST_DIR")),
-            Path::to_path_buf,
-        )
-}
-
-fn regex_escape(s: &str) -> String {
-    let mut escaped = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-            | '#' | '&' | '-' | '~' => {
-                escaped.push('\\');
-                escaped.push(ch);
-            }
-            _ => escaped.push(ch),
-        }
-    }
-    escaped
 }
 
 fn assert_fixture_snapshot(
@@ -309,7 +211,7 @@ fn fmt_needed_lint_failure() -> TestResult {
 fn fmt_needed_fix_success() -> TestResult {
     let project = fixture("fail/fmt-needed")?;
     let result = run_rapport(&project, "fix", 0)?;
-    let source = fs::read_to_string(project.project.join("src/lib.rs"))?;
+    let source = fs::read_to_string(project.project_path().join("src/lib.rs"))?;
 
     assert!(source.contains("pub fn answer() -> u8 {\n    42\n}\n"));
     assert_snapshot("cargo_fail_fmt_needed_fix", &project, &result);
