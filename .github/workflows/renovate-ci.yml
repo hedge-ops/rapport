@@ -1,0 +1,30 @@
+name: Renovate CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "renovate.json"
+      - ".github/workflows/renovate-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "renovate.json"
+      - ".github/workflows/renovate-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-config:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Renovate config
+        uses: suzuki-shunsuke/github-action-renovate-config-validator@v2.0.0
+        with:
+          config_file_path: renovate.json
