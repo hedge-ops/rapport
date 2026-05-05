@@ -354,7 +354,7 @@ fn render_step_failure(
 ) -> String {
     let combined = combined_output(outcome);
     let mut vb = ViewBuilder::new();
-    if project.is_swift_package_manager() {
+    if project.should_report_failure_context() {
         vb = vb
             .paragraph(project.label())
             .paragraph(format!("Failing phase: {phase}"));
@@ -374,7 +374,7 @@ fn render_invoke_failure(
     err: &io::Error,
 ) -> String {
     let vb = ViewBuilder::new().paragraph(format!("You ran: rapport {command} {}", project.root));
-    let vb = if project.is_swift_package_manager() {
+    let vb = if project.should_report_failure_context() {
         vb.paragraph(project.label())
     } else {
         vb
@@ -390,6 +390,11 @@ fn render_invoke_failure(
             .next_actions(nonempty![RunHint::new("swift-format --version")])
             .build()
     } else if spec.program == project.primary_program() {
+        let vb = if let Some(hint) = project.toolchain_install_hint() {
+            vb.paragraph(hint)
+        } else {
+            vb
+        };
         vb.next_actions(nonempty![RunHint::new(format!(
             "which {}",
             project.primary_program()
@@ -543,6 +548,16 @@ mod tests {
             dir
         }
 
+        fn fastlane_project() -> Self {
+            let dir = Self::new();
+            dir.write(
+                "Gemfile",
+                "source \"https://rubygems.org\"\ngem \"fastlane\", \"2.228.0\"\n",
+            );
+            dir.write("fastlane/Fastfile", standard_fastfile());
+            dir
+        }
+
         fn as_str(&self) -> &str {
             self.path.as_str()
         }
@@ -621,6 +636,15 @@ mod tests {
             stdout: stdout.into(),
             stderr: stderr.into(),
         }
+    }
+
+    fn standard_fastfile() -> &'static str {
+        "lane :build do\nend\n\
+         lane :test do\nend\n\
+         lane :lint do\nend\n\
+         lane :fix do\nend\n\
+         lane :validate do\nend\n\
+         lane :audit do\nend\n"
     }
 
     fn run_with(args: &[&str], runner: &dyn CommandRunner) -> (ExitCode, String, String) {
@@ -801,6 +825,7 @@ mod tests {
         assert!(err.contains("No supported project marker was found"));
         assert!(err.contains("Cargo.toml"));
         assert!(err.contains("Package.swift"));
+        assert!(err.contains("fastlane/Fastfile"));
         assert_eq!(runner.calls(), Vec::new());
     }
 
@@ -1106,6 +1131,115 @@ mod tests {
                 cwd: dir.path.clone(),
             }]
         );
+    }
+
+    #[test]
+    fn fastlane_build_runs_bundle_exec_fastlane_lane() {
+        let dir = TestDir::fastlane_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "bundle".into(),
+                args: vec!["exec".into(), "fastlane".into(), "build".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn fastlane_validate_runs_validate_lane_directly() {
+        let dir = TestDir::fastlane_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["validate", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "bundle".into(),
+                args: vec!["exec".into(), "fastlane".into(), "validate".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn fastlane_audit_runs_audit_lane_directly() {
+        let dir = TestDir::fastlane_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["audit", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "bundle".into(),
+                args: vec!["exec".into(), "fastlane".into(), "audit".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn fastlane_missing_gemfile_errors_before_running_any_commands() {
+        let dir = TestDir::new();
+        dir.write("fastlane/Fastfile", standard_fastfile());
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Gemfile"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn fastlane_missing_lane_errors_before_running_any_commands() {
+        let dir = TestDir::new();
+        dir.write(
+            "Gemfile",
+            "source \"https://rubygems.org\"\ngem \"fastlane\", \"2.228.0\"\n",
+        );
+        dir.write("fastlane/Fastfile", "lane :build do\nend\n");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("standard lanes"));
+        assert!(err.contains("`test`"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn fastlane_missing_bundle_reports_install_hint() {
+        let dir = TestDir::fastlane_project();
+        let runner = FakeRunner::new(vec![Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "missing bundle",
+        ))]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Fastlane project"));
+        assert!(err.contains("Failed to invoke bundle: missing bundle"));
+        assert!(err.contains("gem install bundler"));
+        assert!(err.contains("└ run which bundle"));
     }
 
     #[test]

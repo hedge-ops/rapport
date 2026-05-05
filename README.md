@@ -20,8 +20,8 @@ internal repository. This ports that and makes it better:
 
 ## Current checkpoint
 
-`rapport` currently discovers Cargo and SwiftPM projects from the path you pass,
-walking upward to the nearest supported project marker.
+`rapport` currently discovers Cargo, SwiftPM, and Fastlane projects from the
+path you pass, walking upward to the nearest supported project marker.
 
 ```text
 rapport fix <path>       # cargo fmt
@@ -49,6 +49,23 @@ rapport audit <path>     # validate + swift build -c release
 SwiftPM formatting uses `swift format` first and falls back to `swift-format`
 when installed separately. Build and test do not require formatter tooling.
 
+Fastlane projects are detected by `fastlane/Fastfile`. Rapport requires a
+`Gemfile` and standard lanes named `fix`, `lint`, `build`, `test`, `validate`,
+and `audit`; each verb runs through Bundler:
+
+```text
+rapport fix <path>       # bundle exec fastlane fix
+rapport lint <path>      # bundle exec fastlane lint
+rapport build <path>     # bundle exec fastlane build
+rapport test <path>      # bundle exec fastlane test
+rapport validate <path>  # bundle exec fastlane validate
+rapport audit <path>     # bundle exec fastlane audit
+```
+
+Xcode app projects follow the Fastlane convention: keep the `.xcworkspace` or
+`.xcodeproj` alongside `fastlane/Fastfile`, and let the standard lanes wrap the
+project-specific `xcodebuild`, lint, formatting, and release steps.
+
 CLI end-to-end fixtures run outside Cargo's test runner so `rapport` can invoke
 Cargo projects without nesting Cargo inside `cargo test`. The e2e target builds
 `rapport` once, copies each fixture into a temporary directory, and compares
@@ -60,10 +77,12 @@ just e2e
 
 Cases live under `tests/e2e/cases`, snapshots live under
 `tests/e2e/snapshots`, and project fixtures live under
-`crates/rapport/tests/fixtures`. Python tooling for the harness is managed with
-uv through `pyproject.toml` and `uv.lock`. The old `just acceptance` command
-remains as a compatibility alias for `just e2e`; `just tests/cargo/acceptance`
-runs only the Cargo subset.
+`crates/rapport/tests/fixtures`. SwiftPM and Fastlane e2e cases use generated
+fake toolchains so the suite does not require Swift, Ruby, Bundler, Fastlane, or
+Xcode on the host. Python tooling for the harness is managed with uv through
+`pyproject.toml` and `uv.lock`. The old `just acceptance` command remains as a
+compatibility alias for `just e2e`; `just tests/cargo/acceptance` runs only the
+Cargo subset.
 
 ## Testing
 
@@ -91,7 +110,8 @@ The initial crate scaffolding is in place:
 - [x] `rapport-prose` - markdown-ish output using the builder pattern
 - [x] `rapport-cli` - typed CLI parsing primitives
 - [x] `rapport` - first runnable cargo lifecycle CLI
-- [x] project discovery from local markers such as `Cargo.toml` and `Package.swift`
+- [x] project discovery from local markers such as `Cargo.toml`, `Package.swift`,
+  and `fastlane/Fastfile`
 
 ## Outstanding Questions
 

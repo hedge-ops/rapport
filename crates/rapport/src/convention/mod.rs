@@ -1,4 +1,5 @@
 mod cargo;
+mod fastlane;
 pub(crate) mod swift;
 
 pub(crate) use swift::FormatterResolutionError;
@@ -10,6 +11,7 @@ use std::io;
 static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
     ProjectConvention::Cargo,
     ProjectConvention::SwiftPackageManager,
+    ProjectConvention::Fastlane,
 ];
 
 pub(crate) fn describe_expected_markers() -> String {
@@ -24,6 +26,7 @@ pub(crate) fn describe_expected_markers() -> String {
 enum ProjectConvention {
     Cargo,
     SwiftPackageManager,
+    Fastlane,
 }
 
 impl ProjectConvention {
@@ -31,6 +34,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => cargo::name(),
             Self::SwiftPackageManager => swift::name(),
+            Self::Fastlane => fastlane::name(),
         }
     }
 
@@ -38,6 +42,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => cargo::marker(),
             Self::SwiftPackageManager => swift::marker(),
+            Self::Fastlane => fastlane::marker(),
         }
     }
 
@@ -45,13 +50,14 @@ impl ProjectConvention {
         match self {
             Self::Cargo => cargo::primary_program(),
             Self::SwiftPackageManager => swift::primary_program(),
+            Self::Fastlane => fastlane::primary_program(),
         }
     }
 
     fn direct_formatter_program(self) -> Option<&'static str> {
         match self {
-            Self::Cargo => None,
             Self::SwiftPackageManager => Some(swift::direct_formatter_program()),
+            Self::Cargo | Self::Fastlane => None,
         }
     }
 
@@ -59,13 +65,14 @@ impl ProjectConvention {
         match self {
             Self::Cargo => None,
             Self::SwiftPackageManager => Some(swift::toolchain_install_hint()),
+            Self::Fastlane => Some(fastlane::toolchain_install_hint()),
         }
     }
 
     fn formatter_install_hint(self) -> Option<&'static str> {
         match self {
-            Self::Cargo => None,
             Self::SwiftPackageManager => Some(swift::formatter_install_hint()),
+            Self::Cargo | Self::Fastlane => None,
         }
     }
 
@@ -73,6 +80,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => Ok(()),
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
+            Self::Fastlane => fastlane::validate_manifest(project, files),
         }
     }
 
@@ -84,6 +92,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => Ok(cargo::fix()),
             Self::SwiftPackageManager => swift::fix(project, runner),
+            Self::Fastlane => Ok(fastlane::fix()),
         }
     }
 
@@ -95,6 +104,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => Ok(cargo::lint()),
             Self::SwiftPackageManager => swift::lint(project, runner),
+            Self::Fastlane => Ok(fastlane::lint()),
         }
     }
 
@@ -102,6 +112,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => cargo::build(),
             Self::SwiftPackageManager => swift::build(),
+            Self::Fastlane => fastlane::build(),
         }
     }
 
@@ -109,6 +120,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => cargo::test(),
             Self::SwiftPackageManager => swift::test(),
+            Self::Fastlane => fastlane::test(),
         }
     }
 
@@ -116,6 +128,7 @@ impl ProjectConvention {
         match self {
             Self::Cargo => cargo::audit(),
             Self::SwiftPackageManager => swift::audit(),
+            Self::Fastlane => fastlane::audit(),
         }
     }
 }
@@ -169,6 +182,10 @@ impl Project {
         self.convention == ProjectConvention::SwiftPackageManager
     }
 
+    pub(crate) fn should_report_failure_context(&self) -> bool {
+        self.convention != ProjectConvention::Cargo
+    }
+
     pub(crate) fn label(&self) -> String {
         format!("{} project: {}", self.convention.name(), self.root)
     }
@@ -201,6 +218,9 @@ impl Project {
             Verb::Test => Ok(self.convention.test()),
             Verb::Validate => self.validate_steps(runner),
             Verb::Audit => {
+                if self.convention == ProjectConvention::Fastlane {
+                    return Ok(fastlane::audit());
+                }
                 let mut steps = self.validate_steps(runner)?;
                 steps.extend(self.convention.audit());
                 Ok(steps)
@@ -216,6 +236,9 @@ impl Project {
         &self,
         runner: &dyn CommandRunner,
     ) -> Result<Vec<LifecycleStep>, FormatterResolutionError> {
+        if self.convention == ProjectConvention::Fastlane {
+            return Ok(fastlane::validate());
+        }
         let mut steps = self.convention.lint(self, runner)?;
         steps.extend(self.convention.build());
         steps.extend(self.convention.test());
@@ -253,6 +276,8 @@ fn absolute_path(path: &Utf8Path) -> Result<Utf8PathBuf, DiscoveryError> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum Phase {
+    #[display("fix")]
+    Fix,
     #[display("format")]
     Format,
     #[display("lint")]
@@ -261,6 +286,10 @@ pub(crate) enum Phase {
     Build,
     #[display("test")]
     Test,
+    #[display("validate")]
+    Validate,
+    #[display("audit")]
+    Audit,
     #[display("release build")]
     ReleaseBuild,
     #[display("docs")]

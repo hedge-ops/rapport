@@ -1,0 +1,28 @@
+default_platform(:ios)
+
+lane :build do
+  sh("xcodebuild -workspace App.xcworkspace -scheme App build")
+end
+
+lane :test do
+  sh("xcodebuild -workspace App.xcworkspace -scheme App test")
+end
+
+lane :lint do
+  sh("xcodebuild -workspace App.xcworkspace -scheme App analyze")
+end
+
+lane :fix do
+  UI.message("format app sources")
+end
+
+lane :validate do
+  build
+  test
+  lint
+end
+
+lane :audit do
+  validate
+  sh("xcodebuild -workspace App.xcworkspace -scheme App archive")
+end

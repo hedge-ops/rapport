@@ -1,0 +1,13 @@
+exit: 2
+stdout:
+---
+(empty)
+stderr:
+---
+You ran: rapport build [project]
+Fastlane project: [project]
+`fastlane/Fastfile` must define standard lanes named `build`, `test`, `lint`, `fix`, `validate`, `audit`. Missing lane(s): `audit`.
+
+## Next
+
+└ run edit [project]/fastlane/Fastfile
