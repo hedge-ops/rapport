@@ -1,4 +1,5 @@
 mod cargo;
+mod declarative;
 mod fastlane;
 mod kustomize;
 pub(crate) mod swift;
@@ -22,8 +23,8 @@ pub(crate) fn describe_expected_markers() -> String {
         .flat_map(|convention| {
             convention
                 .markers()
-                .iter()
-                .map(|marker| format!("`{marker}` for {}", convention.name()))
+                .into_iter()
+                .map(move |marker| format!("`{marker}` for {}", convention.name()))
         })
         .collect::<Vec<_>>();
     entries.join(" or ")
@@ -49,12 +50,12 @@ impl ProjectConvention {
         }
     }
 
-    fn markers(self) -> &'static [&'static str] {
+    fn markers(self) -> Vec<&'static str> {
         match self {
             Self::Cargo => cargo::markers(),
-            Self::SwiftPackageManager => swift::markers(),
-            Self::Fastlane => fastlane::markers(),
-            Self::Kustomize => kustomize::markers(),
+            Self::SwiftPackageManager => swift::markers().to_vec(),
+            Self::Fastlane => fastlane::markers().to_vec(),
+            Self::Kustomize => kustomize::markers().to_vec(),
             Self::Terraform => terraform::markers(),
         }
     }
@@ -170,14 +171,20 @@ impl ProjectConvention {
             Self::Terraform => terraform::matching_marker(root, files),
             Self::Cargo | Self::SwiftPackageManager | Self::Fastlane | Self::Kustomize => self
                 .markers()
-                .iter()
-                .copied()
+                .into_iter()
                 .find(|marker| files.is_file(root.join(marker))),
         }
     }
 
     fn discovers_nested_targets(self) -> bool {
         matches!(self, Self::Kustomize | Self::Terraform)
+    }
+
+    fn should_skip_discovery_directory(self, name: &str) -> bool {
+        match self {
+            Self::Terraform => terraform::should_skip_directory(name),
+            Self::Cargo | Self::SwiftPackageManager | Self::Fastlane | Self::Kustomize => false,
+        }
     }
 }
 
@@ -346,10 +353,13 @@ fn discover_nested_targets(
 }
 
 fn should_skip_discovery_directory(root: &Utf8Path) -> bool {
-    matches!(
-        root.file_name(),
-        Some(".git" | ".terraform" | ".terragrunt-cache" | ".terraform-cache")
-    )
+    let Some(name) = root.file_name() else {
+        return false;
+    };
+    name == ".git"
+        || PROJECT_CONVENTIONS
+            .iter()
+            .any(|convention| convention.should_skip_discovery_directory(name))
 }
 
 #[derive(Debug)]

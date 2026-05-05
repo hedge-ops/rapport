@@ -1,46 +1,42 @@
-use super::{LifecycleStep, Phase, lifecycle_step};
+use super::{LifecycleStep, declarative::ConventionDefinition};
+use crate::Verb;
+use std::sync::LazyLock;
 
-pub(super) fn name() -> &'static str {
-    "Cargo"
+static DEFINITION: LazyLock<ConventionDefinition> =
+    LazyLock::new(|| ConventionDefinition::parse("cargo", include_str!("definitions/cargo.toml")));
+
+fn definition() -> &'static ConventionDefinition {
+    &DEFINITION
 }
 
-pub(super) fn markers() -> &'static [&'static str] {
-    &["Cargo.toml"]
+pub(super) fn name() -> &'static str {
+    definition().name()
+}
+
+pub(super) fn markers() -> Vec<&'static str> {
+    definition().markers()
 }
 
 pub(super) fn primary_program() -> &'static str {
-    "cargo"
+    definition().primary_program()
 }
 
 pub(super) fn fix() -> Vec<LifecycleStep> {
-    vec![cargo_step(Phase::Format, ["fmt"])]
+    definition().steps(Verb::Fix)
 }
 
 pub(super) fn lint() -> Vec<LifecycleStep> {
-    vec![
-        cargo_step(Phase::Format, ["fmt", "--", "--check"]),
-        cargo_step(
-            Phase::Lint,
-            ["clippy", "--all-targets", "--", "-D", "warnings"],
-        ),
-    ]
+    definition().steps(Verb::Lint)
 }
 
 pub(super) fn build() -> Vec<LifecycleStep> {
-    vec![cargo_step(Phase::Build, ["check"])]
+    definition().steps(Verb::Build)
 }
 
 pub(super) fn test() -> Vec<LifecycleStep> {
-    vec![cargo_step(Phase::Test, ["test"])]
+    definition().steps(Verb::Test)
 }
 
 pub(super) fn audit() -> Vec<LifecycleStep> {
-    vec![
-        cargo_step(Phase::ReleaseBuild, ["build", "--release"]),
-        cargo_step(Phase::Docs, ["doc", "--no-deps"]),
-    ]
-}
-
-fn cargo_step<const N: usize>(phase: Phase, args: [&'static str; N]) -> LifecycleStep {
-    lifecycle_step(phase, "cargo", args)
+    definition().steps(Verb::Audit)
 }

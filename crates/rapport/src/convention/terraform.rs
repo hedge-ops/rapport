@@ -1,31 +1,39 @@
-use super::{LifecycleStep, Phase, Project, ToolResolutionError, lifecycle_step, message_step};
+use super::{LifecycleStep, Project, ToolResolutionError, declarative::ConventionDefinition};
 use crate::{CommandRunner, CommandSpec};
 use rapport_cli::{FileSystem, Utf8Path};
 use std::io;
+use std::sync::LazyLock;
 
-const TERRAFORM: &str = "terraform";
 const TFLINT: &str = "tflint";
-const TFLINT_CONFIG: &str = ".tflint.hcl";
-const MARKERS: [&str; 1] = ["*.tf"];
 
-pub(super) fn name() -> &'static str {
-    "Terraform"
+static DEFINITION: LazyLock<ConventionDefinition> = LazyLock::new(|| {
+    ConventionDefinition::parse("terraform", include_str!("definitions/terraform.toml"))
+});
+
+fn definition() -> &'static ConventionDefinition {
+    &DEFINITION
 }
 
-pub(super) fn markers() -> &'static [&'static str] {
-    &MARKERS
+pub(super) fn name() -> &'static str {
+    definition().name()
+}
+
+pub(super) fn markers() -> Vec<&'static str> {
+    definition().markers()
 }
 
 pub(super) fn primary_program() -> &'static str {
-    TERRAFORM
+    definition().primary_program()
 }
 
 pub(super) fn toolchain_install_hint() -> &'static str {
-    "Install Terraform from https://developer.hashicorp.com/terraform/install and make sure `terraform` is on PATH."
+    definition()
+        .toolchain_install_hint()
+        .unwrap_or("Install Terraform and make sure `terraform` is on PATH.")
 }
 
 pub(crate) fn tflint_install_hint() -> &'static str {
-    "Install TFLint from https://github.com/terraform-linters/tflint and make sure `tflint` is on PATH."
+    tflint_tool().install_hint()
 }
 
 pub(super) fn matching_marker(root: &Utf8Path, files: &impl FileSystem) -> Option<&'static str> {
@@ -34,7 +42,7 @@ pub(super) fn matching_marker(root: &Utf8Path, files: &impl FileSystem) -> Optio
     }
     contains_terraform_file(root, files)
         .ok()
-        .and_then(|found| found.then_some(MARKERS[0]))
+        .and_then(|found| found.then_some(markers()[0]))
 }
 
 pub(super) fn validate_manifest(project: &Project, files: &impl FileSystem) -> Result<(), String> {
@@ -48,45 +56,44 @@ pub(super) fn validate_manifest(project: &Project, files: &impl FileSystem) -> R
 }
 
 pub(super) fn fix() -> Vec<LifecycleStep> {
-    vec![terraform_step(Phase::Format, ["fmt", "-recursive"])]
+    definition().steps(crate::Verb::Fix)
 }
 
 pub(super) fn lint(
     project: &Project,
     runner: &dyn CommandRunner,
 ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
-    let mut steps = vec![terraform_step(
-        Phase::Format,
-        ["fmt", "-check", "-recursive"],
-    )];
+    let mut steps = definition().steps(crate::Verb::Lint);
     if should_run_tflint(project, runner)? {
-        steps.push(lifecycle_step(Phase::Lint, TFLINT, ["--recursive"]));
+        let tool = tflint_tool();
+        steps.push(super::lifecycle_step(
+            super::Phase::Lint,
+            tool.program(),
+            tool.run_args(),
+        ));
     }
     Ok(steps)
 }
 
 pub(super) fn build() -> Vec<LifecycleStep> {
-    vec![terraform_step(Phase::Build, ["validate"])]
+    definition().steps(crate::Verb::Build)
 }
 
 pub(super) fn test() -> Vec<LifecycleStep> {
-    vec![message_step(
-        Phase::Test,
-        "No Terraform tests configured for this project.",
-    )]
+    definition().steps(crate::Verb::Test)
 }
 
 pub(super) fn audit() -> Vec<LifecycleStep> {
-    Vec::new()
+    definition().steps(crate::Verb::Audit)
 }
 
 pub(super) fn is_generated_or_cache_path(path: &Utf8Path) -> bool {
-    path.components().any(|component| {
-        matches!(
-            component.as_str(),
-            ".terraform" | ".terragrunt-cache" | ".terraform-cache"
-        )
-    })
+    path.components()
+        .any(|component| should_skip_directory(component.as_str()))
+}
+
+pub(super) fn should_skip_directory(name: &str) -> bool {
+    definition().should_skip_directory(name)
 }
 
 fn contains_terraform_file(root: &Utf8Path, files: &impl FileSystem) -> io::Result<bool> {
@@ -99,8 +106,14 @@ fn should_run_tflint(
     project: &Project,
     runner: &(impl CommandRunner + ?Sized),
 ) -> Result<bool, ToolResolutionError> {
-    let required = project.root.join(TFLINT_CONFIG).exists();
-    match runner.run(&CommandSpec::new(TFLINT, ["--version"]), &project.root) {
+    let tool = tflint_tool();
+    let required = tool
+        .required_config()
+        .is_some_and(|config| project.root.join(config).exists());
+    match runner.run(
+        &CommandSpec::new(tool.program(), tool.version_args()),
+        &project.root,
+    ) {
         Ok(outcome) => {
             if outcome.success {
                 Ok(true)
@@ -124,6 +137,9 @@ fn should_run_tflint(
     }
 }
 
-fn terraform_step<const N: usize>(phase: Phase, args: [&'static str; N]) -> LifecycleStep {
-    lifecycle_step(phase, TERRAFORM, args)
+fn tflint_tool() -> &'static super::declarative::ToolDefinition {
+    match definition().tool(TFLINT) {
+        Some(tool) => tool,
+        None => panic!("terraform convention definition must include tflint tool metadata"),
+    }
 }
