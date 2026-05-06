@@ -1,0 +1,88 @@
+[[case]]
+name = "gradle_ok_basic_app_fix"
+convention = "gradle"
+fixture = "ok/basic-app"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/gradle_ok_basic_app_fix.snap"
+
+[[case]]
+name = "gradle_ok_basic_app_lint"
+convention = "gradle"
+fixture = "ok/basic-app"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/gradle_ok_basic_app_lint.snap"
+
+[[case]]
+name = "gradle_ok_basic_app_build"
+convention = "gradle"
+fixture = "ok/basic-app"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/gradle_ok_basic_app_build.snap"
+
+[[case]]
+name = "gradle_ok_basic_app_test"
+convention = "gradle"
+fixture = "ok/basic-app"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/gradle_ok_basic_app_test.snap"
+
+[[case]]
+name = "gradle_ok_basic_app_validate"
+convention = "gradle"
+fixture = "ok/basic-app"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/gradle_ok_basic_app_validate.snap"
+
+[[case]]
+name = "gradle_ok_basic_app_audit"
+convention = "gradle"
+fixture = "ok/basic-app"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/gradle_ok_basic_app_audit.snap"
+
+[[case]]
+name = "gradle_fail_missing_project_build"
+convention = "gradle"
+fixture = "fail/missing-project"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/gradle_fail_missing_project_build.snap"
+
+[[case]]
+name = "gradle_fail_missing_wrapper_build"
+convention = "gradle"
+fixture = "fail/missing-wrapper"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/gradle_fail_missing_wrapper_build.snap"
+
+[[case]]
+name = "gradle_fail_missing_task_build"
+convention = "gradle"
+fixture = "fail/missing-task"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/gradle_fail_missing_task_build.snap"
+
+[[case]]
+name = "gradle_fail_missing_java_build"
+convention = "gradle"
+fixture = "fail/missing-tools"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/gradle_fail_missing_java_build.snap"
+toolchain = "missing_java"
+
+[[case]]
+name = "gradle_fail_task_failure_build"
+convention = "gradle"
+fixture = "fail/task-failure"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/gradle_fail_task_failure_build.snap"

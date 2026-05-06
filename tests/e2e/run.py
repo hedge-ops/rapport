@@ -90,7 +90,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run rapport CLI e2e cases")
     parser.add_argument(
         "--convention",
-        choices=("cargo", "swift", "fastlane", "kustomize", "terraform"),
+        choices=("cargo", "swift", "fastlane", "gradle", "kustomize", "terraform"),
         help="run only cases for one project convention",
     )
     parser.add_argument(
@@ -226,6 +226,8 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
             env, context = configure_swift(env, context, case)
         elif case.convention == "fastlane":
             env, context = configure_fastlane(env, context, case)
+        elif case.convention == "gradle":
+            env, context = configure_gradle(env, context, case)
         elif case.convention == "kustomize":
             env, context = configure_kustomize(env, context, case)
         elif case.convention == "terraform":
@@ -337,6 +339,26 @@ def configure_fastlane(env: dict[str, str], context: RunContext, case: Case) -> 
         pass
     else:
         raise ValueError(f"unsupported fastlane toolchain mode: {mode}")
+
+    env["PATH"] = str(tool_root)
+    return env, RunContext(
+        temp_root=context.temp_root,
+        project=context.project,
+        toolchain=tool_root,
+    )
+
+
+def configure_gradle(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
+    mode = case.toolchain or "full"
+    tool_root = context.temp_root / "toolchain"
+    tool_root.mkdir()
+
+    if mode == "full":
+        write_executable(tool_root / "java", java_script())
+    elif mode == "missing_java":
+        pass
+    else:
+        raise ValueError(f"unsupported gradle toolchain mode: {mode}")
 
     env["PATH"] = str(tool_root)
     return env, RunContext(
@@ -563,6 +585,20 @@ if /usr/bin/grep -q "xcodebuild" fastlane/Fastfile; then
 else
     echo "fastlane lane $lane passed"
 fi
+"""
+
+
+def java_script() -> str:
+    return """#!/bin/sh
+set -u
+
+if [ "${1:-}" = "-version" ]; then
+    echo 'openjdk version "21.0.3"' >&2
+    exit 0
+fi
+
+echo "unexpected java args: $*" >&2
+exit 2
 """
 
 

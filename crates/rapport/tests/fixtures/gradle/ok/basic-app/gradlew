@@ -1,0 +1,25 @@
+#!/bin/sh
+set -u
+
+if ! command -v java >/dev/null 2>&1; then
+    echo "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH." >&2
+    exit 1
+fi
+
+if [ "${1:-}" != "--no-daemon" ]; then
+    echo "unexpected gradle args: $*" >&2
+    exit 2
+fi
+
+task="${2:-}"
+case "$task" in
+assemble|test|check|build)
+    echo "> Task :$task"
+    echo "$task passed"
+    echo "BUILD SUCCESSFUL in 1s"
+    ;;
+*)
+    echo "Task '$task' not found in root project 'rapport-gradle-basic-app'." >&2
+    exit 1
+    ;;
+esac

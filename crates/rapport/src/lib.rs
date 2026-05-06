@@ -300,15 +300,24 @@ fn render_discovery_failure(command: &Command, path: &Utf8Path, err: &DiscoveryE
 }
 
 fn render_convention_failure(command: &Command, project: &Project, reason: &str) -> String {
+    let hints = if project.is_gradle() && reason.contains("`./gradlew`") {
+        nonempty![RunHint::new(format!(
+            "cd {} && gradle wrapper",
+            project.root
+        ))]
+    } else {
+        nonempty![RunHint::new(format!(
+            "edit {}/{}",
+            project.root,
+            project.marker()
+        ))]
+    };
+
     ViewBuilder::new()
         .paragraph(format!("You ran: rapport {command} {}", project.root))
         .paragraph(project.label())
         .paragraph(reason)
-        .next_actions(nonempty![RunHint::new(format!(
-            "edit {}/{}",
-            project.root,
-            project.marker()
-        ))])
+        .next_actions(hints)
         .build()
 }
 
@@ -379,14 +388,15 @@ fn render_step_failure(
     hints: NonEmpty<RunHint>,
 ) -> String {
     let combined = combined_output(outcome);
+    let failure_output = project.curate_failure_output(&combined);
     let mut vb = ViewBuilder::new();
     if project.should_report_failure_context() {
         vb = vb
             .paragraph(project.label())
             .paragraph(format!("Failing phase: {phase}"));
     }
-    if !combined.is_empty() {
-        vb = vb.section("Output", |b| b.captured(combined));
+    if !failure_output.is_empty() {
+        vb = vb.section("Output", |b| b.captured(failure_output));
     }
     vb.status(Outcome::Fail, started.elapsed())
         .next_actions(hints)
@@ -616,6 +626,14 @@ mod tests {
                 "main.tf",
                 "terraform {\n  required_version = \">= 1.6.0\"\n}\n",
             );
+            dir
+        }
+
+        fn gradle_project() -> Self {
+            let dir = Self::new();
+            dir.write("settings.gradle.kts", "rootProject.name = \"app\"\n");
+            dir.write("gradlew", "#!/bin/sh\nexit 0\n");
+            dir.write("build.gradle.kts", "// test fixture\n");
             dir
         }
 
@@ -887,6 +905,7 @@ mod tests {
         assert!(err.contains("Cargo.toml"));
         assert!(err.contains("Package.swift"));
         assert!(err.contains("fastlane/Fastfile"));
+        assert!(err.contains("settings.gradle.kts"));
         assert!(err.contains("kustomization.yaml"));
         assert!(err.contains("*.tf"));
         assert_eq!(runner.calls(), Vec::new());
@@ -1303,6 +1322,62 @@ mod tests {
         assert!(err.contains("Failed to invoke bundle: missing bundle"));
         assert!(err.contains("gem install bundler"));
         assert!(err.contains("└ run which bundle"));
+    }
+
+    #[test]
+    fn gradle_build_runs_wrapper_task() {
+        let dir = TestDir::gradle_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "./gradlew".into(),
+                args: vec!["--no-daemon".into(), "assemble".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn gradle_validate_runs_convention_task_directly() {
+        let dir = TestDir::gradle_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["validate", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "./gradlew".into(),
+                args: vec!["--no-daemon".into(), "build".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn gradle_missing_java_output_is_curated_from_wrapper_failure() {
+        let dir = TestDir::gradle_project();
+        let runner = FakeRunner::new(vec![Ok(fail(
+            "",
+            "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.",
+        ))]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(1));
+        assert_eq!(out, "");
+        assert!(err.contains("Gradle wrapper could not find Java"));
+        assert!(err.contains("Install a JDK"));
+        assert_eq!(runner.calls().len(), 1);
     }
 
     #[test]
