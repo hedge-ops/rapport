@@ -1,0 +1,10 @@
+{
+  "name": "script-failure",
+  "scripts": {
+    "build": "fail-build",
+    "test": "bun test",
+    "lint": "biome check .",
+    "fix": "biome check --write .",
+    "audit": "bun audit && bun run build --minify"
+  }
+}

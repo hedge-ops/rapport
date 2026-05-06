@@ -1,0 +1,22 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Bun project: [project]
+Failing phase: build
+## Output
+
+```
+Bun build error(s):
+- Build failed with 1 error
+- src/index.ts:1:1 error: simulated Bun build failure
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

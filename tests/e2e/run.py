@@ -90,7 +90,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run rapport CLI e2e cases")
     parser.add_argument(
         "--convention",
-        choices=("cargo", "swift", "fastlane", "gradle", "kustomize", "terraform"),
+        choices=("cargo", "bun", "swift", "fastlane", "gradle", "kustomize", "terraform"),
         help="run only cases for one project convention",
     )
     parser.add_argument(
@@ -222,6 +222,8 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
         context = RunContext(temp_root=temp_root, project=project)
         if case.convention == "cargo":
             env, context = configure_cargo(env, context, case)
+        elif case.convention == "bun":
+            env, context = configure_bun(env, context, case)
         elif case.convention == "swift":
             env, context = configure_swift(env, context, case)
         elif case.convention == "fastlane":
@@ -300,6 +302,26 @@ def configure_cargo(env: dict[str, str], context: RunContext, case: Case) -> tup
         project=context.project,
         target=target,
         cargo_home=cargo_home,
+    )
+
+
+def configure_bun(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
+    mode = case.toolchain or "full"
+    tool_root = context.temp_root / "toolchain"
+    tool_root.mkdir()
+
+    if mode == "full":
+        write_executable(tool_root / "bun", bun_script())
+    elif mode == "missing_bun":
+        pass
+    else:
+        raise ValueError(f"unsupported bun toolchain mode: {mode}")
+
+    env["PATH"] = str(tool_root)
+    return env, RunContext(
+        temp_root=context.temp_root,
+        project=context.project,
+        toolchain=tool_root,
     )
 
 
@@ -599,6 +621,45 @@ fi
 
 echo "unexpected java args: $*" >&2
 exit 2
+"""
+
+
+def bun_script() -> str:
+    return """#!/bin/sh
+set -u
+
+if [ "${1:-}" != "run" ]; then
+    echo "unexpected bun args: $*" >&2
+    exit 2
+fi
+
+script="${2:-}"
+if [ -z "$script" ]; then
+    echo "missing bun script" >&2
+    exit 2
+fi
+
+if /usr/bin/grep -q "fail-$script" package.json; then
+    echo "src/index.ts:1:1 error: simulated Bun $script failure" >&2
+    echo "Build failed with 1 error" >&2
+    exit 1
+fi
+
+if [ "$script" = "lint" ] && [ -e src ] && /usr/bin/grep -R "lint_error" src >/dev/null 2>&1; then
+    echo "src/index.ts:1:1 warning: simulated Bun lint finding" >&2
+    exit 1
+fi
+
+if [ "$script" = "test" ] && [ -e src ] && /usr/bin/grep -R "test_failure" src >/dev/null 2>&1; then
+    echo "index.test.ts:1:1 test failed: simulated Bun test failure" >&2
+    exit 1
+fi
+
+if [ "$script" = "fix" ] && [ -f src/index.ts ]; then
+    /usr/bin/awk '{ gsub("needsFix", "fixed"); print }' src/index.ts > src/index.ts.tmp && /bin/mv src/index.ts.tmp src/index.ts
+fi
+
+echo "bun script $script passed"
 """
 
 

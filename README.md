@@ -20,8 +20,9 @@ internal repository. This ports that and makes it better:
 
 ## Current checkpoint
 
-`rapport` currently discovers Cargo, SwiftPM, Fastlane, and Kustomize projects
-from the path you pass, walking upward to the nearest supported project marker.
+`rapport` currently discovers Cargo, Bun, SwiftPM, Fastlane, Gradle, Kustomize,
+and Terraform projects from the path you pass, walking upward to the nearest
+supported project marker.
 
 ```text
 rapport fix <path>       # cargo fmt
@@ -36,6 +37,20 @@ rapport audit <path>     # validate + cargo build --release + cargo doc --no-dep
 nearest supported project it finds. Cargo projects are detected by
 `Cargo.toml`; SwiftPM projects are detected by `Package.swift` with a leading
 `// swift-tools-version:` declaration.
+
+Bun projects are detected by `package.json` plus `bun.lock` or `bun.lockb` at
+the package root or an ancestor workspace root. A Bun package runs standard
+scripts directly; `validate` is composed as lint + build + test. A scriptless
+Bun workspace root with runnable child packages acts as an aggregate scope.
+
+```text
+rapport fix <path>       # bun run fix
+rapport lint <path>      # bun run lint
+rapport build <path>     # bun run build
+rapport test <path>      # bun run test
+rapport validate <path>  # bun run lint + bun run build + bun run test
+rapport audit <path>     # bun run audit
+```
 
 ```text
 rapport fix <path>       # swift format format --in-place ...

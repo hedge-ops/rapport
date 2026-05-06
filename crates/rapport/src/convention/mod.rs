@@ -1,3 +1,4 @@
+mod bun;
 mod cargo;
 mod declarative;
 mod fastlane;
@@ -12,6 +13,7 @@ use std::io;
 
 static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
     ProjectConvention::Cargo,
+    ProjectConvention::Bun,
     ProjectConvention::SwiftPackageManager,
     ProjectConvention::Fastlane,
     ProjectConvention::Gradle,
@@ -35,6 +37,7 @@ pub(crate) fn describe_expected_markers() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProjectConvention {
     Cargo,
+    Bun,
     SwiftPackageManager,
     Fastlane,
     Gradle,
@@ -46,6 +49,7 @@ impl ProjectConvention {
     fn name(self) -> &'static str {
         match self {
             Self::Cargo => cargo::name(),
+            Self::Bun => bun::name(),
             Self::SwiftPackageManager => swift::name(),
             Self::Fastlane => fastlane::name(),
             Self::Gradle => gradle::name(),
@@ -57,6 +61,7 @@ impl ProjectConvention {
     fn markers(self) -> Vec<&'static str> {
         match self {
             Self::Cargo => cargo::markers(),
+            Self::Bun => bun::markers().to_vec(),
             Self::SwiftPackageManager => swift::markers().to_vec(),
             Self::Fastlane => fastlane::markers().to_vec(),
             Self::Gradle => gradle::markers(),
@@ -68,6 +73,7 @@ impl ProjectConvention {
     fn primary_program(self) -> &'static str {
         match self {
             Self::Cargo => cargo::primary_program(),
+            Self::Bun => bun::primary_program(),
             Self::SwiftPackageManager => swift::primary_program(),
             Self::Fastlane => fastlane::primary_program(),
             Self::Gradle => gradle::primary_program(),
@@ -79,13 +85,19 @@ impl ProjectConvention {
     fn direct_formatter_program(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::direct_formatter_program()),
-            Self::Cargo | Self::Fastlane | Self::Gradle | Self::Kustomize | Self::Terraform => None,
+            Self::Cargo
+            | Self::Bun
+            | Self::Fastlane
+            | Self::Gradle
+            | Self::Kustomize
+            | Self::Terraform => None,
         }
     }
 
     fn toolchain_install_hint(self) -> Option<&'static str> {
         match self {
             Self::Cargo => None,
+            Self::Bun => Some(bun::toolchain_install_hint()),
             Self::SwiftPackageManager => Some(swift::toolchain_install_hint()),
             Self::Fastlane => Some(fastlane::toolchain_install_hint()),
             Self::Gradle => Some(gradle::toolchain_install_hint()),
@@ -97,13 +109,19 @@ impl ProjectConvention {
     fn formatter_install_hint(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::formatter_install_hint()),
-            Self::Cargo | Self::Fastlane | Self::Gradle | Self::Kustomize | Self::Terraform => None,
+            Self::Cargo
+            | Self::Bun
+            | Self::Fastlane
+            | Self::Gradle
+            | Self::Kustomize
+            | Self::Terraform => None,
         }
     }
 
     fn validate_manifest(self, project: &Project, files: &impl FileSystem) -> Result<(), String> {
         match self {
             Self::Cargo => Ok(()),
+            Self::Bun => bun::validate_manifest(project, files),
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
             Self::Fastlane => fastlane::validate_manifest(project, files),
             Self::Gradle => gradle::validate_manifest(project, files),
@@ -116,9 +134,11 @@ impl ProjectConvention {
         self,
         project: &Project,
         runner: &dyn CommandRunner,
+        files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::fix()),
+            Self::Bun => bun::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::fix(project, runner),
             Self::Fastlane => Ok(fastlane::fix()),
             Self::Gradle => Ok(gradle::fix()),
@@ -131,9 +151,11 @@ impl ProjectConvention {
         self,
         project: &Project,
         runner: &dyn CommandRunner,
+        files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::lint()),
+            Self::Bun => bun::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::lint(project, runner),
             Self::Fastlane => Ok(fastlane::lint()),
             Self::Gradle => Ok(gradle::lint()),
@@ -146,9 +168,11 @@ impl ProjectConvention {
         self,
         project: &Project,
         runner: &dyn CommandRunner,
+        files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::build()),
+            Self::Bun => bun::build(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => Ok(swift::build()),
             Self::Fastlane => Ok(fastlane::build()),
             Self::Gradle => Ok(gradle::build()),
@@ -157,14 +181,19 @@ impl ProjectConvention {
         }
     }
 
-    fn test(self) -> Vec<LifecycleStep> {
+    fn test(
+        self,
+        project: &Project,
+        files: &impl FileSystem,
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
-            Self::Cargo => cargo::test(),
-            Self::SwiftPackageManager => swift::test(),
-            Self::Fastlane => fastlane::test(),
-            Self::Gradle => gradle::test(),
-            Self::Kustomize => kustomize::test(),
-            Self::Terraform => terraform::test(),
+            Self::Cargo => Ok(cargo::test()),
+            Self::Bun => bun::test(project, files).map_err(ToolResolutionError::Convention),
+            Self::SwiftPackageManager => Ok(swift::test()),
+            Self::Fastlane => Ok(fastlane::test()),
+            Self::Gradle => Ok(gradle::test()),
+            Self::Kustomize => Ok(kustomize::test()),
+            Self::Terraform => Ok(terraform::test()),
         }
     }
 
@@ -172,10 +201,12 @@ impl ProjectConvention {
         self,
         project: &Project,
         runner: &dyn CommandRunner,
+        files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Gradle => Ok(gradle::validate()),
-            _ => project.validate_steps(runner),
+            Self::Bun => bun::validate(project, files).map_err(ToolResolutionError::Convention),
+            _ => project.validate_steps(runner, files),
         }
     }
 
@@ -183,18 +214,20 @@ impl ProjectConvention {
         self,
         project: &Project,
         runner: &dyn CommandRunner,
+        files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Fastlane => Ok(fastlane::audit()),
             Self::Gradle => Ok(gradle::audit()),
+            Self::Bun => bun::audit(project, files).map_err(ToolResolutionError::Convention),
             Self::Cargo | Self::SwiftPackageManager | Self::Kustomize | Self::Terraform => {
-                let mut steps = project.validate_steps(runner)?;
+                let mut steps = project.validate_steps(runner, files)?;
                 steps.extend(match self {
                     Self::Cargo => cargo::audit(),
                     Self::SwiftPackageManager => swift::audit(),
                     Self::Kustomize => kustomize::audit(),
                     Self::Terraform => terraform::audit(),
-                    Self::Fastlane | Self::Gradle => unreachable!(),
+                    Self::Bun | Self::Fastlane | Self::Gradle => unreachable!(),
                 });
                 Ok(steps)
             }
@@ -203,6 +236,7 @@ impl ProjectConvention {
 
     fn matching_marker(self, root: &Utf8Path, files: &impl FileSystem) -> Option<&'static str> {
         match self {
+            Self::Bun => bun::matching_marker(root, files),
             Self::Terraform => terraform::matching_marker(root, files),
             Self::Cargo
             | Self::SwiftPackageManager
@@ -216,11 +250,12 @@ impl ProjectConvention {
     }
 
     fn discovers_nested_targets(self) -> bool {
-        matches!(self, Self::Kustomize | Self::Terraform)
+        matches!(self, Self::Bun | Self::Kustomize | Self::Terraform)
     }
 
     fn should_skip_discovery_directory(self, name: &str) -> bool {
         match self {
+            Self::Bun => bun::should_skip_directory(name),
             Self::Terraform => terraform::should_skip_directory(name),
             Self::Cargo
             | Self::SwiftPackageManager
@@ -260,6 +295,13 @@ impl Project {
             }
             if files.exists(current.join(".git")) {
                 if let Some(project) = nearest_project {
+                    if project.is_bun_scriptless_container(files) {
+                        let mut projects = Vec::new();
+                        discover_nested_targets(&project.root, files, &mut projects)?;
+                        if !projects.is_empty() {
+                            return Ok(projects);
+                        }
+                    }
                     return Ok(vec![project]);
                 }
 
@@ -299,6 +341,10 @@ impl Project {
         self.convention == ProjectConvention::Gradle
     }
 
+    fn is_bun_scriptless_container(&self, files: &impl FileSystem) -> bool {
+        self.convention == ProjectConvention::Bun && bun::has_no_standard_scripts(&self.root, files)
+    }
+
     pub(crate) fn should_report_failure_context(&self) -> bool {
         self.convention != ProjectConvention::Cargo
     }
@@ -327,14 +373,15 @@ impl Project {
         &self,
         verb: Verb,
         runner: &dyn CommandRunner,
+        fs: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match verb {
-            Verb::Fix => self.convention.fix(self, runner),
-            Verb::Lint => self.convention.lint(self, runner),
-            Verb::Build => self.convention.build(self, runner),
-            Verb::Test => Ok(self.convention.test()),
-            Verb::Validate => self.convention.validate(self, runner),
-            Verb::Audit => self.convention.audit(self, runner),
+            Verb::Fix => self.convention.fix(self, runner, fs),
+            Verb::Lint => self.convention.lint(self, runner, fs),
+            Verb::Build => self.convention.build(self, runner, fs),
+            Verb::Test => self.convention.test(self, fs),
+            Verb::Validate => self.convention.validate(self, runner, fs),
+            Verb::Audit => self.convention.audit(self, runner, fs),
         }
     }
 
@@ -345,19 +392,21 @@ impl Project {
     fn validate_steps(
         &self,
         runner: &dyn CommandRunner,
+        files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         if self.convention == ProjectConvention::Fastlane {
             return Ok(fastlane::validate());
         }
-        let mut steps = self.convention.lint(self, runner)?;
-        steps.extend(self.convention.build(self, runner)?);
-        steps.extend(self.convention.test());
+        let mut steps = self.convention.lint(self, runner, files)?;
+        steps.extend(self.convention.build(self, runner, files)?);
+        steps.extend(self.convention.test(self, files)?);
         Ok(steps)
     }
 
     pub(crate) fn curate_failure_output(&self, output: &str) -> String {
         match self.convention {
             ProjectConvention::Gradle => gradle::curate_failure_output(output),
+            ProjectConvention::Bun => bun::curate_failure_output(output),
             _ => output.to_owned(),
         }
     }
@@ -376,15 +425,31 @@ fn discover_nested_targets(
         if convention.discovers_nested_targets()
             && let Some(marker) = convention.matching_marker(root, files)
         {
-            projects.push(Project {
+            let project = Project {
                 convention: *convention,
                 marker,
                 root: root.to_owned(),
-            });
+            };
+            if project.is_bun_scriptless_container(files) {
+                let before = projects.len();
+                discover_nested_children(root, files, projects)?;
+                if projects.len() > before {
+                    return Ok(());
+                }
+            }
+            projects.push(project);
             return Ok(());
         }
     }
 
+    discover_nested_children(root, files, projects)
+}
+
+fn discover_nested_children(
+    root: &Utf8Path,
+    files: &impl FileSystem,
+    projects: &mut Vec<Project>,
+) -> Result<(), DiscoveryError> {
     for entry in files
         .read_dir(root)
         .map_err(|err| DiscoveryError::UnreadableDirectory {
@@ -411,6 +476,7 @@ fn should_skip_discovery_directory(root: &Utf8Path) -> bool {
 
 #[derive(Debug)]
 pub(crate) enum ToolResolutionError {
+    Convention(String),
     MissingSwift(io::Error),
     MissingFormatter,
     MissingKustomizeRenderer,
