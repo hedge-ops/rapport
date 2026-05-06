@@ -1,0 +1,13 @@
+{
+  "name": "workspace-root-with-scripts",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist",
+    "test": "bun test",
+    "lint": "biome check .",
+    "fix": "biome check --write .",
+    "audit": "bun audit && bun run build --minify"
+  }
+}

@@ -330,6 +330,14 @@ fn render_tool_resolution_failure(
         .paragraph(format!("You ran: rapport {command} {}", project.root))
         .paragraph(project.label());
     match err {
+        ToolResolutionError::Convention(reason) => vb
+            .paragraph(reason)
+            .next_actions(nonempty![RunHint::new(format!(
+                "edit {}/{}",
+                project.root,
+                project.marker()
+            ))])
+            .build(),
         ToolResolutionError::MissingSwift(io_err) => vb
             .paragraph(format!("Failed to invoke swift: {io_err}"))
             .paragraph(project.toolchain_install_hint().unwrap_or_default())
@@ -489,7 +497,7 @@ where
             return ExitCode::from(2);
         }
 
-        let steps = match project.lifecycle_steps(command.verb(), runner) {
+        let steps = match project.lifecycle_steps(command.verb(), runner, fs) {
             Ok(steps) => steps,
             Err(tool_err) => {
                 let _ = writeln!(
@@ -585,6 +593,27 @@ mod tests {
                 "Cargo.toml",
                 "[package]\nname = \"sample\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
             );
+            dir
+        }
+
+        fn bun_project() -> Self {
+            let dir = Self::new();
+            dir.write("bun.lock", "");
+            dir.write(
+                "package.json",
+                r#"{
+  "name": "sample",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist",
+    "test": "bun test",
+    "lint": "biome check .",
+    "fix": "biome check --write .",
+    "audit": "bun audit && bun run build --minify"
+  }
+}
+"#,
+            );
+            dir.write("src/index.ts", "export const answer = 42;\n");
             dir
         }
 
@@ -903,6 +932,7 @@ mod tests {
         assert_eq!(out, "");
         assert!(err.contains("No supported project marker was found"));
         assert!(err.contains("Cargo.toml"));
+        assert!(err.contains("package.json"));
         assert!(err.contains("Package.swift"));
         assert!(err.contains("fastlane/Fastfile"));
         assert!(err.contains("settings.gradle.kts"));
@@ -1213,6 +1243,188 @@ mod tests {
                 cwd: dir.path.clone(),
             }]
         );
+    }
+
+    #[test]
+    fn bun_build_runs_package_script() {
+        let dir = TestDir::bun_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "bun".into(),
+                args: vec!["run".into(), "build".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn bun_validate_composes_lint_build_test_scripts() {
+        let dir = TestDir::bun_project();
+        let runner = FakeRunner::all_pass(3);
+
+        let (code, _out, err) = run_with(&["validate", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "lint".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "test".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn bun_package_can_use_ancestor_lockfile() {
+        let dir = TestDir::new();
+        dir.write("bun.lock", "");
+        dir.write(
+            "packages/app/package.json",
+            r#"{
+  "name": "app",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist"
+  }
+}
+"#,
+        );
+        dir.write("packages/app/src/index.ts", "export const answer = 42;\n");
+        let app = dir.path.join("packages/app");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", app.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "bun".into(),
+                args: vec!["run".into(), "build".into()],
+                cwd: app,
+            }]
+        );
+    }
+
+    #[test]
+    fn bun_workspace_root_without_scripts_aggregates_child_packages() {
+        let dir = TestDir::new();
+        dir.write("bun.lock", "");
+        dir.write(
+            "package.json",
+            r#"{
+  "name": "workspace",
+  "workspaces": ["packages/*"]
+}
+"#,
+        );
+        dir.write(
+            "packages/api/package.json",
+            r#"{
+  "name": "api",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist"
+  }
+}
+"#,
+        );
+        dir.write("packages/api/src/index.ts", "export const api = 1;\n");
+        dir.write(
+            "packages/web/package.json",
+            r#"{
+  "name": "web",
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist"
+  }
+}
+"#,
+        );
+        dir.write("packages/web/src/index.ts", "export const web = 1;\n");
+        let runner = FakeRunner::all_pass(2);
+
+        let (code, _out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.join("packages/api"),
+                },
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.join("packages/web"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn bun_missing_script_errors_before_running_any_commands() {
+        let dir = TestDir::new();
+        dir.write("bun.lock", "");
+        dir.write(
+            "package.json",
+            r#"{
+  "name": "sample",
+  "scripts": {
+    "test": "bun test"
+  }
+}
+"#,
+        );
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Bun project must define script `build`"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn bun_missing_tool_reports_install_hint() {
+        let dir = TestDir::bun_project();
+        let runner = FakeRunner::new(vec![Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "missing bun",
+        ))]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Bun project"));
+        assert!(err.contains("Failed to invoke bun: missing bun"));
+        assert!(err.contains("https://bun.sh/docs/installation"));
+        assert!(err.contains("└ run which bun"));
     }
 
     #[test]

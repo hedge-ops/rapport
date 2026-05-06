@@ -1,0 +1,6 @@
+{
+  "name": "workspace-root-aggregates-children",
+  "workspaces": [
+    "packages/*"
+  ]
+}

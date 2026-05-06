@@ -1,0 +1,6 @@
+{
+  "name": "missing-script-no-children",
+  "scripts": {
+    "test": "bun test"
+  }
+}
