@@ -1,0 +1,22 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Gradle project: [project]
+Failing phase: build
+## Output
+
+```
+Gradle wrapper could not find Java.
+
+Install a JDK and make sure `java` is on PATH. Rapport uses the checked-in `./gradlew` wrapper and never system Gradle.
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

@@ -1,0 +1,22 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Gradle project: [project]
+Failing phase: build
+## Output
+
+```
+Gradle did not find standard task `assemble`.
+
+Rapport's Gradle convention uses standard Gradle lifecycle tasks: `assemble`, `test`, `check`, `build`.
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

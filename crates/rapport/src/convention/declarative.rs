@@ -65,7 +65,7 @@ impl ConventionDefinition {
             Verb::Lint => &self.verbs.lint,
             Verb::Build => &self.verbs.build,
             Verb::Test => &self.verbs.test,
-            Verb::Validate => panic!("validate is composed by rapport, not declared in TOML"),
+            Verb::Validate => &self.verbs.validate,
             Verb::Audit => &self.verbs.audit,
         }
     }
@@ -114,6 +114,8 @@ struct VerbDefinitions {
     build: VerbDefinition,
     #[serde(default)]
     test: VerbDefinition,
+    #[serde(default)]
+    validate: VerbDefinition,
     #[serde(default)]
     audit: VerbDefinition,
 }

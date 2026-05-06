@@ -1,6 +1,7 @@
 mod cargo;
 mod declarative;
 mod fastlane;
+mod gradle;
 mod kustomize;
 pub(crate) mod swift;
 pub(crate) mod terraform;
@@ -13,6 +14,7 @@ static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
     ProjectConvention::Cargo,
     ProjectConvention::SwiftPackageManager,
     ProjectConvention::Fastlane,
+    ProjectConvention::Gradle,
     ProjectConvention::Kustomize,
     ProjectConvention::Terraform,
 ];
@@ -35,6 +37,7 @@ enum ProjectConvention {
     Cargo,
     SwiftPackageManager,
     Fastlane,
+    Gradle,
     Kustomize,
     Terraform,
 }
@@ -45,6 +48,7 @@ impl ProjectConvention {
             Self::Cargo => cargo::name(),
             Self::SwiftPackageManager => swift::name(),
             Self::Fastlane => fastlane::name(),
+            Self::Gradle => gradle::name(),
             Self::Kustomize => kustomize::name(),
             Self::Terraform => terraform::name(),
         }
@@ -55,6 +59,7 @@ impl ProjectConvention {
             Self::Cargo => cargo::markers(),
             Self::SwiftPackageManager => swift::markers().to_vec(),
             Self::Fastlane => fastlane::markers().to_vec(),
+            Self::Gradle => gradle::markers(),
             Self::Kustomize => kustomize::markers().to_vec(),
             Self::Terraform => terraform::markers(),
         }
@@ -65,6 +70,7 @@ impl ProjectConvention {
             Self::Cargo => cargo::primary_program(),
             Self::SwiftPackageManager => swift::primary_program(),
             Self::Fastlane => fastlane::primary_program(),
+            Self::Gradle => gradle::primary_program(),
             Self::Kustomize => kustomize::primary_program(),
             Self::Terraform => terraform::primary_program(),
         }
@@ -73,7 +79,7 @@ impl ProjectConvention {
     fn direct_formatter_program(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::direct_formatter_program()),
-            Self::Cargo | Self::Fastlane | Self::Kustomize | Self::Terraform => None,
+            Self::Cargo | Self::Fastlane | Self::Gradle | Self::Kustomize | Self::Terraform => None,
         }
     }
 
@@ -82,6 +88,7 @@ impl ProjectConvention {
             Self::Cargo => None,
             Self::SwiftPackageManager => Some(swift::toolchain_install_hint()),
             Self::Fastlane => Some(fastlane::toolchain_install_hint()),
+            Self::Gradle => Some(gradle::toolchain_install_hint()),
             Self::Kustomize => Some(kustomize::renderer_install_hint()),
             Self::Terraform => Some(terraform::toolchain_install_hint()),
         }
@@ -90,7 +97,7 @@ impl ProjectConvention {
     fn formatter_install_hint(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::formatter_install_hint()),
-            Self::Cargo | Self::Fastlane | Self::Kustomize | Self::Terraform => None,
+            Self::Cargo | Self::Fastlane | Self::Gradle | Self::Kustomize | Self::Terraform => None,
         }
     }
 
@@ -99,6 +106,7 @@ impl ProjectConvention {
             Self::Cargo => Ok(()),
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
             Self::Fastlane => fastlane::validate_manifest(project, files),
+            Self::Gradle => gradle::validate_manifest(project, files),
             Self::Kustomize => kustomize::validate_manifest(project, files),
             Self::Terraform => terraform::validate_manifest(project, files),
         }
@@ -113,6 +121,7 @@ impl ProjectConvention {
             Self::Cargo => Ok(cargo::fix()),
             Self::SwiftPackageManager => swift::fix(project, runner),
             Self::Fastlane => Ok(fastlane::fix()),
+            Self::Gradle => Ok(gradle::fix()),
             Self::Kustomize => Ok(kustomize::fix()),
             Self::Terraform => Ok(terraform::fix()),
         }
@@ -127,6 +136,7 @@ impl ProjectConvention {
             Self::Cargo => Ok(cargo::lint()),
             Self::SwiftPackageManager => swift::lint(project, runner),
             Self::Fastlane => Ok(fastlane::lint()),
+            Self::Gradle => Ok(gradle::lint()),
             Self::Kustomize => kustomize::lint(project, runner),
             Self::Terraform => terraform::lint(project, runner),
         }
@@ -141,6 +151,7 @@ impl ProjectConvention {
             Self::Cargo => Ok(cargo::build()),
             Self::SwiftPackageManager => Ok(swift::build()),
             Self::Fastlane => Ok(fastlane::build()),
+            Self::Gradle => Ok(gradle::build()),
             Self::Kustomize => kustomize::build(project, runner),
             Self::Terraform => Ok(terraform::build()),
         }
@@ -151,25 +162,53 @@ impl ProjectConvention {
             Self::Cargo => cargo::test(),
             Self::SwiftPackageManager => swift::test(),
             Self::Fastlane => fastlane::test(),
+            Self::Gradle => gradle::test(),
             Self::Kustomize => kustomize::test(),
             Self::Terraform => terraform::test(),
         }
     }
 
-    fn audit(self) -> Vec<LifecycleStep> {
+    fn validate(
+        self,
+        project: &Project,
+        runner: &dyn CommandRunner,
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
-            Self::Cargo => cargo::audit(),
-            Self::SwiftPackageManager => swift::audit(),
-            Self::Fastlane => fastlane::audit(),
-            Self::Kustomize => kustomize::audit(),
-            Self::Terraform => terraform::audit(),
+            Self::Gradle => Ok(gradle::validate()),
+            _ => project.validate_steps(runner),
+        }
+    }
+
+    fn audit(
+        self,
+        project: &Project,
+        runner: &dyn CommandRunner,
+    ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
+        match self {
+            Self::Fastlane => Ok(fastlane::audit()),
+            Self::Gradle => Ok(gradle::audit()),
+            Self::Cargo | Self::SwiftPackageManager | Self::Kustomize | Self::Terraform => {
+                let mut steps = project.validate_steps(runner)?;
+                steps.extend(match self {
+                    Self::Cargo => cargo::audit(),
+                    Self::SwiftPackageManager => swift::audit(),
+                    Self::Kustomize => kustomize::audit(),
+                    Self::Terraform => terraform::audit(),
+                    Self::Fastlane | Self::Gradle => unreachable!(),
+                });
+                Ok(steps)
+            }
         }
     }
 
     fn matching_marker(self, root: &Utf8Path, files: &impl FileSystem) -> Option<&'static str> {
         match self {
             Self::Terraform => terraform::matching_marker(root, files),
-            Self::Cargo | Self::SwiftPackageManager | Self::Fastlane | Self::Kustomize => self
+            Self::Cargo
+            | Self::SwiftPackageManager
+            | Self::Fastlane
+            | Self::Gradle
+            | Self::Kustomize => self
                 .markers()
                 .into_iter()
                 .find(|marker| files.is_file(root.join(marker))),
@@ -183,7 +222,11 @@ impl ProjectConvention {
     fn should_skip_discovery_directory(self, name: &str) -> bool {
         match self {
             Self::Terraform => terraform::should_skip_directory(name),
-            Self::Cargo | Self::SwiftPackageManager | Self::Fastlane | Self::Kustomize => false,
+            Self::Cargo
+            | Self::SwiftPackageManager
+            | Self::Fastlane
+            | Self::Gradle
+            | Self::Kustomize => false,
         }
     }
 }
@@ -252,6 +295,10 @@ impl Project {
         self.convention == ProjectConvention::SwiftPackageManager
     }
 
+    pub(crate) fn is_gradle(&self) -> bool {
+        self.convention == ProjectConvention::Gradle
+    }
+
     pub(crate) fn should_report_failure_context(&self) -> bool {
         self.convention != ProjectConvention::Cargo
     }
@@ -286,15 +333,8 @@ impl Project {
             Verb::Lint => self.convention.lint(self, runner),
             Verb::Build => self.convention.build(self, runner),
             Verb::Test => Ok(self.convention.test()),
-            Verb::Validate => self.validate_steps(runner),
-            Verb::Audit => {
-                if self.convention == ProjectConvention::Fastlane {
-                    return Ok(fastlane::audit());
-                }
-                let mut steps = self.validate_steps(runner)?;
-                steps.extend(self.convention.audit());
-                Ok(steps)
-            }
+            Verb::Validate => self.convention.validate(self, runner),
+            Verb::Audit => self.convention.audit(self, runner),
         }
     }
 
@@ -313,6 +353,13 @@ impl Project {
         steps.extend(self.convention.build(self, runner)?);
         steps.extend(self.convention.test());
         Ok(steps)
+    }
+
+    pub(crate) fn curate_failure_output(&self, output: &str) -> String {
+        match self.convention {
+            ProjectConvention::Gradle => gradle::curate_failure_output(output),
+            _ => output.to_owned(),
+        }
     }
 }
 
