@@ -1,7 +1,9 @@
 mod cargo;
+mod declarative;
 mod fastlane;
 mod kustomize;
 pub(crate) mod swift;
+pub(crate) mod terraform;
 
 use crate::{CommandRunner, CommandSpec, Verb};
 use rapport_cli::{FileSystem, Utf8Path, Utf8PathBuf};
@@ -12,6 +14,7 @@ static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
     ProjectConvention::SwiftPackageManager,
     ProjectConvention::Fastlane,
     ProjectConvention::Kustomize,
+    ProjectConvention::Terraform,
 ];
 
 pub(crate) fn describe_expected_markers() -> String {
@@ -20,8 +23,8 @@ pub(crate) fn describe_expected_markers() -> String {
         .flat_map(|convention| {
             convention
                 .markers()
-                .iter()
-                .map(|marker| format!("`{marker}` for {}", convention.name()))
+                .into_iter()
+                .map(move |marker| format!("`{marker}` for {}", convention.name()))
         })
         .collect::<Vec<_>>();
     entries.join(" or ")
@@ -33,6 +36,7 @@ enum ProjectConvention {
     SwiftPackageManager,
     Fastlane,
     Kustomize,
+    Terraform,
 }
 
 impl ProjectConvention {
@@ -42,15 +46,17 @@ impl ProjectConvention {
             Self::SwiftPackageManager => swift::name(),
             Self::Fastlane => fastlane::name(),
             Self::Kustomize => kustomize::name(),
+            Self::Terraform => terraform::name(),
         }
     }
 
-    fn markers(self) -> &'static [&'static str] {
+    fn markers(self) -> Vec<&'static str> {
         match self {
             Self::Cargo => cargo::markers(),
-            Self::SwiftPackageManager => swift::markers(),
-            Self::Fastlane => fastlane::markers(),
-            Self::Kustomize => kustomize::markers(),
+            Self::SwiftPackageManager => swift::markers().to_vec(),
+            Self::Fastlane => fastlane::markers().to_vec(),
+            Self::Kustomize => kustomize::markers().to_vec(),
+            Self::Terraform => terraform::markers(),
         }
     }
 
@@ -60,13 +66,14 @@ impl ProjectConvention {
             Self::SwiftPackageManager => swift::primary_program(),
             Self::Fastlane => fastlane::primary_program(),
             Self::Kustomize => kustomize::primary_program(),
+            Self::Terraform => terraform::primary_program(),
         }
     }
 
     fn direct_formatter_program(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::direct_formatter_program()),
-            Self::Cargo | Self::Fastlane | Self::Kustomize => None,
+            Self::Cargo | Self::Fastlane | Self::Kustomize | Self::Terraform => None,
         }
     }
 
@@ -76,13 +83,14 @@ impl ProjectConvention {
             Self::SwiftPackageManager => Some(swift::toolchain_install_hint()),
             Self::Fastlane => Some(fastlane::toolchain_install_hint()),
             Self::Kustomize => Some(kustomize::renderer_install_hint()),
+            Self::Terraform => Some(terraform::toolchain_install_hint()),
         }
     }
 
     fn formatter_install_hint(self) -> Option<&'static str> {
         match self {
             Self::SwiftPackageManager => Some(swift::formatter_install_hint()),
-            Self::Cargo | Self::Fastlane | Self::Kustomize => None,
+            Self::Cargo | Self::Fastlane | Self::Kustomize | Self::Terraform => None,
         }
     }
 
@@ -92,6 +100,7 @@ impl ProjectConvention {
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
             Self::Fastlane => fastlane::validate_manifest(project, files),
             Self::Kustomize => kustomize::validate_manifest(project, files),
+            Self::Terraform => terraform::validate_manifest(project, files),
         }
     }
 
@@ -105,6 +114,7 @@ impl ProjectConvention {
             Self::SwiftPackageManager => swift::fix(project, runner),
             Self::Fastlane => Ok(fastlane::fix()),
             Self::Kustomize => Ok(kustomize::fix()),
+            Self::Terraform => Ok(terraform::fix()),
         }
     }
 
@@ -118,6 +128,7 @@ impl ProjectConvention {
             Self::SwiftPackageManager => swift::lint(project, runner),
             Self::Fastlane => Ok(fastlane::lint()),
             Self::Kustomize => kustomize::lint(project, runner),
+            Self::Terraform => terraform::lint(project, runner),
         }
     }
 
@@ -131,6 +142,7 @@ impl ProjectConvention {
             Self::SwiftPackageManager => Ok(swift::build()),
             Self::Fastlane => Ok(fastlane::build()),
             Self::Kustomize => kustomize::build(project, runner),
+            Self::Terraform => Ok(terraform::build()),
         }
     }
 
@@ -140,6 +152,7 @@ impl ProjectConvention {
             Self::SwiftPackageManager => swift::test(),
             Self::Fastlane => fastlane::test(),
             Self::Kustomize => kustomize::test(),
+            Self::Terraform => terraform::test(),
         }
     }
 
@@ -149,14 +162,29 @@ impl ProjectConvention {
             Self::SwiftPackageManager => swift::audit(),
             Self::Fastlane => fastlane::audit(),
             Self::Kustomize => kustomize::audit(),
+            Self::Terraform => terraform::audit(),
         }
     }
 
     fn matching_marker(self, root: &Utf8Path, files: &impl FileSystem) -> Option<&'static str> {
-        self.markers()
-            .iter()
-            .copied()
-            .find(|marker| files.is_file(root.join(marker)))
+        match self {
+            Self::Terraform => terraform::matching_marker(root, files),
+            Self::Cargo | Self::SwiftPackageManager | Self::Fastlane | Self::Kustomize => self
+                .markers()
+                .into_iter()
+                .find(|marker| files.is_file(root.join(marker))),
+        }
+    }
+
+    fn discovers_nested_targets(self) -> bool {
+        matches!(self, Self::Kustomize | Self::Terraform)
+    }
+
+    fn should_skip_discovery_directory(self, name: &str) -> bool {
+        match self {
+            Self::Terraform => terraform::should_skip_directory(name),
+            Self::Cargo | Self::SwiftPackageManager | Self::Fastlane | Self::Kustomize => false,
+        }
     }
 }
 
@@ -194,7 +222,7 @@ impl Project {
 
                 let root = absolute_path(start)?;
                 let mut projects = Vec::new();
-                discover_kustomize_targets(&root, files, &mut projects)?;
+                discover_nested_targets(&root, files, &mut projects)?;
                 return if projects.is_empty() {
                     Err(DiscoveryError::NoSupportedProject {
                         start: start.to_owned(),
@@ -288,22 +316,26 @@ impl Project {
     }
 }
 
-fn discover_kustomize_targets(
+fn discover_nested_targets(
     root: &Utf8Path,
     files: &impl FileSystem,
     projects: &mut Vec<Project>,
 ) -> Result<(), DiscoveryError> {
-    if root.file_name() == Some(".git") {
+    if should_skip_discovery_directory(root) {
         return Ok(());
     }
 
-    if let Some(marker) = ProjectConvention::Kustomize.matching_marker(root, files) {
-        projects.push(Project {
-            convention: ProjectConvention::Kustomize,
-            marker,
-            root: root.to_owned(),
-        });
-        return Ok(());
+    for convention in PROJECT_CONVENTIONS {
+        if convention.discovers_nested_targets()
+            && let Some(marker) = convention.matching_marker(root, files)
+        {
+            projects.push(Project {
+                convention: *convention,
+                marker,
+                root: root.to_owned(),
+            });
+            return Ok(());
+        }
     }
 
     for entry in files
@@ -314,10 +346,20 @@ fn discover_kustomize_targets(
         })?
     {
         if files.is_dir(&entry) {
-            discover_kustomize_targets(&entry, files, projects)?;
+            discover_nested_targets(&entry, files, projects)?;
         }
     }
     Ok(())
+}
+
+fn should_skip_discovery_directory(root: &Utf8Path) -> bool {
+    let Some(name) = root.file_name() else {
+        return false;
+    };
+    name == ".git"
+        || PROJECT_CONVENTIONS
+            .iter()
+            .any(|convention| convention.should_skip_discovery_directory(name))
 }
 
 #[derive(Debug)]
@@ -326,6 +368,7 @@ pub(crate) enum ToolResolutionError {
     MissingFormatter,
     MissingKustomizeRenderer,
     MissingKubernetesValidator,
+    MissingTflint,
     ProbeInvoke {
         program: &'static str,
         err: io::Error,

@@ -1,0 +1,31 @@
+name = "Terraform"
+markers = ["*.tf"]
+primary_program = "terraform"
+toolchain_install_hint = "Install Terraform from https://developer.hashicorp.com/terraform/install and make sure `terraform` is on PATH."
+skip_directories = [".terraform", ".terragrunt-cache", ".terraform-cache"]
+
+[[verbs.fix.steps]]
+phase = "format"
+program = "terraform"
+args = ["fmt", "-recursive"]
+
+[[verbs.lint.steps]]
+phase = "format"
+program = "terraform"
+args = ["fmt", "-check", "-recursive"]
+
+[[verbs.build.steps]]
+phase = "build"
+program = "terraform"
+args = ["validate"]
+
+[[verbs.test.steps]]
+phase = "test"
+message = "No Terraform tests configured for this project."
+
+[tools.tflint]
+program = "tflint"
+version_args = ["--version"]
+run_args = ["--recursive"]
+required_config = ".tflint.hcl"
+install_hint = "Install TFLint from https://github.com/terraform-linters/tflint and make sure `tflint` is on PATH."

@@ -17,7 +17,9 @@ rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
 camino.workspace = true
 derive_more.workspace = true
 nonempty.workspace = true
+serde.workspace = true
 strum.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 claims.workspace = true

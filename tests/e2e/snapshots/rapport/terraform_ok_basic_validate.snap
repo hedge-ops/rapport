@@ -1,0 +1,18 @@
+exit: 0
+stdout:
+---
+## Output
+
+```
+Terraform project: [project]: No Terraform tests configured for this project.
+```
+
+status: pass
+duration: [duration]
+
+## Next
+
+└ run rapport audit [project]
+stderr:
+---
+(empty)

@@ -1,0 +1,101 @@
+[[case]]
+name = "terraform_ok_basic_fix"
+convention = "terraform"
+fixture = "ok/basic"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_basic_fix.snap"
+
+[[case]]
+name = "terraform_ok_basic_lint"
+convention = "terraform"
+fixture = "ok/basic"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_basic_lint.snap"
+
+[[case]]
+name = "terraform_ok_basic_build"
+convention = "terraform"
+fixture = "ok/basic"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_basic_build.snap"
+
+[[case]]
+name = "terraform_ok_basic_test"
+convention = "terraform"
+fixture = "ok/basic"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_basic_test.snap"
+
+[[case]]
+name = "terraform_ok_basic_validate"
+convention = "terraform"
+fixture = "ok/basic"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_basic_validate.snap"
+
+[[case]]
+name = "terraform_ok_basic_audit"
+convention = "terraform"
+fixture = "ok/basic"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_basic_audit.snap"
+
+[[case]]
+name = "terraform_fail_fmt_needed_lint"
+convention = "terraform"
+fixture = "fail/fmt-needed"
+verb = "lint"
+expected_exit = 1
+snapshot = "rapport/terraform_fail_fmt_needed_lint.snap"
+
+[[case]]
+name = "terraform_fail_fmt_needed_fix"
+convention = "terraform"
+fixture = "fail/fmt-needed"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/terraform_fail_fmt_needed_fix.snap"
+
+[[case.assert_contains]]
+path = "main.tf"
+text = "bad_format = true"
+
+[[case]]
+name = "terraform_fail_validation_build"
+convention = "terraform"
+fixture = "fail/validation"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/terraform_fail_validation_build.snap"
+
+[[case]]
+name = "terraform_fail_missing_terraform_build"
+convention = "terraform"
+fixture = "fail/missing-tools"
+verb = "build"
+expected_exit = 2
+snapshot = "rapport/terraform_fail_missing_terraform_build.snap"
+toolchain = "missing_terraform"
+
+[[case]]
+name = "terraform_fail_missing_tflint_lint"
+convention = "terraform"
+fixture = "fail/missing-tools"
+verb = "lint"
+expected_exit = 2
+snapshot = "rapport/terraform_fail_missing_tflint_lint.snap"
+toolchain = "missing_tflint"
+
+[[case]]
+name = "terraform_ok_ignored_cache_build"
+convention = "terraform"
+fixture = "ok/ignored-cache"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_ignored_cache_build.snap"

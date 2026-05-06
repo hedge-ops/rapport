@@ -1,0 +1,21 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Terraform project: [project]
+Failing phase: build
+## Output
+
+```
+Error: Reference to undeclared resource
+A managed resource named invalid_reference has not been declared in the root module.
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

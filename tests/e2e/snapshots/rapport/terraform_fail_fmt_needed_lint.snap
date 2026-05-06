@@ -1,0 +1,20 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Terraform project: [project]
+Failing phase: format
+## Output
+
+```
+main.tf
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport fix [project]

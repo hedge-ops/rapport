@@ -349,6 +349,11 @@ fn render_tool_resolution_failure(
             )
             .next_actions(nonempty![RunHint::new("kubeconform -v")])
             .build(),
+        ToolResolutionError::MissingTflint => vb
+            .paragraph("Terraform lint tooling was not found.")
+            .paragraph(convention::terraform::tflint_install_hint())
+            .next_actions(nonempty![RunHint::new("tflint --version")])
+            .build(),
         ToolResolutionError::ProbeInvoke { program, err } => vb
             .paragraph(format!("Failed to invoke {program}: {err}"))
             .next_actions(nonempty![RunHint::new(format!("{program} --version"))])
@@ -601,6 +606,15 @@ mod tests {
             dir.write(
                 "deployment.yaml",
                 "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\n",
+            );
+            dir
+        }
+
+        fn terraform_project() -> Self {
+            let dir = Self::new();
+            dir.write(
+                "main.tf",
+                "terraform {\n  required_version = \">= 1.6.0\"\n}\n",
             );
             dir
         }
@@ -874,6 +888,7 @@ mod tests {
         assert!(err.contains("Package.swift"));
         assert!(err.contains("fastlane/Fastfile"));
         assert!(err.contains("kustomization.yaml"));
+        assert!(err.contains("*.tf"));
         assert_eq!(runner.calls(), Vec::new());
     }
 
@@ -1487,6 +1502,223 @@ mod tests {
                     cwd: dir.path.join("platform/overlays/dev"),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn terraform_build_runs_validate() {
+        let dir = TestDir::terraform_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "terraform".into(),
+                args: vec!["validate".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn terraform_fix_runs_recursive_fmt() {
+        let dir = TestDir::terraform_project();
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["fix", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "terraform".into(),
+                args: vec!["fmt".into(), "-recursive".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn terraform_lint_runs_fmt_and_available_tflint() {
+        let dir = TestDir::terraform_project();
+        let runner = FakeRunner::all_pass(3);
+
+        let (code, _out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "tflint".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "terraform".into(),
+                    args: vec!["fmt".into(), "-check".into(), "-recursive".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "tflint".into(),
+                    args: vec!["--recursive".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terraform_lint_allows_missing_optional_tflint() {
+        let dir = TestDir::terraform_project();
+        let runner = FakeRunner::new(vec![
+            Err(io::Error::new(io::ErrorKind::NotFound, "missing tflint")),
+            Ok(pass()),
+        ]);
+
+        let (code, _out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "tflint".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "terraform".into(),
+                    args: vec!["fmt".into(), "-check".into(), "-recursive".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terraform_required_tflint_missing_reports_install_hint() {
+        let dir = TestDir::terraform_project();
+        dir.write(
+            ".tflint.hcl",
+            "plugin \"terraform\" {\n  enabled = true\n}\n",
+        );
+        let runner = FakeRunner::new(vec![Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "missing tflint",
+        ))]);
+
+        let (code, out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Terraform lint tooling was not found"));
+        assert!(err.contains("https://github.com/terraform-linters/tflint"));
+        assert!(err.contains("└ run tflint --version"));
+        assert_eq!(runner.calls().len(), 1);
+    }
+
+    #[test]
+    fn terraform_test_is_a_clear_noop() {
+        let dir = TestDir::terraform_project();
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["test", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("No Terraform tests configured"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn terraform_audit_runs_validate_without_extra_steps() {
+        let dir = TestDir::terraform_project();
+        let runner = FakeRunner::new(vec![
+            Err(io::Error::new(io::ErrorKind::NotFound, "missing tflint")),
+            Ok(pass()),
+            Ok(pass()),
+        ]);
+
+        let (code, _out, err) = run_with(&["audit", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "tflint".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "terraform".into(),
+                    args: vec!["fmt".into(), "-check".into(), "-recursive".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "terraform".into(),
+                    args: vec!["validate".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terraform_recursive_discovery_ignores_generated_cache_contents() {
+        let dir = TestDir::new();
+        dir.write(
+            ".terraform/modules/generated/main.tf",
+            "resource \"null_resource\" \"generated\" {}\n",
+        );
+        dir.write("cloud/main.tf", "resource \"null_resource\" \"app\" {}\n");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "terraform".into(),
+                args: vec!["validate".into()],
+                cwd: dir.path.join("cloud"),
+            }]
+        );
+    }
+
+    #[test]
+    fn terraform_paths_inside_generated_cache_walk_up_to_real_project() {
+        let dir = TestDir::terraform_project();
+        dir.write(
+            ".terraform/modules/generated/main.tf",
+            "resource \"null_resource\" \"generated\" {}\n",
+        );
+        let generated = dir.path.join(".terraform/modules/generated");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", generated.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "terraform".into(),
+                args: vec!["validate".into()],
+                cwd: dir.path.clone(),
+            }]
         );
     }
 
