@@ -1,0 +1,13 @@
+exit: 2
+stdout:
+---
+(empty)
+stderr:
+---
+You ran: rapport build [project]
+Zola project: [project]
+Zola projects must include a `content/` directory at the project root.
+
+## Next
+
+└ run edit [project]/config.toml

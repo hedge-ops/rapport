@@ -6,6 +6,7 @@ mod gradle;
 mod kustomize;
 pub(crate) mod swift;
 pub(crate) mod terraform;
+mod zola;
 
 use crate::{CommandRunner, CommandSpec, Verb};
 use rapport_cli::{FileSystem, Utf8Path, Utf8PathBuf};
@@ -13,6 +14,7 @@ use std::io;
 
 static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
     ProjectConvention::Cargo,
+    ProjectConvention::Zola,
     ProjectConvention::Bun,
     ProjectConvention::SwiftPackageManager,
     ProjectConvention::Fastlane,
@@ -37,6 +39,7 @@ pub(crate) fn describe_expected_markers() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProjectConvention {
     Cargo,
+    Zola,
     Bun,
     SwiftPackageManager,
     Fastlane,
@@ -49,6 +52,7 @@ impl ProjectConvention {
     fn name(self) -> &'static str {
         match self {
             Self::Cargo => cargo::name(),
+            Self::Zola => zola::name(),
             Self::Bun => bun::name(),
             Self::SwiftPackageManager => swift::name(),
             Self::Fastlane => fastlane::name(),
@@ -61,6 +65,7 @@ impl ProjectConvention {
     fn markers(self) -> Vec<&'static str> {
         match self {
             Self::Cargo => cargo::markers(),
+            Self::Zola => zola::markers().to_vec(),
             Self::Bun => bun::markers().to_vec(),
             Self::SwiftPackageManager => swift::markers().to_vec(),
             Self::Fastlane => fastlane::markers().to_vec(),
@@ -73,6 +78,7 @@ impl ProjectConvention {
     fn primary_program(self) -> &'static str {
         match self {
             Self::Cargo => cargo::primary_program(),
+            Self::Zola => zola::primary_program(),
             Self::Bun => bun::primary_program(),
             Self::SwiftPackageManager => swift::primary_program(),
             Self::Fastlane => fastlane::primary_program(),
@@ -86,6 +92,7 @@ impl ProjectConvention {
         match self {
             Self::SwiftPackageManager => Some(swift::direct_formatter_program()),
             Self::Cargo
+            | Self::Zola
             | Self::Bun
             | Self::Fastlane
             | Self::Gradle
@@ -97,6 +104,7 @@ impl ProjectConvention {
     fn toolchain_install_hint(self) -> Option<&'static str> {
         match self {
             Self::Cargo => None,
+            Self::Zola => Some(zola::toolchain_install_hint()),
             Self::Bun => Some(bun::toolchain_install_hint()),
             Self::SwiftPackageManager => Some(swift::toolchain_install_hint()),
             Self::Fastlane => Some(fastlane::toolchain_install_hint()),
@@ -110,6 +118,7 @@ impl ProjectConvention {
         match self {
             Self::SwiftPackageManager => Some(swift::formatter_install_hint()),
             Self::Cargo
+            | Self::Zola
             | Self::Bun
             | Self::Fastlane
             | Self::Gradle
@@ -121,6 +130,7 @@ impl ProjectConvention {
     fn validate_manifest(self, project: &Project, files: &impl FileSystem) -> Result<(), String> {
         match self {
             Self::Cargo => Ok(()),
+            Self::Zola => zola::validate_manifest(project, files),
             Self::Bun => bun::validate_manifest(project, files),
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
             Self::Fastlane => fastlane::validate_manifest(project, files),
@@ -138,6 +148,7 @@ impl ProjectConvention {
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::fix()),
+            Self::Zola => zola::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::fix(project, runner),
             Self::Fastlane => Ok(fastlane::fix()),
@@ -155,6 +166,7 @@ impl ProjectConvention {
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::lint()),
+            Self::Zola => zola::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::lint(project, runner),
             Self::Fastlane => Ok(fastlane::lint()),
@@ -172,6 +184,7 @@ impl ProjectConvention {
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::build()),
+            Self::Zola => zola::build(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::build(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => Ok(swift::build()),
             Self::Fastlane => Ok(fastlane::build()),
@@ -188,6 +201,7 @@ impl ProjectConvention {
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Cargo => Ok(cargo::test()),
+            Self::Zola => zola::test(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::test(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => Ok(swift::test()),
             Self::Fastlane => Ok(fastlane::test()),
@@ -205,6 +219,7 @@ impl ProjectConvention {
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Gradle => Ok(gradle::validate()),
+            Self::Zola => zola::validate(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::validate(project, files).map_err(ToolResolutionError::Convention),
             _ => project.validate_steps(runner, files),
         }
@@ -219,6 +234,7 @@ impl ProjectConvention {
         match self {
             Self::Fastlane => Ok(fastlane::audit()),
             Self::Gradle => Ok(gradle::audit()),
+            Self::Zola => zola::audit(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::audit(project, files).map_err(ToolResolutionError::Convention),
             Self::Cargo | Self::SwiftPackageManager | Self::Kustomize | Self::Terraform => {
                 let mut steps = project.validate_steps(runner, files)?;
@@ -227,7 +243,7 @@ impl ProjectConvention {
                     Self::SwiftPackageManager => swift::audit(),
                     Self::Kustomize => kustomize::audit(),
                     Self::Terraform => terraform::audit(),
-                    Self::Bun | Self::Fastlane | Self::Gradle => unreachable!(),
+                    Self::Zola | Self::Bun | Self::Fastlane | Self::Gradle => unreachable!(),
                 });
                 Ok(steps)
             }
@@ -236,6 +252,7 @@ impl ProjectConvention {
 
     fn matching_marker(self, root: &Utf8Path, files: &impl FileSystem) -> Option<&'static str> {
         match self {
+            Self::Zola => zola::matching_marker(root, files),
             Self::Bun => bun::matching_marker(root, files),
             Self::Terraform => terraform::matching_marker(root, files),
             Self::Cargo
@@ -250,11 +267,15 @@ impl ProjectConvention {
     }
 
     fn discovers_nested_targets(self) -> bool {
-        matches!(self, Self::Bun | Self::Kustomize | Self::Terraform)
+        matches!(
+            self,
+            Self::Zola | Self::Bun | Self::Kustomize | Self::Terraform
+        )
     }
 
     fn should_skip_discovery_directory(self, name: &str) -> bool {
         match self {
+            Self::Zola => zola::should_skip_directory(name),
             Self::Bun => bun::should_skip_directory(name),
             Self::Terraform => terraform::should_skip_directory(name),
             Self::Cargo
@@ -369,6 +390,14 @@ impl Project {
         self.convention.direct_formatter_program()
     }
 
+    pub(crate) fn auxiliary_toolchain_install_hint(&self, program: &str) -> Option<&'static str> {
+        if self.convention == ProjectConvention::Zola && program == bun::primary_program() {
+            Some(bun::toolchain_install_hint())
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn lifecycle_steps(
         &self,
         verb: Verb,
@@ -406,6 +435,7 @@ impl Project {
     pub(crate) fn curate_failure_output(&self, output: &str) -> String {
         match self.convention {
             ProjectConvention::Gradle => gradle::curate_failure_output(output),
+            ProjectConvention::Zola => zola::curate_failure_output(output),
             ProjectConvention::Bun => bun::curate_failure_output(output),
             _ => output.to_owned(),
         }

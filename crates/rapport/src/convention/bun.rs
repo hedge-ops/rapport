@@ -33,6 +33,10 @@ pub(super) fn matching_marker(root: &Utf8Path, files: &impl FileSystem) -> Optio
         .map(|_| "package.json")
 }
 
+pub(super) fn has_package_with_lockfile(root: &Utf8Path, files: &impl FileSystem) -> bool {
+    matching_marker(root, files).is_some()
+}
+
 pub(super) fn validate_manifest(project: &Project, files: &impl FileSystem) -> Result<(), String> {
     let package = read_package_json(&project.root, files)?;
     if !package.scripts_are_strings() {
@@ -97,6 +101,26 @@ pub(super) fn has_no_standard_scripts(root: &Utf8Path, files: &impl FileSystem) 
     })
 }
 
+pub(super) fn has_script(
+    root: &Utf8Path,
+    files: &impl FileSystem,
+    name: &str,
+) -> Result<bool, String> {
+    let package = read_package_json(root, files)?;
+    if !package.scripts_are_strings() {
+        return Err("Bun `package.json` scripts must be string commands.".into());
+    }
+    Ok(package.has_script(name))
+}
+
+pub(super) fn script_step(phase: Phase, script: &'static str) -> LifecycleStep {
+    super::lifecycle_step(
+        phase,
+        primary_program(),
+        ["run".to_owned(), script.to_owned()],
+    )
+}
+
 pub(super) fn should_skip_directory(name: &str) -> bool {
     SKIP_DIRECTORIES.contains(&name)
 }
@@ -132,13 +156,7 @@ fn script_steps(
 
     Ok(verbs
         .iter()
-        .map(|verb| {
-            super::lifecycle_step(
-                phase(*verb),
-                primary_program(),
-                ["run".to_owned(), script_name(*verb).to_owned()],
-            )
-        })
+        .map(|verb| script_step(phase(*verb), script_name(*verb)))
         .collect())
 }
 

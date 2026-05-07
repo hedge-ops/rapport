@@ -1,0 +1,20 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Zola project: [project]
+Failing phase: build
+## Output
+
+```
+Zola command failed, but no structured failure lines were found. Re-run the Zola command for full output.
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

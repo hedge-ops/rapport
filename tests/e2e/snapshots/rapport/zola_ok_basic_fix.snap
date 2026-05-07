@@ -1,0 +1,18 @@
+exit: 0
+stdout:
+---
+## Output
+
+```
+Zola project: [project]: Zola has no autofix; leaving site content unchanged.
+```
+
+status: pass
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]
+stderr:
+---
+(empty)
