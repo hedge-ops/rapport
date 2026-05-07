@@ -433,6 +433,10 @@ fn render_invoke_failure(
         vb.paragraph(project.formatter_install_hint().unwrap_or_default())
             .next_actions(nonempty![RunHint::new("swift-format --version")])
             .build()
+    } else if let Some(hint) = project.auxiliary_toolchain_install_hint(&spec.program) {
+        vb.paragraph(hint)
+            .next_actions(nonempty![RunHint::new(format!("which {}", spec.program))])
+            .build()
     } else if spec.program == project.primary_program() {
         let vb = if let Some(hint) = project.toolchain_install_hint() {
             vb.paragraph(hint)
@@ -649,6 +653,12 @@ mod tests {
             dir
         }
 
+        fn zola_project() -> Self {
+            let dir = Self::new();
+            write_zola_site(&dir, ".");
+            dir
+        }
+
         fn terraform_project() -> Self {
             let dir = Self::new();
             dir.write(
@@ -753,6 +763,26 @@ mod tests {
          lane :fix do\nend\n\
          lane :validate do\nend\n\
          lane :audit do\nend\n"
+    }
+
+    fn write_zola_site(dir: &TestDir, root: &str) {
+        let prefix = if root == "." {
+            String::new()
+        } else {
+            format!("{root}/")
+        };
+        dir.write(
+            &format!("{prefix}config.toml"),
+            "base_url = \"https://example.com\"\n\n[markdown]\nhighlighting_theme = \"base16-ocean-dark\"\n",
+        );
+        dir.write(
+            &format!("{prefix}content/_index.md"),
+            "+++\ntitle = \"Home\"\n+++\n",
+        );
+        dir.write(
+            &format!("{prefix}templates/index.html"),
+            "{{ section.title }}\n",
+        );
     }
 
     fn run_with(args: &[&str], runner: &dyn CommandRunner) -> (ExitCode, String, String) {
@@ -936,6 +966,7 @@ mod tests {
         assert!(err.contains("Package.swift"));
         assert!(err.contains("fastlane/Fastfile"));
         assert!(err.contains("settings.gradle.kts"));
+        assert!(err.contains("config.toml"));
         assert!(err.contains("kustomization.yaml"));
         assert!(err.contains("*.tf"));
         assert_eq!(runner.calls(), Vec::new());
@@ -1425,6 +1456,255 @@ mod tests {
         assert!(err.contains("Failed to invoke bun: missing bun"));
         assert!(err.contains("https://bun.sh/docs/installation"));
         assert!(err.contains("└ run which bun"));
+    }
+
+    #[test]
+    fn zola_build_runs_attached_bun_build_then_zola_build() {
+        let dir = TestDir::zola_project();
+        dir.write("bun.lock", "");
+        dir.write(
+            "package.json",
+            r#"{
+  "name": "site",
+  "scripts": {
+    "build": "tailwindcss -i ./src/input.css -o ./static/css/style.css"
+  }
+}
+"#,
+        );
+        let runner = FakeRunner::all_pass(2);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "zola".into(),
+                    args: vec!["build".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn zola_validate_uses_check_script_and_avoids_duplicate_zola_check() {
+        let dir = TestDir::zola_project();
+        dir.write("bun.lock", "");
+        dir.write(
+            "package.json",
+            r#"{
+  "name": "site",
+  "scripts": {
+    "check": "prettier --check .",
+    "build": "tailwindcss -i ./src/input.css -o ./static/css/style.css",
+    "test": "bun test"
+  }
+}
+"#,
+        );
+        let runner = FakeRunner::all_pass(5);
+
+        let (code, _out, err) = run_with(&["validate", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "check".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "zola".into(),
+                    args: vec!["check".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "zola".into(),
+                    args: vec!["build".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "test".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn zola_fix_without_bun_fix_is_a_clear_noop() {
+        let dir = TestDir::zola_project();
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["fix", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("Zola has no autofix"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn zola_missing_template_directory_errors_before_running_commands() {
+        let dir = TestDir::new();
+        dir.write(
+            "config.toml",
+            "base_url = \"https://example.com\"\n\n[markdown]\nhighlighting_theme = \"base16-ocean-dark\"\n",
+        );
+        dir.write("content/_index.md", "+++\ntitle = \"Home\"\n+++\n");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("templates/"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn zola_reports_bun_install_hint_for_attached_script() {
+        let dir = TestDir::zola_project();
+        dir.write("bun.lock", "");
+        dir.write(
+            "package.json",
+            r#"{
+  "name": "site",
+  "scripts": {
+    "build": "tailwindcss -i ./src/input.css -o ./static/css/style.css"
+  }
+}
+"#,
+        );
+        let runner = FakeRunner::new(vec![Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "missing bun",
+        ))]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Zola project"));
+        assert!(err.contains("Failed to invoke bun: missing bun"));
+        assert!(err.contains("https://bun.sh/docs/installation"));
+        assert!(err.contains("└ run which bun"));
+    }
+
+    #[test]
+    fn zola_wins_over_colocated_bun_package() {
+        let dir = TestDir::zola_project();
+        dir.write("bun.lock", "");
+        dir.write(
+            "package.json",
+            r#"{
+  "name": "site",
+  "scripts": {
+    "build": "tailwindcss -i ./src/input.css -o ./static/css/style.css"
+  }
+}
+"#,
+        );
+        let runner = FakeRunner::all_pass(2);
+
+        let (code, _out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "zola".into(),
+                    args: vec!["build".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn bun_workspace_root_without_scripts_aggregates_zola_sites() {
+        let dir = TestDir::new();
+        dir.write("web/bun.lock", "");
+        dir.write(
+            "web/package.json",
+            r#"{
+  "name": "website",
+  "private": true,
+  "workspaces": ["sites/*"]
+}
+"#,
+        );
+        for site in ["company", "product"] {
+            write_zola_site(&dir, &format!("web/sites/{site}"));
+            dir.write(
+                &format!("web/sites/{site}/package.json"),
+                r#"{
+  "name": "site",
+  "scripts": {
+    "build": "tailwindcss -i ./src/input.css -o ./static/css/style.css"
+  }
+}
+"#,
+            );
+        }
+        let web = dir.path.join("web");
+        let runner = FakeRunner::all_pass(4);
+
+        let (code, _out, err) = run_with(&["build", web.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.join("web/sites/company"),
+                },
+                RecordedCommand {
+                    program: "zola".into(),
+                    args: vec!["build".into()],
+                    cwd: dir.path.join("web/sites/company"),
+                },
+                RecordedCommand {
+                    program: "bun".into(),
+                    args: vec!["run".into(), "build".into()],
+                    cwd: dir.path.join("web/sites/product"),
+                },
+                RecordedCommand {
+                    program: "zola".into(),
+                    args: vec!["build".into()],
+                    cwd: dir.path.join("web/sites/product"),
+                },
+            ]
+        );
     }
 
     #[test]

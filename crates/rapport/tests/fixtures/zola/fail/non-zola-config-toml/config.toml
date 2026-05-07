@@ -1,0 +1,4 @@
+profile = "development"
+
+[server]
+port = 3000

@@ -20,9 +20,9 @@ internal repository. This ports that and makes it better:
 
 ## Current checkpoint
 
-`rapport` currently discovers Cargo, Bun, SwiftPM, Fastlane, Gradle, Kustomize,
-and Terraform projects from the path you pass, walking upward to the nearest
-supported project marker.
+`rapport` currently discovers Cargo, Zola, Bun, SwiftPM, Fastlane, Gradle,
+Kustomize, and Terraform projects from the path you pass, walking upward to the
+nearest supported project marker.
 
 ```text
 rapport fix <path>       # cargo fmt
@@ -50,6 +50,20 @@ rapport build <path>     # bun run build
 rapport test <path>      # bun run test
 rapport validate <path>  # bun run lint + bun run build + bun run test
 rapport audit <path>     # bun run audit
+```
+
+Zola projects are detected by `config.toml` with `base_url` and a recognized
+Zola section, plus `content/` and `templates/` directories. A colocated Bun
+package, or a package inside an ancestor Bun workspace, is treated as the
+site's asset/check pipeline rather than as a duplicate target:
+
+```text
+rapport fix <path>       # bun run fix, or no-op if no Bun fix script exists
+rapport lint <path>      # bun run lint/check when present; zola check
+rapport build <path>     # bun run build when present; zola build
+rapport test <path>      # bun run test when present; zola check
+rapport validate <path>  # lint + build + optional Bun test without duplicate zola check
+rapport audit <path>     # validate + production/non-draft zola build
 ```
 
 ```text

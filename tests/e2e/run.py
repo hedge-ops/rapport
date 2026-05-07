@@ -90,7 +90,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run rapport CLI e2e cases")
     parser.add_argument(
         "--convention",
-        choices=("cargo", "bun", "swift", "fastlane", "gradle", "kustomize", "terraform"),
+        choices=("cargo", "bun", "swift", "fastlane", "gradle", "kustomize", "terraform", "zola"),
         help="run only cases for one project convention",
     )
     parser.add_argument(
@@ -234,6 +234,8 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
             env, context = configure_kustomize(env, context, case)
         elif case.convention == "terraform":
             env, context = configure_terraform(env, context, case)
+        elif case.convention == "zola":
+            env, context = configure_zola(env, context, case)
         else:
             return f"\n--- {case.name} configuration error ---\nunsupported convention: {case.convention}"
 
@@ -436,6 +438,29 @@ def configure_terraform(env: dict[str, str], context: RunContext, case: Case) ->
         write_executable(tool_root / "terraform", terraform_script())
     else:
         raise ValueError(f"unsupported terraform toolchain mode: {mode}")
+
+    env["PATH"] = str(tool_root)
+    return env, RunContext(
+        temp_root=context.temp_root,
+        project=context.project,
+        toolchain=tool_root,
+    )
+
+
+def configure_zola(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
+    mode = case.toolchain or "full"
+    tool_root = context.temp_root / "toolchain"
+    tool_root.mkdir()
+
+    if mode == "full":
+        write_executable(tool_root / "zola", zola_script())
+        write_executable(tool_root / "bun", bun_script())
+    elif mode == "missing_zola":
+        write_executable(tool_root / "bun", bun_script())
+    elif mode == "missing_bun":
+        write_executable(tool_root / "zola", zola_script())
+    else:
+        raise ValueError(f"unsupported zola toolchain mode: {mode}")
 
     env["PATH"] = str(tool_root)
     return env, RunContext(
@@ -894,6 +919,55 @@ case "${1:-}" in
     ;;
 *)
     echo "unexpected tflint args: $*" >&2
+    exit 2
+    ;;
+esac
+"""
+
+
+def zola_script() -> str:
+    return """#!/bin/sh
+set -u
+
+has_broken_template() {
+    [ -e templates ] && /usr/bin/grep -R "broken_template" templates >/dev/null 2>&1
+}
+
+has_broken_link() {
+    for candidate in content templates; do
+        if [ -e "$candidate" ] && /usr/bin/grep -R "broken_link" "$candidate" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+case "${1:-}" in
+build)
+    if has_broken_template; then
+        echo "Error: Failed to render template 'index.html'" >&2
+        echo "Reason: template syntax error near broken_template" >&2
+        exit 1
+    fi
+    echo "Zola build completed"
+    ;;
+check)
+    if has_broken_template; then
+        echo "Error: Failed to render template 'index.html'" >&2
+        echo "Reason: template syntax error near broken_template" >&2
+        exit 1
+    fi
+    if has_broken_link; then
+        echo "Error: broken link detected in content/_index.md" >&2
+        exit 1
+    fi
+    echo "Zola check completed"
+    ;;
+--version|-V)
+    echo "zola 0.19.2"
+    ;;
+*)
+    echo "unexpected zola args: $*" >&2
     exit 2
     ;;
 esac

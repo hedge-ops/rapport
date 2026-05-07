@@ -1,0 +1,14 @@
+exit: 2
+stdout:
+---
+(empty)
+stderr:
+---
+You ran: rapport build [project]
+Zola project: [project]
+Failed to invoke zola: No such file or directory (os error 2)
+Install Zola from https://www.getzola.org/documentation/getting-started/installation/ and make sure `zola` is on PATH.
+
+## Next
+
+└ run which zola
