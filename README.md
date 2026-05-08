@@ -38,7 +38,17 @@ rapport to run. Doctor uses lightweight version/probe commands and configuration
 inspection only; it does not run lifecycle work such as build, test, lint, fix,
 validate, or audit.
 
+`rapport prime <path>` is the agent bootstrap command for the same target set.
+Tell agents to call `rapport prime` when they start in an unfamiliar scope, or
+put it in a hook before the agent begins editing. Prime does not probe tools or
+run lifecycle work; it explains how to drive rapport, which targets were
+detected, their expected files/scripts/tasks/lanes or configuration, and the
+boundary between rapport and project-specific task runners. Agents should use
+`doctor` after prime when they need to know whether the detected targets are
+runnable right now.
+
 ```text
+rapport prime <path>     # agent bootstrap: how to use rapport for this scope
 rapport doctor <path>    # check readiness without running lifecycle work
 rapport fix <path>       # cargo fmt --all, or cargo fmt --package <name>
 rapport lint <path>      # cargo fmt check; strict cargo clippy --all-targets -- -D warnings

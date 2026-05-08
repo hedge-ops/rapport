@@ -71,6 +71,14 @@ expected_exit = 2
 snapshot = "rapport/fastlane_fail_missing_gemfile_build.snap"
 
 [[case]]
+name = "fastlane_fail_missing_gemfile_prime"
+convention = "fastlane"
+fixture = "fail/missing-gemfile"
+verb = "prime"
+expected_exit = 0
+snapshot = "rapport/fastlane_fail_missing_gemfile_prime.snap"
+
+[[case]]
 name = "fastlane_fail_missing_tools_build"
 convention = "fastlane"
 fixture = "fail/missing-tools"

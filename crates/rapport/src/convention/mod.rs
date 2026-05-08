@@ -24,7 +24,11 @@ static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
 ];
 
 pub(crate) fn describe_expected_markers() -> String {
-    let entries = PROJECT_CONVENTIONS
+    expected_marker_entries().join(" or ")
+}
+
+pub(crate) fn expected_marker_entries() -> Vec<String> {
+    PROJECT_CONVENTIONS
         .iter()
         .flat_map(|convention| {
             convention
@@ -32,8 +36,7 @@ pub(crate) fn describe_expected_markers() -> String {
                 .into_iter()
                 .map(move |marker| format!("`{marker}` for {}", convention.name()))
         })
-        .collect::<Vec<_>>();
-    entries.join(" or ")
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +286,60 @@ impl ProjectConvention {
             | Self::Kustomize => false,
         }
     }
+
+    fn prime_convention(self) -> &'static [&'static str] {
+        match self {
+            Self::Cargo => &[
+                "requires `Cargo.toml` at a package or workspace root",
+                "fix/lint use `cargo fmt` and strict `cargo clippy --all-targets -- -D warnings`",
+                "build uses `cargo check`; test prefers `cargo nextest run` and falls back to `cargo test`",
+                "audit adds `cargo build --release` and `cargo doc --no-deps`",
+                "optional `[package.metadata.rapport.cargo]` or `[workspace.metadata.rapport.cargo]` may set feature/target flags",
+            ],
+            Self::Zola => &[
+                "requires Zola `config.toml` with `base_url` and a recognized Zola section",
+                "requires `content/` and `templates/` directories",
+                "lint/test use `zola check`; build uses `zola build`; audit builds release-style site output",
+                "colocated Bun package scripts may provide asset fix/lint/build/test work without becoming a duplicate target",
+            ],
+            Self::Bun => &[
+                "requires `package.json` plus `bun.lock` or `bun.lockb` at the package or ancestor workspace root",
+                "scripts must be string commands named `fix`, `lint`, `build`, `test`, and `audit`",
+                "validate composes `bun run lint`, `bun run build`, and `bun run test`",
+                "scriptless Bun workspace roots aggregate runnable child packages",
+            ],
+            Self::SwiftPackageManager => &[
+                "requires `Package.swift` with a leading `// swift-tools-version:` declaration",
+                "build/test use `swift build` and `swift test`",
+                "style tooling is config-driven: `.swift-format` or `.swiftformat` enables formatting; `.swiftlint.yml` or `.swiftlint.yaml` enables SwiftLint",
+                "missing optional style configs mean lint/fix skip that style phase rather than inventing project policy",
+            ],
+            Self::Fastlane => &[
+                "requires `Gemfile` and `fastlane/Fastfile`",
+                "Fastfile must define lanes `fix`, `lint`, `build`, `test`, `validate`, and `audit`",
+                "each lifecycle verb runs through `bundle exec fastlane <lane>`",
+                "Xcode-specific build, signing, and release details belong inside the Fastlane lanes",
+            ],
+            Self::Gradle => &[
+                "requires `settings.gradle.kts` or `settings.gradle` and a checked-in `./gradlew` wrapper",
+                "rapport uses the wrapper and never system Gradle",
+                "lint runs `./gradlew --no-daemon check`; build runs `assemble`; test runs `test`; validate/audit run `build`",
+                "fix is a no-op because Gradle has no universal autofix lifecycle task",
+            ],
+            Self::Kustomize => &[
+                "requires `kustomization.yaml` or `kustomization.yml`",
+                "build renders with `kustomize build .` or `kubectl kustomize .`",
+                "lint renders then validates offline with `kubeconform -strict -summary -ignore-missing-schemas -`",
+                "rapport never applies, prunes, or talks to a live cluster",
+            ],
+            Self::Terraform => &[
+                "requires at least one `*.tf` file at the Terraform target root",
+                "fix/lint use `terraform fmt`; build uses `terraform validate`",
+                "test is a no-op unless a project wraps extra checks elsewhere",
+                "optional `.tflint.hcl` enables required TFLint lint/audit coverage",
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -449,6 +506,23 @@ impl Project {
             configuration,
         }
     }
+
+    pub(crate) fn prime_report(&self, files: &impl FileSystem) -> PrimeTargetReport {
+        let convention_status = match self.validate_manifest(files) {
+            Ok(()) => PrimeConventionStatus::Ok,
+            Err(reason) => PrimeConventionStatus::Missing(reason),
+        };
+
+        PrimeTargetReport {
+            target: DoctorTarget {
+                path: self.root.clone(),
+                ecosystem: self.ecosystem(),
+                marker: self.marker(),
+            },
+            expected: self.convention.prime_convention(),
+            convention_status,
+        }
+    }
 }
 
 pub(super) const ALL_VERBS: [Verb; 6] = [
@@ -481,6 +555,19 @@ pub(crate) struct DoctorTarget {
     pub(crate) path: Utf8PathBuf,
     pub(crate) ecosystem: &'static str,
     pub(crate) marker: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PrimeTargetReport {
+    pub(crate) target: DoctorTarget,
+    pub(crate) expected: &'static [&'static str],
+    pub(crate) convention_status: PrimeConventionStatus,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PrimeConventionStatus {
+    Ok,
+    Missing(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -5,8 +5,9 @@ mod view;
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 
 use convention::{
-    DiscoveryError, DoctorCheck, DoctorStatus, DoctorTargetReport, LifecycleAction, Phase, Project,
-    ToolResolutionError, describe_expected_markers,
+    DiscoveryError, DoctorCheck, DoctorStatus, DoctorTargetReport, LifecycleAction, Phase,
+    PrimeConventionStatus, PrimeTargetReport, Project, ToolResolutionError,
+    describe_expected_markers, expected_marker_entries,
 };
 use nonempty::{NonEmpty, nonempty};
 use rapport_cli::{
@@ -19,7 +20,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 use view::{Outcome, RunHint, ViewBuilder};
 
-const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit|doctor> <path>";
+const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit|doctor|prime> <path>";
 
 #[derive(
     Debug,
@@ -78,6 +79,7 @@ impl Verb {
 enum CliVerb {
     Lifecycle(Verb),
     Doctor,
+    Prime,
 }
 
 impl CliVerb {
@@ -85,6 +87,7 @@ impl CliVerb {
         match self {
             Self::Lifecycle(verb) => verb.about(),
             Self::Doctor => "Check target readiness without running lifecycle work",
+            Self::Prime => "Explain rapport conventions for the requested scope",
         }
     }
 
@@ -97,10 +100,11 @@ impl CliVerb {
             Self::Lifecycle(Verb::Validate) => "validate",
             Self::Lifecycle(Verb::Audit) => "audit",
             Self::Doctor => "doctor",
+            Self::Prime => "prime",
         }
     }
 
-    fn all() -> [Self; 7] {
+    fn all() -> [Self; 8] {
         [
             Self::Lifecycle(Verb::Fix),
             Self::Lifecycle(Verb::Lint),
@@ -109,6 +113,7 @@ impl CliVerb {
             Self::Lifecycle(Verb::Validate),
             Self::Lifecycle(Verb::Audit),
             Self::Doctor,
+            Self::Prime,
         ]
     }
 }
@@ -128,6 +133,7 @@ enum Command {
     Validate { path: RepositoryPath },
     Audit { path: RepositoryPath },
     Doctor { path: RepositoryPath },
+    Prime { path: RepositoryPath },
 }
 
 impl Command {
@@ -140,7 +146,7 @@ impl Command {
             Self::Test { .. } => Some(Verb::Test),
             Self::Validate { .. } => Some(Verb::Validate),
             Self::Audit { .. } => Some(Verb::Audit),
-            Self::Doctor { .. } => None,
+            Self::Doctor { .. } | Self::Prime { .. } => None,
         }
     }
 
@@ -153,7 +159,8 @@ impl Command {
             | Self::Test { path }
             | Self::Validate { path }
             | Self::Audit { path }
-            | Self::Doctor { path } => path,
+            | Self::Doctor { path }
+            | Self::Prime { path } => path,
         }
     }
 
@@ -177,6 +184,7 @@ impl Command {
             CliVerb::Lifecycle(Verb::Validate) => Self::Validate { path },
             CliVerb::Lifecycle(Verb::Audit) => Self::Audit { path },
             CliVerb::Doctor => Self::Doctor { path },
+            CliVerb::Prime => Self::Prime { path },
         })
     }
 }
@@ -185,8 +193,10 @@ impl rapport_cli::Parser for Command {
     type Verb = CliVerb;
 
     fn parse_verb(name: &str) -> Result<CliVerb, ParseError> {
-        if name == "doctor" {
-            return Ok(CliVerb::Doctor);
+        match name {
+            "doctor" => return Ok(CliVerb::Doctor),
+            "prime" => return Ok(CliVerb::Prime),
+            _ => {}
         }
         name.parse()
             .map(CliVerb::Lifecycle)
@@ -200,9 +210,15 @@ impl rapport_cli::Parser for Command {
 
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.lifecycle_verb() {
-            Some(verb) => verb.fmt(f),
-            None => f.write_str("doctor"),
+        match self {
+            Self::Fix { .. } => Verb::Fix.fmt(f),
+            Self::Lint { .. } => Verb::Lint.fmt(f),
+            Self::Build { .. } => Verb::Build.fmt(f),
+            Self::Test { .. } => Verb::Test.fmt(f),
+            Self::Validate { .. } => Verb::Validate.fmt(f),
+            Self::Audit { .. } => Verb::Audit.fmt(f),
+            Self::Doctor { .. } => f.write_str("doctor"),
+            Self::Prime { .. } => f.write_str("prime"),
         }
     }
 }
@@ -530,6 +546,102 @@ fn render_doctor(
         .build()
 }
 
+fn render_prime(reports: &[PrimeTargetReport], requested_path: &Utf8Path) -> String {
+    let mut vb = prime_base_view().section("Targets", |b| {
+        b.items(reports.iter().map(|report| {
+            format!(
+                "{} - {} (`{}`)",
+                report.target.path, report.target.ecosystem, report.target.marker
+            )
+        }))
+    });
+
+    for report in reports {
+        let title = format!("{} Convention", report.target.ecosystem);
+        vb = vb.section(&title, |b| {
+            let target_lines = [
+                format!(
+                    "target: {} (`{}`)",
+                    report.target.path, report.target.marker
+                ),
+                format!(
+                    "convention: {}",
+                    format_prime_convention_status(&report.convention_status)
+                ),
+            ];
+            b.items(
+                target_lines.into_iter().chain(
+                    report
+                        .expected
+                        .iter()
+                        .map(|line| format!("expects: {line}")),
+                ),
+            )
+        });
+    }
+
+    vb.next_actions(nonempty![RunHint::new(format!(
+        "rapport doctor {requested_path}"
+    ))])
+    .build()
+}
+
+fn render_prime_no_targets(requested_path: &Utf8Path, git_root: &Utf8Path) -> String {
+    prime_base_view()
+        .section("Scope", |b| {
+            b.items([
+                format!("requested: {requested_path}"),
+                format!("git root: {git_root}"),
+                "detected targets: none".to_owned(),
+            ])
+        })
+        .section("Supported Markers", |b| b.items(expected_marker_entries()))
+        .next_actions(nonempty![RunHint::new("rapport help prime")])
+        .build()
+}
+
+fn prime_base_view() -> ViewBuilder {
+    ViewBuilder::new()
+        .title("rapport prime - agent guide")
+        .section("Purpose", |b| {
+            b.items([
+                "rapport is the token-efficient command surface for conventional dev-cycle work",
+                "call `rapport prime <path>` at task start to learn how to drive rapport for this scope",
+                "standard lifecycle verbs are `fix`, `lint`, `build`, `test`, `validate`, and `audit`",
+            ])
+        })
+        .section("How To Use", |b| {
+            b.items([
+                "`rapport doctor <path>` checks whether detected targets are runnable now without lifecycle work",
+                "`rapport fix <path>` applies safe formatter/autofix conventions where supported",
+                "`rapport validate <path>` is the default post-edit proof: lint, build, and test",
+                "`rapport audit <path>` is the slower pre-release proof",
+                "on failure, fix the reported issue and rerun the same rapport command",
+            ])
+        })
+        .section("Scope", |b| {
+            b.items([
+                "pass the repository, umbrella, project, or child directory you are editing",
+                "rapport discovers supported targets below that path, or walks up to the nearest target when inside one",
+                "run lifecycle commands on the same scope unless you intentionally narrow to one target",
+            ])
+        })
+        .section("Boundary", |b| {
+            b.items([
+                "rapport owns lifecycle proof: format/fix, lint, build, test, validate, and audit",
+                "task runners own installs, local servers, deploys, migrations, generators, releases, and bespoke workflows",
+                "Justfiles and similar runners may call rapport when they need the standard lifecycle answer",
+            ])
+        })
+}
+
+fn format_prime_convention_status(status: &PrimeConventionStatus) -> String {
+    match status {
+        PrimeConventionStatus::Ok => "ok".to_owned(),
+        PrimeConventionStatus::Missing(reason) => format!("missing - {reason}"),
+    }
+}
+
 fn format_check(kind: &str, check: &DoctorCheck) -> String {
     let status = match check.status {
         DoctorStatus::Pass => "ok",
@@ -649,12 +761,19 @@ where
     O: Write,
     E: Write,
 {
-    if matches!(command, Command::Doctor { .. }) {
-        return run_doctor(command, runner, fs, out, err);
+    match command {
+        Command::Doctor { .. } => return run_doctor(command, runner, fs, out, err),
+        Command::Prime { .. } => return run_prime(command, fs, out, err),
+        Command::Fix { .. }
+        | Command::Lint { .. }
+        | Command::Build { .. }
+        | Command::Test { .. }
+        | Command::Validate { .. }
+        | Command::Audit { .. } => {}
     }
 
     let Some(verb) = command.lifecycle_verb() else {
-        return run_doctor(command, runner, fs, out, err);
+        unreachable!("non-lifecycle commands are handled above");
     };
     let requested_path = command.path().as_path();
     let projects = match Project::discover_all(requested_path, fs) {
@@ -738,6 +857,40 @@ where
     };
     let hints = verb.hints(Outcome::Pass, hint_path);
     let _ = writeln!(out, "{}", render_pass(started, &projects, &messages, hints));
+    ExitCode::SUCCESS
+}
+
+fn run_prime<O, E>(command: &Command, fs: &impl FileSystem, out: &mut O, err: &mut E) -> ExitCode
+where
+    O: Write,
+    E: Write,
+{
+    let requested_path = command.path().as_path();
+    let projects = match Project::discover_all(requested_path, fs) {
+        Ok(projects) => projects,
+        Err(DiscoveryError::NoSupportedProject { git_root, .. }) => {
+            let _ = writeln!(
+                out,
+                "{}",
+                render_prime_no_targets(requested_path, &git_root)
+            );
+            return ExitCode::SUCCESS;
+        }
+        Err(discovery_err) => {
+            let _ = writeln!(
+                err,
+                "{}",
+                render_discovery_failure(command, requested_path, &discovery_err)
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    let reports = projects
+        .iter()
+        .map(|project| project.prime_report(fs))
+        .collect::<Vec<_>>();
+    let _ = writeln!(out, "{}", render_prime(&reports, requested_path));
     ExitCode::SUCCESS
 }
 
@@ -1195,6 +1348,94 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn help_lists_prime_as_a_cli_verb() {
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["help"], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("`prime`"));
+        assert!(out.contains("Explain rapport conventions"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn prime_reports_cargo_conventions_without_running_tool_probes() {
+        let dir = TestDir::cargo_project();
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["prime", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("# rapport prime - agent guide"));
+        assert!(out.contains("call `rapport prime <path>` at task start"));
+        assert!(out.contains("`rapport validate <path>` is the default post-edit proof"));
+        assert!(out.contains("pass the repository, umbrella, project, or child directory"));
+        assert!(out.contains(&format!("{} - Cargo (`Cargo.toml`)", dir.as_str())));
+        assert!(out.contains("convention: ok"));
+        assert!(out.contains("expects: requires `Cargo.toml`"));
+        assert!(out.contains("expects: build uses `cargo check`"));
+        assert!(out.contains(&format!("└ run rapport doctor {}", dir.as_str())));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn prime_uses_same_mixed_scope_discovery_as_lifecycle_commands() {
+        let dir = TestDir::new();
+        dir.write_cargo_package("apps/api", "api");
+        dir.write(
+            "infra/main.tf",
+            "resource \"null_resource\" \"example\" {}\n",
+        );
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["prime", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("Cargo (`Cargo.toml`)"));
+        assert!(out.contains("Terraform (`*.tf`)"));
+        assert!(out.contains("expects: optional `.tflint.hcl` enables required TFLint"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn prime_reports_missing_convention_without_failing_the_guidance_run() {
+        let dir = TestDir::new();
+        dir.write("fastlane/Fastfile", standard_fastfile());
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["prime", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("Fastlane (`fastlane/Fastfile`)"));
+        assert!(out.contains("convention: missing - Fastlane projects must include a `Gemfile`"));
+        assert!(out.contains("expects: requires `Gemfile` and `fastlane/Fastfile`"));
+        assert_eq!(runner.calls(), Vec::new());
+    }
+
+    #[test]
+    fn prime_reports_no_supported_targets_inside_a_git_scope() {
+        let dir = TestDir::new();
+        dir.write("README.md", "# no supported targets here\n");
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["prime", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("detected targets: none"));
+        assert!(out.contains("## Supported Markers"));
+        assert!(out.contains("`Cargo.toml` for Cargo"));
+        assert!(out.contains("`*.tf` for Terraform"));
+        assert!(out.contains("└ run rapport help prime"));
+        assert_eq!(runner.calls(), Vec::new());
     }
 
     #[test]
