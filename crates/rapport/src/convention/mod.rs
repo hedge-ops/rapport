@@ -150,7 +150,7 @@ impl ProjectConvention {
             Self::Cargo => cargo::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::Zola => zola::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::fix(project, files).map_err(ToolResolutionError::Convention),
-            Self::SwiftPackageManager => swift::fix(project, runner),
+            Self::SwiftPackageManager => swift::fix(project, runner, files),
             Self::Fastlane => Ok(fastlane::fix()),
             Self::Gradle => Ok(gradle::fix()),
             Self::Kustomize => Ok(kustomize::fix()),
@@ -168,7 +168,7 @@ impl ProjectConvention {
             Self::Cargo => cargo::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::Zola => zola::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::lint(project, files).map_err(ToolResolutionError::Convention),
-            Self::SwiftPackageManager => swift::lint(project, runner),
+            Self::SwiftPackageManager => swift::lint(project, runner, files),
             Self::Fastlane => Ok(fastlane::lint()),
             Self::Gradle => Ok(gradle::lint()),
             Self::Kustomize => kustomize::lint(project, runner),
@@ -367,6 +367,14 @@ impl Project {
     pub(crate) fn auxiliary_toolchain_install_hint(&self, program: &str) -> Option<&'static str> {
         if self.convention == ProjectConvention::Zola && program == bun::primary_program() {
             Some(bun::toolchain_install_hint())
+        } else if self.convention == ProjectConvention::SwiftPackageManager
+            && program == swift::swiftformat_program()
+        {
+            Some(swift::swiftformat_install_hint())
+        } else if self.convention == ProjectConvention::SwiftPackageManager
+            && program == swift::linter_program()
+        {
+            Some(swift::linter_install_hint())
         } else {
             None
         }
@@ -824,7 +832,17 @@ const DEFAULT_SKIP_DISCOVERY_DIRECTORIES: &[&str] = &[
 pub(crate) enum ToolResolutionError {
     Convention(String),
     MissingSwift(io::Error),
-    MissingFormatter,
+    MissingFormatter {
+        config: &'static str,
+        install_hint: &'static str,
+        first_probe: &'static str,
+        second_probe: Option<&'static str>,
+    },
+    MissingLinter {
+        config: &'static str,
+        install_hint: &'static str,
+        probe: &'static str,
+    },
     MissingKustomizeRenderer,
     MissingKubernetesValidator,
     MissingTflint,

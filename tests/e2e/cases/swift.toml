@@ -62,6 +62,24 @@ snapshot = "rapport/swift_ok_with_format_config_lint.snap"
 toolchain = "driver_formatter"
 
 [[case]]
+name = "swift_ok_formatter_and_linter_lint"
+convention = "swift"
+fixture = "ok/with-format-and-linter"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/swift_ok_formatter_and_linter_lint.snap"
+toolchain = "driver_formatter_linter"
+
+[[case]]
+name = "swift_ok_formatter_and_linter_validate"
+convention = "swift"
+fixture = "ok/with-format-and-linter"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/swift_ok_formatter_and_linter_validate.snap"
+toolchain = "driver_formatter_linter"
+
+[[case]]
 name = "swift_ok_no_format_config_lint"
 convention = "swift"
 fixture = "ok/no-format-config"
@@ -69,6 +87,24 @@ verb = "lint"
 expected_exit = 0
 snapshot = "rapport/swift_ok_no_format_config_lint.snap"
 toolchain = "direct_formatter"
+
+[[case]]
+name = "swift_ok_no_style_tools_build"
+convention = "swift"
+fixture = "ok/no-format-config"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/swift_ok_no_style_tools_build.snap"
+toolchain = "missing_formatter"
+
+[[case]]
+name = "swift_ok_no_style_tools_test"
+convention = "swift"
+fixture = "ok/no-format-config"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/swift_ok_no_style_tools_test.snap"
+toolchain = "missing_formatter"
 
 [[case]]
 name = "swift_ok_basic_package_child_build"
@@ -115,6 +151,15 @@ verb = "lint"
 expected_exit = 2
 snapshot = "rapport/swift_fail_missing_formatter_lint.snap"
 toolchain = "missing_formatter"
+
+[[case]]
+name = "swift_fail_missing_linter_lint"
+convention = "swift"
+fixture = "fail/missing-linter"
+verb = "lint"
+expected_exit = 2
+snapshot = "rapport/swift_fail_missing_linter_lint.snap"
+toolchain = "missing_linter"
 
 [[case]]
 name = "swift_fail_missing_formatter_build"
@@ -200,3 +245,12 @@ toolchain = "driver_formatter"
 [[case.assert_contains]]
 path = "Sources/RapportFixture/Greeter.swift"
 text = "let answer = 42"
+
+[[case]]
+name = "swift_fail_linter_violation_lint"
+convention = "swift"
+fixture = "fail/lint-failure"
+verb = "lint"
+expected_exit = 1
+snapshot = "rapport/swift_fail_linter_violation_lint.snap"
+toolchain = "driver_formatter_linter"

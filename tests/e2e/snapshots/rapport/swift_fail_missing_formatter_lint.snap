@@ -6,7 +6,7 @@ stderr:
 ---
 You ran: rapport lint [project]
 SwiftPM project: [project]
-SwiftPM formatter tooling was not found.
+SwiftPM formatter config `.swift-format` is present, but formatter tooling was not found.
 Install Swift 6+ for `swift format`, or install `swift-format` on PATH.
 
 ## Next

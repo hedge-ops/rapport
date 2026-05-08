@@ -454,11 +454,19 @@ def configure_swift(env: dict[str, str], context: RunContext, case: Case) -> tup
 
     if mode == "driver_formatter":
         write_executable(tool_root / "swift", swift_script(supports_driver_formatter=True))
+    elif mode == "driver_formatter_linter":
+        write_executable(tool_root / "swift", swift_script(supports_driver_formatter=True))
+        write_executable(tool_root / "swiftlint", swiftlint_script())
     elif mode == "direct_formatter":
         write_executable(tool_root / "swift", swift_script(supports_driver_formatter=False))
         write_executable(tool_root / "swift-format", swift_format_script())
+    elif mode == "swiftformat":
+        write_executable(tool_root / "swift", swift_script(supports_driver_formatter=False))
+        write_executable(tool_root / "swiftformat", swiftformat_script())
     elif mode == "missing_formatter":
         write_executable(tool_root / "swift", swift_script(supports_driver_formatter=False))
+    elif mode == "missing_linter":
+        write_executable(tool_root / "swift", swift_script(supports_driver_formatter=True))
     elif mode == "missing_swift":
         pass
     else:
@@ -850,6 +858,80 @@ if [ "$subcommand" = "lint" ]; then
     exit 0
 fi
 echo "unexpected swift-format args: $*" >&2
+exit 2
+"""
+
+
+def swiftformat_script() -> str:
+    return """#!/bin/sh
+set -u
+
+has_format_issue() {
+    for candidate in Package.swift Sources Tests Plugins; do
+        if [ -e "$candidate" ] && /usr/bin/grep -R "let answer=42" "$candidate" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+fix_format_issue() {
+    file="Sources/RapportFixture/Greeter.swift"
+    if [ -f "$file" ]; then
+        /usr/bin/awk '{ gsub("let answer=42", "let answer = 42"); print }' "$file" > "$file.tmp" && /bin/mv "$file.tmp" "$file"
+    fi
+}
+
+if [ "${1:-}" = "--version" ]; then
+    echo "0.55.0"
+    exit 0
+fi
+if [ "${1:-}" = "--lint" ]; then
+    if [ "${2:-}" != "--config" ] || [ ! -f "${3:-}" ]; then
+        echo "unexpected swiftformat lint args: $*" >&2
+        exit 2
+    fi
+    if has_format_issue; then
+        echo "Sources/RapportFixture/Greeter.swift:1:1: warning: source is not formatted" >&2
+        exit 1
+    fi
+    echo "SwiftFormat lint passed"
+    exit 0
+fi
+if [ "${1:-}" = "--config" ] && [ -f "${2:-}" ]; then
+    fix_format_issue
+    echo "SwiftFormat formatted inputs"
+    exit 0
+fi
+
+echo "unexpected swiftformat args: $*" >&2
+exit 2
+"""
+
+
+def swiftlint_script() -> str:
+    return """#!/bin/sh
+set -u
+
+if [ "${1:-}" = "version" ]; then
+    echo "0.58.2"
+    exit 0
+fi
+
+if [ "${1:-}" = "lint" ]; then
+    if [ "${2:-}" != "--strict" ] || [ "${3:-}" != "--config" ] || [ ! -f "${4:-}" ]; then
+        echo "unexpected swiftlint lint args: $*" >&2
+        exit 2
+    fi
+    if [ -e Sources ] && /usr/bin/grep -R "swiftlint violation" Sources >/dev/null 2>&1; then
+        echo "Sources/RapportFixture/Greeter.swift:1:1: warning: simulated SwiftLint violation" >&2
+        exit 1
+    fi
+    echo "SwiftLint passed"
+    exit 0
+fi
+
+echo "unexpected swiftlint args: $*" >&2
 exit 2
 """
 

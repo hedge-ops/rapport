@@ -398,13 +398,39 @@ fn render_tool_resolution_failure(
             .paragraph(project.toolchain_install_hint().unwrap_or_default())
             .next_actions(nonempty![RunHint::new("swift --version")])
             .build(),
-        ToolResolutionError::MissingFormatter => vb
-            .paragraph("SwiftPM formatter tooling was not found.")
-            .paragraph(project.formatter_install_hint().unwrap_or_default())
-            .next_actions(nonempty![
-                RunHint::new("swift format --version"),
-                RunHint::new("swift-format --version")
-            ])
+        ToolResolutionError::MissingFormatter {
+            config,
+            install_hint,
+            first_probe,
+            second_probe,
+        } => {
+            let vb = vb
+                .paragraph(format!(
+                    "SwiftPM formatter config `{config}` is present, but formatter tooling was not found."
+                ))
+                .paragraph(*install_hint);
+            match second_probe {
+                Some(second_probe) => vb
+                    .next_actions(nonempty![
+                        RunHint::new(*first_probe),
+                        RunHint::new(*second_probe)
+                    ])
+                    .build(),
+                None => vb
+                    .next_actions(nonempty![RunHint::new(*first_probe)])
+                    .build(),
+            }
+        }
+        ToolResolutionError::MissingLinter {
+            config,
+            install_hint,
+            probe,
+        } => vb
+            .paragraph(format!(
+                "SwiftPM linter config `{config}` is present, but `swiftlint` was not found."
+            ))
+            .paragraph(*install_hint)
+            .next_actions(nonempty![RunHint::new(*probe)])
             .build(),
         ToolResolutionError::MissingKustomizeRenderer => vb
             .paragraph("Kustomize renderer tooling was not found.")
@@ -827,6 +853,7 @@ mod tests {
                 "Package.swift",
                 "// swift-tools-version: 6.0\nimport PackageDescription\n",
             );
+            dir.write(".swift-format", "{\n  \"version\": 1\n}\n");
             fs::create_dir_all(dir.path.join("Sources"))
                 .expect("Sources directory should be created");
             dir.write("Sources/main.swift", "print(\"hello\")\n");
@@ -1506,6 +1533,8 @@ mod tests {
                         "--strict".into(),
                         "--recursive".into(),
                         "--no-color-diagnostics".into(),
+                        "--configuration".into(),
+                        ".swift-format".into(),
                         "Package.swift".into(),
                         "Sources".into(),
                     ],
@@ -1513,6 +1542,76 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn swift_lint_runs_configured_linter_after_formatter_check() {
+        let dir = TestDir::swift_project();
+        dir.write(".swiftlint.yml", "disabled_rules: []\n");
+        let runner = FakeRunner::all_pass(4);
+
+        let (code, _out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec!["format".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swiftlint".into(),
+                    args: vec!["version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swift".into(),
+                    args: vec![
+                        "format".into(),
+                        "lint".into(),
+                        "--strict".into(),
+                        "--recursive".into(),
+                        "--no-color-diagnostics".into(),
+                        "--configuration".into(),
+                        ".swift-format".into(),
+                        "Package.swift".into(),
+                        "Sources".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "swiftlint".into(),
+                    args: vec![
+                        "lint".into(),
+                        "--strict".into(),
+                        "--config".into(),
+                        ".swiftlint.yml".into(),
+                    ],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn swift_lint_without_style_configs_is_a_noop() {
+        let dir = TestDir::new();
+        dir.write(
+            "Package.swift",
+            "// swift-tools-version: 6.0\nimport PackageDescription\n",
+        );
+        dir.write("Sources/main.swift", "print(\"hello\")\n");
+        let runner = FakeRunner::all_pass(0);
+
+        let (code, out, err) = run_with(&["lint", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("status: pass"));
+        assert_eq!(runner.calls(), Vec::new());
     }
 
     #[test]
@@ -1548,6 +1647,8 @@ mod tests {
                         "--in-place".into(),
                         "--recursive".into(),
                         "--no-color-diagnostics".into(),
+                        "--configuration".into(),
+                        ".swift-format".into(),
                         "Package.swift".into(),
                         "Sources".into(),
                     ],
@@ -1582,6 +1683,8 @@ mod tests {
                         "--strict".into(),
                         "--recursive".into(),
                         "--no-color-diagnostics".into(),
+                        "--configuration".into(),
+                        ".swift-format".into(),
                         "Package.swift".into(),
                         "Sources".into(),
                     ],
@@ -1626,6 +1729,8 @@ mod tests {
                         "--strict".into(),
                         "--recursive".into(),
                         "--no-color-diagnostics".into(),
+                        "--configuration".into(),
+                        ".swift-format".into(),
                         "Package.swift".into(),
                         "Sources".into(),
                     ],
@@ -1682,7 +1787,7 @@ mod tests {
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains("SwiftPM formatter tooling was not found"));
+        assert!(err.contains("SwiftPM formatter config `.swift-format` is present"));
         assert!(err.contains("swift format --version"));
         assert!(err.contains("swift-format --version"));
         assert_eq!(runner.calls().len(), 2);
