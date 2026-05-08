@@ -106,6 +106,12 @@ def main() -> int:
         action="store_true",
         help="rewrite expected snapshots with current normalized output",
     )
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default=os.environ.get("RAPPORT_E2E_COLOR", "auto"),
+        help="colorize progress output",
+    )
     args = parser.parse_args()
 
     selected = set(args.case_names)
@@ -121,22 +127,23 @@ def main() -> int:
 
     rapport_bin = resolve_rapport_bin()
     failures: list[str] = []
+    color = should_color(args.color)
 
     print("\n=== e2e ===", flush=True)
     suite_started = time.perf_counter()
-    for case in cases:
+    for index, case in enumerate(cases, start=1):
         case_started = time.perf_counter()
         failure = run_case(case, rapport_bin, update=args.update)
         case_duration = format_duration(time.perf_counter() - case_started)
         if failure is None:
-            print(f"ok   {case.name} ({case_duration})")
+            print(format_case_result(case, index, len(cases), "PASS", case_duration, color))
         else:
-            print(f"FAIL {case.name} ({case_duration})")
+            print(format_case_result(case, index, len(cases), "FAIL", case_duration, color))
             failures.append(failure)
     suite_duration = format_duration(time.perf_counter() - suite_started)
 
     print("\n=== summary ===")
-    print(f"{len(cases)} case(s), {len(failures)} failure(s), {suite_duration} total")
+    print(format_summary(len(cases), len(failures), suite_duration, color))
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
@@ -144,7 +151,63 @@ def main() -> int:
 
 
 def format_duration(seconds: float) -> str:
-    return f"{seconds:.2f}s"
+    return f"{seconds:.3f}s"
+
+
+def should_color(mode: str) -> bool:
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    match mode:
+        case "always":
+            return True
+        case "never":
+            return False
+        case _:
+            return (
+                sys.stdout.isatty()
+                or os.environ.get("GITHUB_ACTIONS") == "true"
+                or os.environ.get("FORCE_COLOR") is not None
+            )
+
+
+def paint(text: str, code: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def format_case_result(
+    case: Case,
+    index: int,
+    total: int,
+    status: str,
+    duration: str,
+    color: bool,
+) -> str:
+    status_color = "32;1" if status == "PASS" else "31;1"
+    progress = f"({index:>{len(str(total))}}/{total})"
+    package = paint("rapport-e2e", "35;1", color)
+    convention = paint(case.convention, "36;1", color)
+    name = paint(case.name, "34;1", color)
+    return (
+        f"{paint(status, status_color, color)} "
+        f"[{duration:>8}] "
+        f"{paint(progress, '2', color)} "
+        f"{package} {convention}::{name}"
+    )
+
+
+def format_summary(total: int, failures: int, duration: str, color: bool) -> str:
+    passed = total - failures
+    summary_color = "32;1" if failures == 0 else "31;1"
+    failed_code = "31;1" if failures else "2"
+    return (
+        f"{paint('Summary', summary_color, color)} "
+        f"[{duration:>8}] "
+        f"{total} cases run: "
+        f"{paint(f'{passed} passed', '32;1', color)}, "
+        f"{paint(f'{failures} failed', failed_code, color)}"
+    )
 
 
 def load_cases() -> list[Case]:
