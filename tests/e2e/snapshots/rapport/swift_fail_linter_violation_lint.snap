@@ -1,0 +1,20 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+SwiftPM project: [project]
+Failing phase: lint
+## Output
+
+```
+Sources/RapportFixture/Greeter.swift:1:1: warning: simulated SwiftLint violation
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport fix [project]

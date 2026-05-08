@@ -132,16 +132,20 @@ rapport audit <path>     # validate + production/non-draft zola build
 ```
 
 ```text
-rapport fix <path>       # swift format format --in-place ...
-rapport lint <path>      # swift format lint --strict ...
+rapport fix <path>       # configured formatter in write mode
+rapport lint <path>      # configured formatter check + configured SwiftLint
 rapport build <path>     # swift build
 rapport test <path>      # swift test
 rapport validate <path>  # lint + build + test
 rapport audit <path>     # validate + swift build -c release
 ```
 
-SwiftPM formatting uses `swift format` first and falls back to `swift-format`
-when installed separately. Build and test do not require formatter tooling.
+SwiftPM style tooling is config-driven. A root `.swift-format` uses Swift's
+formatter, resolved as `swift format` first and then standalone `swift-format`;
+a root `.swiftformat` uses SwiftFormat through `swiftformat`. A root
+`.swiftlint.yml` or `.swiftlint.yaml` runs `swiftlint lint --strict --config`.
+Missing configured tools fail with install hints. Build and test do not require
+formatter or linter tooling when those configs are absent.
 
 Fastlane projects are detected by `fastlane/Fastfile`. Rapport requires a
 `Gemfile` and standard lanes named `fix`, `lint`, `build`, `test`, `validate`,
