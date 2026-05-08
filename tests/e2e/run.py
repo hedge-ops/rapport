@@ -553,7 +553,7 @@ def configure_terraform(env: dict[str, str], context: RunContext, case: Case) ->
     elif mode == "full_with_cargo":
         write_executable(tool_root / "terraform", terraform_script())
         write_executable(tool_root / "tflint", tflint_script())
-        write_executable(tool_root / "cargo", cargo_script())
+        write_executable(tool_root / "cargo", cargo_script(nextest=True))
     elif mode == "terraform_only":
         write_executable(tool_root / "terraform", terraform_script())
     elif mode == "missing_terraform":
