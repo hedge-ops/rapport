@@ -1,16 +1,14 @@
 # Rapport
 
-Ergonomic, human-driven, agent-friendly approach to building, based on
-real-world experience of building [People Work](https://www.people-work.io).
+Ergonomic, human-driven, agent-friendly approach to running conventional
+development lifecycle checks across mixed repositories, based on real-world
+experience building [People Work](https://www.people-work.io).
 
 ## Vision
 
-Currently internally I have a `builder` cli that will build anything in my
-internal repository. This ports that and makes it better:
-
 - Standardize common lifecycle verbs like `fix`, `lint`, `build`, `test`,
   `validate`, and `audit` - so humans and agents have one thing to call
-  anywhere in the repository, to simplify how things are done.
+  anywhere in a repository, to simplify how things are done.
 - Make output more human and agent-friendly (less tokens) - if it's successful,
   we say so, if it fails, we curate a list of things to fix. We don't spam
   anyone with a huge cli output, that's so lame (and token-intensive too).
@@ -21,8 +19,17 @@ internal repository. This ports that and makes it better:
 ## Current checkpoint
 
 `rapport` currently discovers Cargo, Zola, Bun, SwiftPM, Fastlane, Gradle,
-Kustomize, and Terraform projects from the path you pass, walking upward to the
-nearest supported project marker.
+Kustomize, and Terraform projects from the path you pass. The path is treated
+as a directory scope: if runnable targets exist under that directory, rapport
+discovers them recursively and runs the standard lifecycle for each target. If
+the path is merely inside a concrete project, rapport preserves the nearest
+parent project behavior.
+
+Rapport answers the conventional dev-cycle question: "is everything under this
+scope still good?" It is not a general Just replacement. Justfiles remain the
+right place for installs, operations, deploys, local servers, dependency
+updates, and bespoke workflows; those workflows can call rapport when they need
+the standard lifecycle answer.
 
 ```text
 rapport fix <path>       # cargo fmt
@@ -33,10 +40,25 @@ rapport validate <path>  # lint + build + test
 rapport audit <path>     # validate + cargo build --release + cargo doc --no-deps
 ```
 
-`rapport` walks upward from the path you pass until the git root, then runs the
-nearest supported project it finds. Cargo projects are detected by
-`Cargo.toml`; SwiftPM projects are detected by `Package.swift` with a leading
-`// swift-tools-version:` declaration.
+`rapport <verb> <path>` handles concrete project roots, child directories inside
+projects, umbrella directories with multiple child projects, and aggregate
+container directories with runnable children but no marker of their own.
+Same-ecosystem descendants are de-duplicated when an ancestor target covers
+them, such as a Cargo workspace root covering member crates. Different
+ecosystems are additive under the same scope. Generated, dependency, cache, and
+build output directories such as `.git`, `target`, `node_modules`, `.build`,
+`DerivedData`, `.terraform`, `dist`, `build`, and `coverage` are skipped during
+recursive discovery.
+
+Cargo projects are detected by `Cargo.toml`; SwiftPM projects are detected by
+`Package.swift` with a leading `// swift-tools-version:` declaration.
+
+Lifecycle verbs keep their conventional scope:
+
+- `build` is the fastest meaningful proof that the target builds.
+- `audit` is slower release or artifact confidence.
+- `validate` is the pre-commit path: lint, build, and test where the convention
+  supports those phases.
 
 Bun projects are detected by `package.json` plus `bun.lock` or `bun.lockb` at
 the package root or an ancestor workspace root. A Bun package runs standard

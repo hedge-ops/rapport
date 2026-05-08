@@ -378,8 +378,22 @@ fn render_tool_resolution_failure(
     }
 }
 
-fn render_pass(started: Instant, messages: &[String], hints: NonEmpty<RunHint>) -> String {
+fn render_pass(
+    started: Instant,
+    projects: &[Project],
+    messages: &[String],
+    hints: NonEmpty<RunHint>,
+) -> String {
     let mut vb = ViewBuilder::new();
+    if projects.len() > 1 {
+        vb = vb.section("Targets", |b| {
+            b.items(
+                projects
+                    .iter()
+                    .map(|project| format!("pass - {}", project.label())),
+            )
+        });
+    }
     if !messages.is_empty() {
         vb = vb.section("Output", |b| b.captured(messages.join("\n")));
     }
@@ -394,11 +408,12 @@ fn render_step_failure(
     outcome: &CommandOutcome,
     started: Instant,
     hints: NonEmpty<RunHint>,
+    show_project_context: bool,
 ) -> String {
     let combined = combined_output(outcome);
     let failure_output = project.curate_failure_output(&combined);
     let mut vb = ViewBuilder::new();
-    if project.should_report_failure_context() {
+    if show_project_context || project.should_report_failure_context() {
         vb = vb
             .paragraph(project.label())
             .paragraph(format!("Failing phase: {phase}"));
@@ -529,10 +544,18 @@ where
                     };
                     if !outcome.success {
                         let hints = command.verb().hints(Outcome::Fail, &project.root);
+                        let show_project_context = projects.len() > 1;
                         let _ = writeln!(
                             err,
                             "{}",
-                            render_step_failure(project, step.phase, &outcome, started, hints)
+                            render_step_failure(
+                                project,
+                                step.phase,
+                                &outcome,
+                                started,
+                                hints,
+                                show_project_context
+                            )
                         );
                         return ExitCode::from(1);
                     }
@@ -549,7 +572,7 @@ where
         requested_path
     };
     let hints = command.verb().hints(Outcome::Pass, hint_path);
-    let _ = writeln!(out, "{}", render_pass(started, &messages, hints));
+    let _ = writeln!(out, "{}", render_pass(started, &projects, &messages, hints));
     ExitCode::SUCCESS
 }
 
@@ -686,6 +709,17 @@ mod tests {
                 fs::create_dir_all(parent).expect("parent directory should be created");
             }
             fs::write(path, contents).expect("test file should be written");
+        }
+
+        fn write_cargo_package(&self, relative: &str, name: &str) {
+            self.write(
+                &format!("{relative}/Cargo.toml"),
+                &format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+            );
+            self.write(
+                &format!("{relative}/src/lib.rs"),
+                "pub fn answer() -> u8 { 42 }\n",
+            );
         }
     }
 
@@ -2070,6 +2104,180 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn umbrella_scope_discovers_multiple_child_cargo_targets() {
+        let dir = TestDir::new();
+        dir.write_cargo_package("services/api", "api");
+        dir.write_cargo_package("tools/cli", "cli");
+        let runner = FakeRunner::all_pass(2);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("## Targets"));
+        assert!(out.contains(&format!(
+            "pass - Cargo project: {}",
+            dir.path.join("services/api")
+        )));
+        assert!(out.contains(&format!(
+            "pass - Cargo project: {}",
+            dir.path.join("tools/cli")
+        )));
+        assert!(out.contains(&format!("└ run rapport test {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["check".into()],
+                    cwd: dir.path.join("services/api"),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["check".into()],
+                    cwd: dir.path.join("tools/cli"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn cargo_workspace_scope_does_not_duplicate_member_crates() {
+        let dir = TestDir::new();
+        dir.write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/alpha\", \"crates/beta\"]\nresolver = \"3\"\n",
+        );
+        dir.write_cargo_package("crates/alpha", "alpha");
+        dir.write_cargo_package("crates/beta", "beta");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(!out.contains("## Targets"));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn mixed_scope_discovers_additive_ecosystems() {
+        let dir = TestDir::new();
+        dir.write_cargo_package("apps/api", "api");
+        dir.write("infra/main.tf", "resource \"null_resource\" \"app\" {}\n");
+        let runner = FakeRunner::all_pass(2);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("## Targets"));
+        assert!(out.contains("Cargo project"));
+        assert!(out.contains("Terraform project"));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["check".into()],
+                    cwd: dir.path.join("apps/api"),
+                },
+                RecordedCommand {
+                    program: "terraform".into(),
+                    args: vec!["validate".into()],
+                    cwd: dir.path.join("infra"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn recursive_scope_ignores_generated_and_dependency_directories() {
+        let dir = TestDir::new();
+        dir.write_cargo_package("apps/api", "api");
+        for ignored in [
+            ".build",
+            ".cache",
+            ".gradle",
+            ".next",
+            ".swiftpm",
+            ".terraform",
+            ".turbo",
+            "DerivedData",
+            "Pods",
+            "build",
+            "coverage",
+            "dist",
+            "node_modules",
+            "target",
+            "vendor",
+        ] {
+            dir.write_cargo_package(&format!("{ignored}/fake"), "fake");
+        }
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into()],
+                cwd: dir.path.join("apps/api"),
+            }]
+        );
+    }
+
+    #[test]
+    fn path_inside_project_without_child_targets_keeps_nearest_parent_behavior() {
+        let dir = TestDir::cargo_project();
+        fs::create_dir_all(dir.path.join("src/deep")).expect("child directory should be created");
+        let child = dir.path.join("src/deep");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", child.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn multi_target_failure_identifies_failing_cargo_target() {
+        let dir = TestDir::new();
+        dir.write_cargo_package("services/api", "api");
+        dir.write_cargo_package("services/web", "web");
+        let failing = dir.path.join("services/web");
+        let runner = FakeRunner::new(vec![Ok(pass()), Ok(fail("cargo stdout", "cargo stderr"))]);
+
+        let (code, out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(1));
+        assert_eq!(out, "");
+        assert!(err.contains(&format!("Cargo project: {failing}")));
+        assert!(err.contains("Failing phase: build"));
+        assert!(err.contains("cargo stderr"));
+        assert!(err.contains("cargo stdout"));
+        assert_eq!(runner.calls().len(), 2);
     }
 
     #[test]

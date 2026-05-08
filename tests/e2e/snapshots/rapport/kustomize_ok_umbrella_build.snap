@@ -1,6 +1,11 @@
 exit: 0
 stdout:
 ---
+## Targets
+
+- pass - Kustomize project: [project]/platform/base
+- pass - Kustomize project: [project]/platform/overlays/dev
+
 status: pass
 duration: [duration]
 

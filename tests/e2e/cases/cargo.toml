@@ -71,6 +71,38 @@ expected_exit = 0
 snapshot = "rapport/cargo_ok_workspace_validate.snap"
 
 [[case]]
+name = "cargo_ok_umbrella_two_workspaces_build"
+convention = "cargo"
+fixture = "ok/umbrella-two-workspaces"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_umbrella_two_workspaces_build.snap"
+
+[[case]]
+name = "cargo_ok_workspace_scope_no_member_duplication_build"
+convention = "cargo"
+fixture = "ok/workspace"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_workspace_scope_no_member_duplication_build.snap"
+
+[[case]]
+name = "cargo_ok_ignored_scope_build"
+convention = "cargo"
+fixture = "ok/ignored-scope"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_ignored_scope_build.snap"
+
+[[case]]
+name = "cargo_ok_container_scope_child_build"
+convention = "cargo"
+fixture = "ok/container-scope"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_container_scope_child_build.snap"
+
+[[case]]
 name = "cargo_fail_missing_project_build"
 convention = "cargo"
 fixture = "fail/missing-project"

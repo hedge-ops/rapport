@@ -3,8 +3,8 @@ stdout:
 ---
 ## Targets
 
-- pass - Bun project: [project]/packages/api
-- pass - Bun project: [project]/packages/web
+- pass - Cargo project: [project]/apps/api
+- pass - Terraform project: [project]/infra
 
 status: pass
 duration: [duration]

@@ -1,11 +1,6 @@
 exit: 0
 stdout:
 ---
-## Targets
-
-- pass - Bun project: [project]/packages/api
-- pass - Bun project: [project]/packages/web
-
 status: pass
 duration: [duration]
 
