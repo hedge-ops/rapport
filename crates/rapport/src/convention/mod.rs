@@ -1,3 +1,4 @@
+mod android;
 mod bun;
 mod cargo;
 mod declarative;
@@ -18,6 +19,7 @@ static PROJECT_CONVENTIONS: &[ProjectConvention] = &[
     ProjectConvention::Bun,
     ProjectConvention::SwiftPackageManager,
     ProjectConvention::Fastlane,
+    ProjectConvention::AndroidApp,
     ProjectConvention::Gradle,
     ProjectConvention::Kustomize,
     ProjectConvention::Terraform,
@@ -46,6 +48,7 @@ enum ProjectConvention {
     Bun,
     SwiftPackageManager,
     Fastlane,
+    AndroidApp,
     Gradle,
     Kustomize,
     Terraform,
@@ -59,6 +62,7 @@ impl ProjectConvention {
             Self::Bun => bun::name(),
             Self::SwiftPackageManager => swift::name(),
             Self::Fastlane => fastlane::name(),
+            Self::AndroidApp => android::name(),
             Self::Gradle => gradle::name(),
             Self::Kustomize => kustomize::name(),
             Self::Terraform => terraform::name(),
@@ -72,6 +76,7 @@ impl ProjectConvention {
             Self::Bun => bun::markers().to_vec(),
             Self::SwiftPackageManager => swift::markers().to_vec(),
             Self::Fastlane => fastlane::markers().to_vec(),
+            Self::AndroidApp => android::markers().to_vec(),
             Self::Gradle => gradle::markers(),
             Self::Kustomize => kustomize::markers().to_vec(),
             Self::Terraform => terraform::markers(),
@@ -85,6 +90,7 @@ impl ProjectConvention {
             Self::Bun => bun::primary_program(),
             Self::SwiftPackageManager => swift::primary_program(),
             Self::Fastlane => fastlane::primary_program(),
+            Self::AndroidApp => android::primary_program(),
             Self::Gradle => gradle::primary_program(),
             Self::Kustomize => kustomize::primary_program(),
             Self::Terraform => terraform::primary_program(),
@@ -98,6 +104,7 @@ impl ProjectConvention {
             | Self::Zola
             | Self::Bun
             | Self::Fastlane
+            | Self::AndroidApp
             | Self::Gradle
             | Self::Kustomize
             | Self::Terraform => None,
@@ -111,6 +118,7 @@ impl ProjectConvention {
             Self::Bun => Some(bun::toolchain_install_hint()),
             Self::SwiftPackageManager => Some(swift::toolchain_install_hint()),
             Self::Fastlane => Some(fastlane::toolchain_install_hint()),
+            Self::AndroidApp => Some(android::toolchain_install_hint()),
             Self::Gradle => Some(gradle::toolchain_install_hint()),
             Self::Kustomize => Some(kustomize::renderer_install_hint()),
             Self::Terraform => Some(terraform::toolchain_install_hint()),
@@ -124,6 +132,7 @@ impl ProjectConvention {
             | Self::Zola
             | Self::Bun
             | Self::Fastlane
+            | Self::AndroidApp
             | Self::Gradle
             | Self::Kustomize
             | Self::Terraform => None,
@@ -137,6 +146,7 @@ impl ProjectConvention {
             Self::Bun => bun::validate_manifest(project, files),
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
             Self::Fastlane => fastlane::validate_manifest(project, files),
+            Self::AndroidApp => android::validate_manifest(project, files),
             Self::Gradle => gradle::validate_manifest(project, files),
             Self::Kustomize => kustomize::validate_manifest(project, files),
             Self::Terraform => terraform::validate_manifest(project, files),
@@ -155,6 +165,9 @@ impl ProjectConvention {
             Self::Bun => bun::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::fix(project, runner, files),
             Self::Fastlane => Ok(fastlane::fix()),
+            Self::AndroidApp => {
+                android::fix(project, files).map_err(ToolResolutionError::Convention)
+            }
             Self::Gradle => Ok(gradle::fix()),
             Self::Kustomize => Ok(kustomize::fix()),
             Self::Terraform => Ok(terraform::fix()),
@@ -173,6 +186,9 @@ impl ProjectConvention {
             Self::Bun => bun::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::lint(project, runner, files),
             Self::Fastlane => Ok(fastlane::lint()),
+            Self::AndroidApp => {
+                android::lint(project, files).map_err(ToolResolutionError::Convention)
+            }
             Self::Gradle => Ok(gradle::lint()),
             Self::Kustomize => kustomize::lint(project, runner),
             Self::Terraform => terraform::lint(project, runner),
@@ -191,6 +207,9 @@ impl ProjectConvention {
             Self::Bun => bun::build(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => Ok(swift::build()),
             Self::Fastlane => Ok(fastlane::build()),
+            Self::AndroidApp => {
+                android::build(project, files).map_err(ToolResolutionError::Convention)
+            }
             Self::Gradle => Ok(gradle::build()),
             Self::Kustomize => kustomize::build(project, runner),
             Self::Terraform => Ok(terraform::build()),
@@ -211,6 +230,9 @@ impl ProjectConvention {
             Self::Bun => bun::test(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => Ok(swift::test()),
             Self::Fastlane => Ok(fastlane::test()),
+            Self::AndroidApp => {
+                android::test(project, files).map_err(ToolResolutionError::Convention)
+            }
             Self::Gradle => Ok(gradle::test()),
             Self::Kustomize => Ok(kustomize::test()),
             Self::Terraform => Ok(terraform::test()),
@@ -224,6 +246,9 @@ impl ProjectConvention {
         files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
+            Self::AndroidApp => {
+                android::validate(project, files).map_err(ToolResolutionError::Convention)
+            }
             Self::Gradle => Ok(gradle::validate()),
             Self::Zola => zola::validate(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::validate(project, files).map_err(ToolResolutionError::Convention),
@@ -239,6 +264,9 @@ impl ProjectConvention {
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
             Self::Fastlane => Ok(fastlane::audit()),
+            Self::AndroidApp => {
+                android::audit(project, files).map_err(ToolResolutionError::Convention)
+            }
             Self::Gradle => Ok(gradle::audit()),
             Self::Zola => zola::audit(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::audit(project, files).map_err(ToolResolutionError::Convention),
@@ -251,7 +279,9 @@ impl ProjectConvention {
                     Self::SwiftPackageManager => swift::audit(),
                     Self::Kustomize => kustomize::audit(),
                     Self::Terraform => terraform::audit(),
-                    Self::Zola | Self::Bun | Self::Fastlane | Self::Gradle => unreachable!(),
+                    Self::Zola | Self::Bun | Self::Fastlane | Self::AndroidApp | Self::Gradle => {
+                        unreachable!()
+                    }
                 });
                 Ok(steps)
             }
@@ -260,6 +290,7 @@ impl ProjectConvention {
 
     fn matching_marker(self, root: &Utf8Path, files: &impl FileSystem) -> Option<&'static str> {
         match self {
+            Self::AndroidApp => android::matching_marker(root, files),
             Self::Zola => zola::matching_marker(root, files),
             Self::Bun => bun::matching_marker(root, files),
             Self::Terraform => terraform::matching_marker(root, files),
@@ -280,6 +311,7 @@ impl ProjectConvention {
             Self::Bun => bun::should_skip_directory(name),
             Self::Terraform => terraform::should_skip_directory(name),
             Self::Cargo
+            | Self::AndroidApp
             | Self::SwiftPackageManager
             | Self::Fastlane
             | Self::Gradle
@@ -319,6 +351,14 @@ impl ProjectConvention {
                 "Fastfile must define lanes `fix`, `lint`, `build`, `test`, `validate`, and `audit`",
                 "each lifecycle verb runs through `bundle exec fastlane <lane>`",
                 "Xcode-specific build, signing, and release details belong inside the Fastlane lanes",
+            ],
+            Self::AndroidApp => &[
+                "requires `settings.gradle.kts` or `settings.gradle`, a checked-in `./gradlew`, and at least one app module applying `com.android.application`",
+                "app modules are deterministic: included/root app modules run once in sorted module path order",
+                "local dev uses `LocalDebug` when a `local` flavor exists, otherwise `Debug`; audit bundles `ProductionRelease` when a `production` flavor exists, otherwise `Release`",
+                "fix runs configured ktlint `ktlintFormat`; lint runs configured `ktlintCheck`, configured `detekt`, and Android lint for the local dev variant",
+                "build assembles the local dev variant; test runs local JVM unit tests for that variant; validate composes lint + build + test; audit adds release bundle confidence",
+                "code generation and generated resources must be wired into the Gradle task graph for those Android tasks; installs, emulators, signing setup, and bespoke workflows belong in Just or project tooling",
             ],
             Self::Gradle => &[
                 "requires `settings.gradle.kts` or `settings.gradle` and a checked-in `./gradlew` wrapper",
@@ -391,6 +431,7 @@ impl Project {
 
     pub(crate) fn is_gradle(&self) -> bool {
         self.convention == ProjectConvention::Gradle
+            || self.convention == ProjectConvention::AndroidApp
     }
 
     fn is_bun_scriptless_container(&self, files: &impl FileSystem) -> bool {
@@ -473,6 +514,7 @@ impl Project {
 
     pub(crate) fn curate_failure_output(&self, output: &str) -> String {
         match self.convention {
+            ProjectConvention::AndroidApp => android::curate_failure_output(output),
             ProjectConvention::Gradle => gradle::curate_failure_output(output),
             ProjectConvention::Zola => zola::curate_failure_output(output),
             ProjectConvention::Bun => bun::curate_failure_output(output),
@@ -491,6 +533,7 @@ impl Project {
             ProjectConvention::Bun => bun::doctor_checks(self, runner, files),
             ProjectConvention::SwiftPackageManager => swift::doctor_checks(self, runner, files),
             ProjectConvention::Fastlane => fastlane::doctor_checks(self, runner, files),
+            ProjectConvention::AndroidApp => android::doctor_checks(self, runner, files),
             ProjectConvention::Gradle => gradle::doctor_checks(self, runner, files),
             ProjectConvention::Kustomize => kustomize::doctor_checks(self, runner, files),
             ProjectConvention::Terraform => terraform::doctor_checks(self, runner, files),
@@ -879,6 +922,12 @@ fn matching_projects_at(root: &Utf8Path, files: &impl FileSystem) -> Vec<Project
         .any(|project| project.convention == ProjectConvention::Zola)
     {
         projects.retain(|project| project.convention != ProjectConvention::Bun);
+    }
+    if projects
+        .iter()
+        .any(|project| project.convention == ProjectConvention::AndroidApp)
+    {
+        projects.retain(|project| project.convention != ProjectConvention::Gradle);
     }
 
     projects

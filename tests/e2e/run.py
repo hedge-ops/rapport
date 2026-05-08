@@ -92,7 +92,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run rapport CLI e2e cases")
     parser.add_argument(
         "--convention",
-        choices=("cargo", "bun", "swift", "fastlane", "gradle", "kustomize", "terraform", "zola"),
+        choices=("android", "cargo", "bun", "swift", "fastlane", "gradle", "kustomize", "terraform", "zola"),
         help="run only cases for one project convention",
     )
     parser.add_argument(
@@ -293,7 +293,9 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
 
         env = os.environ.copy()
         context = RunContext(temp_root=temp_root, project=project)
-        if case.convention == "cargo":
+        if case.convention == "android":
+            env, context = configure_android(env, context, case)
+        elif case.convention == "cargo":
             env, context = configure_cargo(env, context, case)
         elif case.convention == "bun":
             env, context = configure_bun(env, context, case)
@@ -511,6 +513,26 @@ def configure_gradle(env: dict[str, str], context: RunContext, case: Case) -> tu
         pass
     else:
         raise ValueError(f"unsupported gradle toolchain mode: {mode}")
+
+    env["PATH"] = str(tool_root)
+    return env, RunContext(
+        temp_root=context.temp_root,
+        project=context.project,
+        toolchain=tool_root,
+    )
+
+
+def configure_android(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
+    mode = case.toolchain or "full"
+    tool_root = context.temp_root / "toolchain"
+    tool_root.mkdir()
+
+    if mode == "full":
+        write_executable(tool_root / "java", java_script())
+    elif mode == "missing_java":
+        pass
+    else:
+        raise ValueError(f"unsupported android toolchain mode: {mode}")
 
     env["PATH"] = str(tool_root)
     return env, RunContext(

@@ -1,0 +1,24 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Android app project: [project]
+Failing phase: build
+## Output
+
+```
+Failing task(s):
+- :app:compileLocalDebugKotlin
+
+Gradle detail(s):
+- Compilation error. See log for details.
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]
