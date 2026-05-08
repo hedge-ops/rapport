@@ -602,12 +602,28 @@ fn render_prime_no_targets(requested_path: &Utf8Path, git_root: &Utf8Path) -> St
 
 fn prime_base_view() -> ViewBuilder {
     ViewBuilder::new()
-        .title("rapport prime - convention guide")
+        .title("rapport prime - agent guide")
         .section("Purpose", |b| {
             b.items([
-                "rapport gives agents one conventional dev-cycle surface across supported targets",
+                "rapport is the token-efficient command surface for conventional dev-cycle work",
+                "call `rapport prime <path>` at task start to learn how to drive rapport for this scope",
                 "standard lifecycle verbs are `fix`, `lint`, `build`, `test`, `validate`, and `audit`",
-                "use `prime` for convention guidance before edits; use `doctor` to check whether detected targets are runnable now",
+            ])
+        })
+        .section("How To Use", |b| {
+            b.items([
+                "`rapport doctor <path>` checks whether detected targets are runnable now without lifecycle work",
+                "`rapport fix <path>` applies safe formatter/autofix conventions where supported",
+                "`rapport validate <path>` is the default post-edit proof: lint, build, and test",
+                "`rapport audit <path>` is the slower pre-release proof",
+                "on failure, fix the reported issue and rerun the same rapport command",
+            ])
+        })
+        .section("Scope", |b| {
+            b.items([
+                "pass the repository, umbrella, project, or child directory you are editing",
+                "rapport discovers supported targets below that path, or walks up to the nearest target when inside one",
+                "run lifecycle commands on the same scope unless you intentionally narrow to one target",
             ])
         })
         .section("Boundary", |b| {
@@ -1356,8 +1372,10 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(err, "");
-        assert!(out.contains("# rapport prime"));
-        assert!(out.contains("use `prime` for convention guidance before edits"));
+        assert!(out.contains("# rapport prime - agent guide"));
+        assert!(out.contains("call `rapport prime <path>` at task start"));
+        assert!(out.contains("`rapport validate <path>` is the default post-edit proof"));
+        assert!(out.contains("pass the repository, umbrella, project, or child directory"));
         assert!(out.contains(&format!("{} - Cargo (`Cargo.toml`)", dir.as_str())));
         assert!(out.contains("convention: ok"));
         assert!(out.contains("expects: requires `Cargo.toml`"));
