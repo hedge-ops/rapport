@@ -1,0 +1,104 @@
+[[case]]
+name = "android_ok_basic_app_fix"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "fix"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_fix.snap"
+
+[[case]]
+name = "android_ok_basic_app_lint"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "lint"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_lint.snap"
+
+[[case]]
+name = "android_ok_basic_app_build"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_build.snap"
+
+[[case]]
+name = "android_ok_basic_app_test"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "test"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_test.snap"
+
+[[case]]
+name = "android_ok_basic_app_validate"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "validate"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_validate.snap"
+
+[[case]]
+name = "android_ok_basic_app_audit"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "audit"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_audit.snap"
+
+[[case]]
+name = "android_ok_basic_app_doctor"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "doctor"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_doctor.snap"
+
+[[case]]
+name = "android_ok_basic_app_prime"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "prime"
+expected_exit = 0
+snapshot = "rapport/android_ok_basic_app_prime.snap"
+
+[[case]]
+name = "android_ok_multi_app_build"
+convention = "android"
+fixture = "ok/multi-app"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/android_ok_multi_app_build.snap"
+
+[[case]]
+name = "android_fail_missing_java_build"
+convention = "android"
+fixture = "ok/basic-app"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/android_fail_missing_java_build.snap"
+toolchain = "missing_java"
+
+[[case]]
+name = "android_fail_lint_failure_lint"
+convention = "android"
+fixture = "fail/lint-failure"
+verb = "lint"
+expected_exit = 1
+snapshot = "rapport/android_fail_lint_failure_lint.snap"
+
+[[case]]
+name = "android_fail_test_failure_test"
+convention = "android"
+fixture = "fail/test-failure"
+verb = "test"
+expected_exit = 1
+snapshot = "rapport/android_fail_test_failure_test.snap"
+
+[[case]]
+name = "android_fail_build_failure_build"
+convention = "android"
+fixture = "fail/build-failure"
+verb = "build"
+expected_exit = 1
+snapshot = "rapport/android_fail_build_failure_build.snap"

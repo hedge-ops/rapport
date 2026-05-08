@@ -1,0 +1,25 @@
+#!/bin/sh
+set -u
+
+if ! command -v java >/dev/null 2>&1; then
+    echo "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH." >&2
+    exit 1
+fi
+
+if [ "${1:-}" != "--no-daemon" ]; then
+    echo "unexpected gradle args: $*" >&2
+    exit 2
+fi
+
+shift
+expected=":app:assembleLocalDebug :wear:assembleDebug"
+actual="$*"
+if [ "$actual" != "$expected" ]; then
+    echo "unexpected android task order: $actual" >&2
+    exit 1
+fi
+
+for task in "$@"; do
+    echo "> Task $task"
+done
+echo "BUILD SUCCESSFUL in 1s"

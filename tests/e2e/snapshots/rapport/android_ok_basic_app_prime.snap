@@ -29,30 +29,24 @@ stdout:
 - task runners own installs, local servers, deploys, migrations, generators, releases, and bespoke workflows
 - Justfiles and similar runners may call rapport when they need the standard lifecycle answer
 
-## Scope
+## Targets
 
-- requested: [project]
-- git root: [project]
-- detected targets: none
+- [project] - Android app (`settings.gradle.kts`)
 
-## Supported Markers
+## Android app Convention
 
-- `Cargo.toml` for Cargo
-- `config.toml` for Zola
-- `package.json` for Bun
-- `Package.swift` for SwiftPM
-- `fastlane/Fastfile` for Fastlane
-- `settings.gradle.kts` for Android app
-- `settings.gradle` for Android app
-- `settings.gradle.kts` for Gradle
-- `settings.gradle` for Gradle
-- `kustomization.yaml` for Kustomize
-- `kustomization.yml` for Kustomize
-- `*.tf` for Terraform
+- target: [project] (`settings.gradle.kts`)
+- convention: ok
+- expects: requires `settings.gradle.kts` or `settings.gradle`, a checked-in `./gradlew`, and at least one app module applying `com.android.application`
+- expects: app modules are deterministic: included/root app modules run once in sorted module path order
+- expects: local dev uses `LocalDebug` when a `local` flavor exists, otherwise `Debug`; audit bundles `ProductionRelease` when a `production` flavor exists, otherwise `Release`
+- expects: fix runs configured ktlint `ktlintFormat`; lint runs configured `ktlintCheck`, configured `detekt`, and Android lint for the local dev variant
+- expects: build assembles the local dev variant; test runs local JVM unit tests for that variant; validate composes lint + build + test; audit adds release bundle confidence
+- expects: code generation and generated resources must be wired into the Gradle task graph for those Android tasks; installs, emulators, signing setup, and bespoke workflows belong in Just or project tooling
 
 ## Next
 
-└ run rapport help prime
+└ run rapport doctor [project]
 stderr:
 ---
 (empty)

@@ -1,0 +1,22 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Android app project: [project]
+Failing phase: build
+## Output
+
+```
+Android Gradle wrapper could not find Java.
+
+Install a JDK and Android SDK, set `ANDROID_HOME` or `sdk.dir` when needed, and use the checked-in `./gradlew` wrapper.
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport lint [project]

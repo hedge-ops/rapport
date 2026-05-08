@@ -18,12 +18,12 @@ experience building [People Work](https://www.people-work.io).
 
 ## Current checkpoint
 
-`rapport` currently discovers Cargo, Zola, Bun, SwiftPM, Fastlane, Gradle,
-Kustomize, and Terraform projects from the path you pass. The path is treated
-as a directory scope: if runnable targets exist under that directory, rapport
-discovers them recursively and runs the standard lifecycle for each target. If
-the path is merely inside a concrete project, rapport preserves the nearest
-parent project behavior.
+`rapport` currently discovers Cargo, Zola, Bun, SwiftPM, Fastlane, Android app,
+Gradle, Kustomize, and Terraform projects from the path you pass. The path is
+treated as a directory scope: if runnable targets exist under that directory,
+rapport discovers them recursively and runs the standard lifecycle for each
+target. If the path is merely inside a concrete project, rapport preserves the
+nearest parent project behavior.
 
 Rapport answers the conventional dev-cycle question: "is everything under this
 scope still good?" It is not a general Just replacement. Justfiles remain the
@@ -174,6 +174,42 @@ Xcode app projects follow the Fastlane convention: keep the `.xcworkspace` or
 `.xcodeproj` alongside `fastlane/Fastfile`, and let the standard lanes wrap the
 project-specific `xcodebuild`, lint, formatting, and release steps.
 
+Android app projects are detected at a Gradle root with `settings.gradle.kts` or
+`settings.gradle`, a checked-in `./gradlew`, and at least one root or included
+module that applies the `com.android.application` plugin. Android app discovery
+runs before generic Gradle discovery so app projects get Android-specific
+variant tasks while non-Android Gradle projects keep the generic Gradle
+convention.
+
+```text
+rapport fix <path>       # :app:ktlintFormat when ktlint is configured; otherwise no-op
+rapport lint <path>      # configured ktlintCheck + configured detekt + Android lint for dev variant
+rapport build <path>     # assemble the dev variant
+rapport test <path>      # JVM unit tests for the dev variant
+rapport validate <path>  # lint + build + test in one Gradle invocation
+rapport audit <path>     # validate + release bundle confidence
+```
+
+The dev variant is `LocalDebug` when an app module declares a `local` product
+flavor; otherwise it is `Debug`. Audit bundles `ProductionRelease` when a
+`production` product flavor exists; otherwise it bundles `Release`. Multiple app
+modules run once each in sorted Gradle module-path order. Android library
+modules are not separate rapport targets unless they are covered by an app
+module's Gradle task graph.
+
+Ktlint and detekt are optional and discovered from app module Gradle plugin
+configuration. If ktlint is configured, `fix` runs `ktlintFormat` and `lint`
+runs `ktlintCheck`; if detekt is configured, `lint` also runs `detekt`. Android
+lint is required for every app module through the selected dev variant task.
+
+Generated source and generated resource prerequisites belong in Gradle: wire
+custom code generation into the Android task graph so `lint<Variant>`,
+`assemble<Variant>`, `test<Variant>UnitTest`, and `bundle<Variant>` have the
+inputs they need. Rapport does not call project-specific Just recipes for
+codegen, installs, emulator management, signing setup, local servers, or deploys;
+those remain in Just or other project tooling and may call rapport for the
+standard lifecycle answer.
+
 Kustomize targets are detected by `kustomization.yaml` or `kustomization.yml`.
 When you pass an umbrella directory without its own marker, rapport recursively
 runs child Kustomize targets beneath it. The initial Kubernetes runner is
@@ -207,12 +243,13 @@ just e2e
 
 Cases live under `tests/e2e/cases`, snapshots live under
 `tests/e2e/snapshots`, and project fixtures live under
-`crates/rapport/tests/fixtures`. SwiftPM, Fastlane, and Kustomize e2e cases use
-generated fake toolchains so the suite does not require Swift, Ruby, Bundler,
-Fastlane, Xcode, kubectl, Kustomize, kubeconform, or a Kubernetes cluster on the
-host. Python tooling for the harness is managed with uv through `pyproject.toml`
-and `uv.lock`. The old `just acceptance` command remains as a compatibility
-alias for `just e2e`; `just tests/cargo/acceptance` runs only the Cargo subset.
+`crates/rapport/tests/fixtures`. Android, SwiftPM, Fastlane, and Kustomize e2e
+cases use generated fake toolchains so the suite does not require the Android
+SDK, Swift, Ruby, Bundler, Fastlane, Xcode, kubectl, Kustomize, kubeconform, or
+a Kubernetes cluster on the host. Python tooling for the harness is managed with
+uv through `pyproject.toml` and `uv.lock`. The old `just acceptance` command
+remains as a compatibility alias for `just e2e`; `just tests/cargo/acceptance`
+runs only the Cargo subset.
 
 ## Testing
 

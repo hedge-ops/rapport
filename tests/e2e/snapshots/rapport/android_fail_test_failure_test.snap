@@ -1,0 +1,21 @@
+exit: 1
+stdout:
+---
+(empty)
+stderr:
+---
+Android app project: [project]
+Failing phase: test
+## Output
+
+```
+Failing test(s):
+- io.rapport.fixture.GreeterTest > saysHello
+```
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport test [project]

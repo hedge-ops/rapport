@@ -1,0 +1,28 @@
+exit: 0
+stdout:
+---
+## Targets
+
+- [project] - Android app (`settings.gradle.kts`)
+
+## Android app Target
+
+- path: [project]
+- marker: `settings.gradle.kts`
+- tool [ok] java; usable on PATH; probe `java -version`; affects fix, lint, build, test, validate, audit
+- config [ok] settings.gradle.kts; present; affects lint, build, test, validate, audit
+- config [ok] ./gradlew; present; affects fix, lint, build, test, validate, audit
+- config [ok] Android app convention; valid; affects fix, lint, build, test, validate, audit
+- config [ok] Android app module(s); :app (dev LocalDebug, release ProductionRelease); affects fix, lint, build, test, validate, audit
+- config [ok] ktlint; configured app modules run `ktlintFormat` for fix and `ktlintCheck` during lint/validate/audit; affects fix, lint, validate, audit
+- config [ok] detekt; configured app modules run `detekt` during lint/validate/audit; affects lint, validate, audit
+
+status: pass
+duration: [duration]
+
+## Next
+
+└ run rapport validate [project]
+stderr:
+---
+(empty)
