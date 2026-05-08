@@ -298,6 +298,15 @@ def configure_cargo(env: dict[str, str], context: RunContext, case: Case) -> tup
             "CARGO_INCREMENTAL": "0",
         }
     )
+    mode = case.toolchain or "host"
+    if mode == "fake":
+        tool_root = context.temp_root / "toolchain"
+        tool_root.mkdir()
+        write_executable(tool_root / "cargo", cargo_script())
+        env["PATH"] = str(tool_root)
+    elif mode != "host":
+        raise ValueError(f"unsupported cargo toolchain mode: {mode}")
+
     if case.path_env == "empty":
         empty_path = context.temp_root / "empty-path"
         empty_path.mkdir()
@@ -488,6 +497,26 @@ def cargo_script() -> str:
 set -u
 
 case "${1:-}" in
+--version)
+    echo "cargo 1.89.0"
+    exit 0
+    ;;
+fmt)
+    if [ "${2:-}" = "--version" ]; then
+        echo "rustfmt 1.8.0"
+        exit 0
+    fi
+    echo "unexpected cargo fmt args: $*" >&2
+    exit 2
+    ;;
+clippy)
+    if [ "${2:-}" = "--version" ]; then
+        echo "clippy 0.1.89"
+        exit 0
+    fi
+    echo "unexpected cargo clippy args: $*" >&2
+    exit 2
+    ;;
 check)
     echo "cargo check passed"
     exit 0
@@ -677,6 +706,11 @@ exit 2
 def bun_script() -> str:
     return """#!/bin/sh
 set -u
+
+if [ "${1:-}" = "--version" ]; then
+    echo "1.2.20"
+    exit 0
+fi
 
 if [ "${1:-}" != "run" ]; then
     echo "unexpected bun args: $*" >&2
@@ -885,7 +919,7 @@ has_validation_issue() {
 }
 
 case "${1:-}" in
-version)
+version|--version)
     echo "Terraform v1.8.5"
     ;;
 fmt)

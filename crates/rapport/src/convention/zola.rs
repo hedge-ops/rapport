@@ -1,4 +1,5 @@
-use super::{LifecycleStep, Phase, Project, bun, lifecycle_step, message_step};
+use super::{DoctorCheck, LifecycleStep, Phase, Project, bun, lifecycle_step, message_step};
+use crate::{CommandRunner, Verb};
 use rapport_cli::{FileSystem, Utf8Path};
 use std::collections::BTreeSet;
 use toml_edit::DocumentMut;
@@ -127,6 +128,156 @@ pub(super) fn should_skip_directory(name: &str) -> bool {
 pub(super) fn curate_failure_output(output: &str) -> String {
     let failure = ZolaFailure::parse(output);
     failure.render()
+}
+
+const NO_FIX_VERBS: [Verb; 5] = [
+    Verb::Lint,
+    Verb::Build,
+    Verb::Test,
+    Verb::Validate,
+    Verb::Audit,
+];
+
+pub(super) fn doctor_checks(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> (Vec<DoctorCheck>, Vec<DoctorCheck>) {
+    let mut tools = vec![super::tool_check(
+        project,
+        runner,
+        "zola",
+        primary_program(),
+        ["--version"],
+        &NO_FIX_VERBS,
+        Some(toolchain_install_hint()),
+    )];
+    let bun_affected = bun_affected_verbs(project, files);
+    if !bun_affected.is_empty() {
+        tools.push(super::tool_check(
+            project,
+            runner,
+            "bun",
+            bun::primary_program(),
+            ["--version"],
+            &bun_affected,
+            Some(bun::toolchain_install_hint()),
+        ));
+    }
+
+    let mut configuration = vec![
+        super::file_check(
+            files,
+            &project.root.join("config.toml"),
+            "config.toml",
+            &NO_FIX_VERBS,
+            "Add a valid Zola `config.toml` at the site root.",
+        ),
+        super::directory_check(
+            files,
+            &project.root.join("content"),
+            "content/",
+            &NO_FIX_VERBS,
+            "Add a `content/` directory at the Zola site root.",
+        ),
+        super::directory_check(
+            files,
+            &project.root.join("templates"),
+            "templates/",
+            &NO_FIX_VERBS,
+            "Add a `templates/` directory at the Zola site root.",
+        ),
+        super::convention_check(
+            validate_manifest(project, files),
+            "Zola site convention",
+            &NO_FIX_VERBS,
+            "Make `config.toml`, `content/`, and `templates/` match the Zola convention.",
+        ),
+    ];
+    if bun::has_package_with_lockfile(&project.root, files) {
+        configuration.extend(bun_script_checks(project, files));
+    }
+    (tools, configuration)
+}
+
+fn bun_affected_verbs(project: &Project, files: &impl FileSystem) -> Vec<Verb> {
+    if !bun::has_package_with_lockfile(&project.root, files) {
+        return Vec::new();
+    }
+
+    let mut affected = Vec::new();
+    push_bun_script_verbs(project, files, &mut affected, &["fix"], &[Verb::Fix]);
+    push_bun_script_verbs(
+        project,
+        files,
+        &mut affected,
+        &["lint", "check"],
+        &[Verb::Lint, Verb::Validate, Verb::Audit],
+    );
+    push_bun_script_verbs(
+        project,
+        files,
+        &mut affected,
+        &["build"],
+        &[Verb::Build, Verb::Validate, Verb::Audit],
+    );
+    push_bun_script_verbs(
+        project,
+        files,
+        &mut affected,
+        &["test"],
+        &[Verb::Test, Verb::Validate, Verb::Audit],
+    );
+    affected
+}
+
+fn push_bun_script_verbs(
+    project: &Project,
+    files: &impl FileSystem,
+    affected: &mut Vec<Verb>,
+    scripts: &[&str],
+    verbs: &[Verb],
+) {
+    if scripts
+        .iter()
+        .any(|script| bun::has_script(&project.root, files, script).unwrap_or(false))
+    {
+        for verb in verbs {
+            if !affected.contains(verb) {
+                affected.push(*verb);
+            }
+        }
+    }
+}
+
+fn bun_script_checks(project: &Project, files: &impl FileSystem) -> Vec<DoctorCheck> {
+    [
+        ("fix", &[Verb::Fix][..]),
+        ("lint", &[Verb::Lint, Verb::Validate, Verb::Audit][..]),
+        ("check", &[Verb::Lint, Verb::Validate, Verb::Audit][..]),
+        ("build", &[Verb::Build, Verb::Validate, Verb::Audit][..]),
+        ("test", &[Verb::Test, Verb::Validate, Verb::Audit][..]),
+    ]
+    .into_iter()
+    .filter_map(
+        |(script, affects)| match bun::has_script(&project.root, files, script) {
+            Ok(true) => Some(DoctorCheck::pass(
+                format!("optional Bun script `{script}`"),
+                "present",
+                affects,
+                None,
+            )),
+            Ok(false) => None,
+            Err(reason) => Some(DoctorCheck::fail(
+                "Bun package.json scripts",
+                reason,
+                affects,
+                None,
+                "Make every `package.json` script value a string command.",
+            )),
+        },
+    )
+    .collect()
 }
 
 fn push_optional_bun_script(

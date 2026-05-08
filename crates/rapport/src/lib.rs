@@ -5,7 +5,8 @@ mod view;
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 
 use convention::{
-    DiscoveryError, LifecycleAction, Phase, Project, ToolResolutionError, describe_expected_markers,
+    DiscoveryError, DoctorCheck, DoctorStatus, DoctorTargetReport, LifecycleAction, Phase, Project,
+    ToolResolutionError, describe_expected_markers,
 };
 use nonempty::{NonEmpty, nonempty};
 use rapport_cli::{
@@ -16,10 +17,9 @@ use std::fmt::Display;
 use std::io::{self, Write};
 use std::process::ExitCode;
 use std::time::Instant;
-use strum::IntoEnumIterator;
 use view::{Outcome, RunHint, ViewBuilder};
 
-const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit> <path>";
+const USAGE: &str = "usage: rapport <fix|lint|build|test|validate|audit|doctor> <path>";
 
 #[derive(
     Debug,
@@ -74,6 +74,51 @@ impl Verb {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliVerb {
+    Lifecycle(Verb),
+    Doctor,
+}
+
+impl CliVerb {
+    fn about(self) -> &'static str {
+        match self {
+            Self::Lifecycle(verb) => verb.about(),
+            Self::Doctor => "Check target readiness without running lifecycle work",
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Lifecycle(Verb::Fix) => "fix",
+            Self::Lifecycle(Verb::Lint) => "lint",
+            Self::Lifecycle(Verb::Build) => "build",
+            Self::Lifecycle(Verb::Test) => "test",
+            Self::Lifecycle(Verb::Validate) => "validate",
+            Self::Lifecycle(Verb::Audit) => "audit",
+            Self::Doctor => "doctor",
+        }
+    }
+
+    fn all() -> [Self; 7] {
+        [
+            Self::Lifecycle(Verb::Fix),
+            Self::Lifecycle(Verb::Lint),
+            Self::Lifecycle(Verb::Build),
+            Self::Lifecycle(Verb::Test),
+            Self::Lifecycle(Verb::Validate),
+            Self::Lifecycle(Verb::Audit),
+            Self::Doctor,
+        ]
+    }
+}
+
+impl Display for CliVerb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug)]
 enum Command {
     Fix { path: RepositoryPath },
@@ -82,18 +127,20 @@ enum Command {
     Test { path: RepositoryPath },
     Validate { path: RepositoryPath },
     Audit { path: RepositoryPath },
+    Doctor { path: RepositoryPath },
 }
 
 impl Command {
     #[must_use]
-    fn verb(&self) -> Verb {
+    fn lifecycle_verb(&self) -> Option<Verb> {
         match self {
-            Self::Fix { .. } => Verb::Fix,
-            Self::Lint { .. } => Verb::Lint,
-            Self::Build { .. } => Verb::Build,
-            Self::Test { .. } => Verb::Test,
-            Self::Validate { .. } => Verb::Validate,
-            Self::Audit { .. } => Verb::Audit,
+            Self::Fix { .. } => Some(Verb::Fix),
+            Self::Lint { .. } => Some(Verb::Lint),
+            Self::Build { .. } => Some(Verb::Build),
+            Self::Test { .. } => Some(Verb::Test),
+            Self::Validate { .. } => Some(Verb::Validate),
+            Self::Audit { .. } => Some(Verb::Audit),
+            Self::Doctor { .. } => None,
         }
     }
 
@@ -105,12 +152,13 @@ impl Command {
             | Self::Build { path }
             | Self::Test { path }
             | Self::Validate { path }
-            | Self::Audit { path } => path,
+            | Self::Audit { path }
+            | Self::Doctor { path } => path,
         }
     }
 
     fn from_argv_with_file_system(
-        verb: Verb,
+        verb: CliVerb,
         rest: &[String],
         fs: &impl FileSystem,
     ) -> Result<Self, ParseError> {
@@ -120,34 +168,42 @@ impl Command {
                 expected: "path",
             });
         };
-        let path: RepositoryPath = parse_validated(verb.as_ref(), p, fs)?;
+        let path: RepositoryPath = parse_validated(verb.as_str(), p, fs)?;
         Ok(match verb {
-            Verb::Fix => Self::Fix { path },
-            Verb::Lint => Self::Lint { path },
-            Verb::Build => Self::Build { path },
-            Verb::Test => Self::Test { path },
-            Verb::Validate => Self::Validate { path },
-            Verb::Audit => Self::Audit { path },
+            CliVerb::Lifecycle(Verb::Fix) => Self::Fix { path },
+            CliVerb::Lifecycle(Verb::Lint) => Self::Lint { path },
+            CliVerb::Lifecycle(Verb::Build) => Self::Build { path },
+            CliVerb::Lifecycle(Verb::Test) => Self::Test { path },
+            CliVerb::Lifecycle(Verb::Validate) => Self::Validate { path },
+            CliVerb::Lifecycle(Verb::Audit) => Self::Audit { path },
+            CliVerb::Doctor => Self::Doctor { path },
         })
     }
 }
 
 impl rapport_cli::Parser for Command {
-    type Verb = Verb;
+    type Verb = CliVerb;
 
-    fn parse_verb(name: &str) -> Result<Verb, ParseError> {
+    fn parse_verb(name: &str) -> Result<CliVerb, ParseError> {
+        if name == "doctor" {
+            return Ok(CliVerb::Doctor);
+        }
         name.parse()
+            .map(CliVerb::Lifecycle)
             .map_err(|_| ParseError::UnknownVerb(name.into()))
     }
 
-    fn from_argv(verb: Verb, rest: &[String]) -> Result<Self, ParseError> {
+    fn from_argv(verb: CliVerb, rest: &[String]) -> Result<Self, ParseError> {
         Self::from_argv_with_file_system(verb, rest, &RealFileSystem)
     }
 }
 
 impl Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.verb().fmt(f)
+        match self.lifecycle_verb() {
+            Some(verb) => verb.fmt(f),
+            None => f.write_str("doctor"),
+        }
     }
 }
 
@@ -215,7 +271,7 @@ fn is_help_flag(s: &str) -> bool {
     s == "-h" || s == "--help"
 }
 
-fn render_help(target: &HelpTarget<Verb>) -> String {
+fn render_help(target: &HelpTarget<CliVerb>) -> String {
     match target {
         HelpTarget::Top => render_help_top(),
         HelpTarget::Verb(v) => render_help_verb(*v),
@@ -228,12 +284,14 @@ fn render_help_top() -> String {
         .section("Usage", |b| {
             b.usage(["rapport <verb> <path>", "rapport help [<verb>]"])
         })
-        .section("Verbs", |b| b.entries(Verb::iter().map(|v| (v, v.about()))))
+        .section("Verbs", |b| {
+            b.entries(CliVerb::all().into_iter().map(|v| (v, v.about())))
+        })
         .next_actions(nonempty![RunHint::new("rapport help build")])
         .build()
 }
 
-fn render_help_verb(verb: Verb) -> String {
+fn render_help_verb(verb: CliVerb) -> String {
     ViewBuilder::new()
         .title(format!("rapport {verb} — {}", verb.about()))
         .section("Usage", |b| b.usage([format!("rapport {verb} <path>")]))
@@ -292,11 +350,8 @@ fn render_discovery_failure(command: &Command, path: &Utf8Path, err: &DiscoveryE
             vb.paragraph(format!("Failed to inspect directory {path}: {err}."))
         }
     };
-    vb.next_actions(nonempty![RunHint::new(format!(
-        "rapport help {}",
-        command.verb()
-    ))])
-    .build()
+    vb.next_actions(nonempty![RunHint::new(format!("rapport help {command}"))])
+        .build()
 }
 
 fn render_convention_failure(command: &Command, project: &Project, reason: &str) -> String {
@@ -402,6 +457,83 @@ fn render_pass(
         .build()
 }
 
+fn render_doctor(
+    started: Instant,
+    reports: &[DoctorTargetReport],
+    requested_path: &Utf8Path,
+) -> String {
+    let failed = reports.iter().any(DoctorTargetReport::has_failures);
+    let mut vb = ViewBuilder::new().section("Targets", |b| {
+        b.items(reports.iter().map(|report| {
+            format!(
+                "{} - {} (`{}`)",
+                report.target.path, report.target.ecosystem, report.target.marker
+            )
+        }))
+    });
+
+    for report in reports {
+        let title = format!("{} Target", report.target.ecosystem);
+        vb = vb.section(&title, |b| {
+            let target_lines = [
+                format!("path: {}", report.target.path),
+                format!("marker: `{}`", report.target.marker),
+            ];
+            let tool_lines = report.tools.iter().map(|check| format_check("tool", check));
+            let config_lines = report
+                .configuration
+                .iter()
+                .map(|check| format_check("config", check));
+            b.items(
+                target_lines
+                    .into_iter()
+                    .chain(tool_lines)
+                    .chain(config_lines),
+            )
+        });
+    }
+
+    let outcome = if failed { Outcome::Fail } else { Outcome::Pass };
+    let hint = if failed {
+        RunHint::new(format!("rapport doctor {requested_path}"))
+    } else {
+        RunHint::new(format!("rapport validate {requested_path}"))
+    };
+    vb.status(outcome, started.elapsed())
+        .next_actions(nonempty![hint])
+        .build()
+}
+
+fn format_check(kind: &str, check: &DoctorCheck) -> String {
+    let status = match check.status {
+        DoctorStatus::Pass => "ok",
+        DoctorStatus::Warn => "warn",
+        DoctorStatus::Fail => "missing",
+    };
+    let mut parts = vec![
+        format!("{kind} [{status}] {}", check.name),
+        check.detail.clone(),
+    ];
+    if let Some(probe) = &check.probe {
+        parts.push(format!("probe `{probe}`"));
+    }
+    if !check.affects.is_empty() {
+        parts.push(format!("affects {}", format_verbs(&check.affects)));
+    }
+    if let Some(remediation) = &check.remediation {
+        parts.push(remediation.clone());
+    }
+    parts.join("; ")
+}
+
+fn format_verbs(verbs: &[Verb]) -> String {
+    verbs
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn render_step_failure(
     project: &Project,
     phase: Phase,
@@ -491,6 +623,13 @@ where
     O: Write,
     E: Write,
 {
+    if matches!(command, Command::Doctor { .. }) {
+        return run_doctor(command, runner, fs, out, err);
+    }
+
+    let Some(verb) = command.lifecycle_verb() else {
+        return run_doctor(command, runner, fs, out, err);
+    };
     let requested_path = command.path().as_path();
     let projects = match Project::discover_all(requested_path, fs) {
         Ok(projects) => projects,
@@ -516,7 +655,7 @@ where
             return ExitCode::from(2);
         }
 
-        let steps = match project.lifecycle_steps(command.verb(), runner, fs) {
+        let steps = match project.lifecycle_steps(verb, runner, fs) {
             Ok(steps) => steps,
             Err(tool_err) => {
                 let _ = writeln!(
@@ -543,7 +682,7 @@ where
                         }
                     };
                     if !outcome.success {
-                        let hints = command.verb().hints(Outcome::Fail, &project.root);
+                        let hints = verb.hints(Outcome::Fail, &project.root);
                         let show_project_context = projects.len() > 1;
                         let _ = writeln!(
                             err,
@@ -571,9 +710,47 @@ where
     } else {
         requested_path
     };
-    let hints = command.verb().hints(Outcome::Pass, hint_path);
+    let hints = verb.hints(Outcome::Pass, hint_path);
     let _ = writeln!(out, "{}", render_pass(started, &projects, &messages, hints));
     ExitCode::SUCCESS
+}
+
+fn run_doctor<O, E>(
+    command: &Command,
+    runner: &dyn CommandRunner,
+    fs: &impl FileSystem,
+    out: &mut O,
+    err: &mut E,
+) -> ExitCode
+where
+    O: Write,
+    E: Write,
+{
+    let requested_path = command.path().as_path();
+    let projects = match Project::discover_all(requested_path, fs) {
+        Ok(projects) => projects,
+        Err(discovery_err) => {
+            let _ = writeln!(
+                err,
+                "{}",
+                render_discovery_failure(command, requested_path, &discovery_err)
+            );
+            return ExitCode::from(2);
+        }
+    };
+
+    let started = Instant::now();
+    let reports = projects
+        .iter()
+        .map(|project| project.doctor_report(runner, fs))
+        .collect::<Vec<_>>();
+    let failed = reports.iter().any(DoctorTargetReport::has_failures);
+    let _ = writeln!(out, "{}", render_doctor(started, &reports, requested_path));
+    if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 #[cfg(test)]
@@ -853,6 +1030,128 @@ mod tests {
                 args: vec!["check".into()],
                 cwd: dir.path.clone(),
             }]
+        );
+    }
+
+    #[test]
+    fn doctor_checks_cargo_readiness_without_running_lifecycle_work() {
+        let dir = TestDir::cargo_project();
+        let runner = FakeRunner::all_pass(3);
+
+        let (code, out, err) = run_with(&["doctor", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("## Targets"));
+        assert!(out.contains("Cargo (`Cargo.toml`)"));
+        assert!(out.contains("tool [ok] cargo; usable on PATH; probe `cargo --version`"));
+        assert!(out.contains("tool [ok] cargo fmt; usable on PATH; probe `cargo fmt --version`"));
+        assert!(out.contains("config [ok] Cargo.toml; present"));
+        assert!(out.contains("status: pass"));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["fmt".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["clippy".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn doctor_fails_when_required_bun_script_is_missing() {
+        let dir = TestDir::bun_project();
+        dir.write(
+            "package.json",
+            r#"{
+  "name": "sample",
+  "scripts": {
+    "test": "bun test",
+    "lint": "biome check .",
+    "fix": "biome check --write .",
+    "audit": "bun audit"
+  }
+}
+"#,
+        );
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["doctor", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::from(1));
+        assert_eq!(err, "");
+        assert!(out.contains("config [missing] package.json script `build`; missing"));
+        assert!(out.contains("affects build, validate"));
+        assert!(out.contains("status: FAIL"));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "bun".into(),
+                args: vec!["--version".into()],
+                cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn doctor_uses_same_mixed_scope_discovery_as_lifecycle_commands() {
+        let dir = TestDir::new();
+        dir.write_cargo_package("apps/api", "api");
+        dir.write(
+            "infra/main.tf",
+            "resource \"null_resource\" \"example\" {}\n",
+        );
+        let runner = FakeRunner::all_pass(5);
+
+        let (code, out, err) = run_with(&["doctor", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("Cargo (`Cargo.toml`)"));
+        assert!(out.contains("Terraform (`*.tf`)"));
+        assert!(out.contains("config [ok] Terraform `*.tf` files; present"));
+        assert!(out.contains("status: pass"));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.join("apps/api"),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["fmt".into(), "--version".into()],
+                    cwd: dir.path.join("apps/api"),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["clippy".into(), "--version".into()],
+                    cwd: dir.path.join("apps/api"),
+                },
+                RecordedCommand {
+                    program: "terraform".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.join("infra"),
+                },
+                RecordedCommand {
+                    program: "tflint".into(),
+                    args: vec!["--version".into()],
+                    cwd: dir.path.join("infra"),
+                },
+            ]
         );
     }
 

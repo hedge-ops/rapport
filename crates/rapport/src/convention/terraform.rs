@@ -1,5 +1,8 @@
-use super::{LifecycleStep, Project, ToolResolutionError, declarative::ConventionDefinition};
-use crate::{CommandRunner, CommandSpec};
+use super::{
+    DoctorCheck, DoctorStatus, LifecycleStep, Project, ToolResolutionError,
+    declarative::ConventionDefinition,
+};
+use crate::{CommandRunner, CommandSpec, Verb};
 use rapport_cli::{FileSystem, Utf8Path};
 use std::io;
 use std::sync::LazyLock;
@@ -85,6 +88,102 @@ pub(super) fn test() -> Vec<LifecycleStep> {
 
 pub(super) fn audit() -> Vec<LifecycleStep> {
     definition().steps(crate::Verb::Audit)
+}
+
+const TERRAFORM_VERBS: [Verb; 5] = [
+    Verb::Fix,
+    Verb::Lint,
+    Verb::Build,
+    Verb::Validate,
+    Verb::Audit,
+];
+
+pub(super) fn doctor_checks(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> (Vec<DoctorCheck>, Vec<DoctorCheck>) {
+    let tools = vec![
+        super::tool_check(
+            project,
+            runner,
+            "terraform",
+            primary_program(),
+            ["--version"],
+            &TERRAFORM_VERBS,
+            Some(toolchain_install_hint()),
+        ),
+        tflint_check(project, runner, files),
+    ];
+    let configuration = vec![
+        terraform_files_check(project, files),
+        super::convention_check(
+            validate_manifest(project, files),
+            "Terraform convention",
+            &TERRAFORM_VERBS,
+            "Add at least one `*.tf` file at the Terraform target root.",
+        ),
+    ];
+    (tools, configuration)
+}
+
+fn tflint_check(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> DoctorCheck {
+    let affects = &[Verb::Lint, Verb::Validate, Verb::Audit];
+    let required = files.is_file(project.root.join(".tflint.hcl"));
+    let check = super::tool_check(
+        project,
+        runner,
+        "tflint",
+        TFLINT,
+        ["--version"],
+        affects,
+        Some(tflint_install_hint()),
+    );
+
+    if required || check.status == DoctorStatus::Pass {
+        return check;
+    }
+
+    DoctorCheck::warn(
+        "tflint",
+        "not configured and not found; Terraform lint will skip TFLint",
+        affects,
+        check.probe,
+        "Add `.tflint.hcl` and install TFLint when Terraform linting should include TFLint.",
+    )
+}
+
+fn terraform_files_check(project: &Project, files: &impl FileSystem) -> DoctorCheck {
+    match files.read_dir(&project.root) {
+        Ok(entries) => {
+            let found = entries.into_iter().any(|entry| {
+                files.is_file(&entry)
+                    && entry.extension().is_some_and(|extension| extension == "tf")
+            });
+            if found {
+                DoctorCheck::pass("Terraform `*.tf` files", "present", &TERRAFORM_VERBS, None)
+            } else {
+                DoctorCheck::fail(
+                    "Terraform `*.tf` files",
+                    "missing",
+                    &TERRAFORM_VERBS,
+                    None,
+                    "Add at least one `*.tf` file at the Terraform target root.",
+                )
+            }
+        }
+        Err(err) => DoctorCheck::fail(
+            "Terraform `*.tf` files",
+            format!("failed to inspect target: {err}"),
+            &TERRAFORM_VERBS,
+            None,
+            "Make the Terraform target directory readable.",
+        ),
+    }
 }
 
 pub(super) fn is_generated_or_cache_path(path: &Utf8Path) -> bool {

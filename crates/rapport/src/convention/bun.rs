@@ -1,5 +1,5 @@
-use super::{LifecycleStep, Phase, Project};
-use crate::Verb;
+use super::{DoctorCheck, LifecycleStep, Phase, Project};
+use crate::{CommandRunner, Verb};
 use rapport_cli::{FileSystem, Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -128,6 +128,88 @@ pub(super) fn should_skip_directory(name: &str) -> bool {
 pub(super) fn curate_failure_output(output: &str) -> String {
     let failure = BunFailure::parse(output);
     failure.render()
+}
+
+pub(super) fn doctor_checks(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> (Vec<DoctorCheck>, Vec<DoctorCheck>) {
+    let tools = vec![super::tool_check(
+        project,
+        runner,
+        "bun",
+        primary_program(),
+        ["--version"],
+        &super::ALL_VERBS,
+        Some(toolchain_install_hint()),
+    )];
+    let configuration = vec![
+        super::file_check(
+            files,
+            &project.root.join("package.json"),
+            "package.json",
+            &super::ALL_VERBS,
+            "Add a `package.json` at the Bun package root.",
+        ),
+        lockfile_check(project, files),
+        script_check(project, files, "fix", &[Verb::Fix]),
+        script_check(project, files, "lint", &[Verb::Lint, Verb::Validate]),
+        script_check(project, files, "build", &[Verb::Build, Verb::Validate]),
+        script_check(project, files, "test", &[Verb::Test, Verb::Validate]),
+        script_check(project, files, "audit", &[Verb::Audit]),
+        super::convention_check(
+            validate_manifest(project, files),
+            "Bun package convention",
+            &super::ALL_VERBS,
+            "Make `package.json` scripts strings and add `bun.lock` or `bun.lockb` at the package or workspace root.",
+        ),
+    ];
+    (tools, configuration)
+}
+
+fn lockfile_check(project: &Project, files: &impl FileSystem) -> DoctorCheck {
+    if find_lockfile_root(&project.root, files).is_some() {
+        DoctorCheck::pass("bun.lock or bun.lockb", "present", &super::ALL_VERBS, None)
+    } else {
+        DoctorCheck::fail(
+            "bun.lock or bun.lockb",
+            "missing",
+            &super::ALL_VERBS,
+            None,
+            "Run `bun install` and commit `bun.lock`, or keep `bun.lockb` at the package or workspace root.",
+        )
+    }
+}
+
+fn script_check(
+    project: &Project,
+    files: &impl FileSystem,
+    script: &str,
+    affects: &[Verb],
+) -> DoctorCheck {
+    match has_script(&project.root, files, script) {
+        Ok(true) => DoctorCheck::pass(
+            format!("package.json script `{script}`"),
+            "present",
+            affects,
+            None,
+        ),
+        Ok(false) => DoctorCheck::fail(
+            format!("package.json script `{script}`"),
+            "missing",
+            affects,
+            None,
+            format!("Add a string `scripts.{script}` command to `package.json`."),
+        ),
+        Err(reason) => DoctorCheck::fail(
+            "package.json scripts",
+            reason,
+            affects,
+            None,
+            "Make every `package.json` script value a string command.",
+        ),
+    }
 }
 
 fn script_steps(

@@ -108,3 +108,12 @@ verb = "build"
 expected_exit = 0
 snapshot = "rapport/terraform_ok_mixed_scope_build.snap"
 toolchain = "full_with_cargo"
+
+[[case]]
+name = "terraform_ok_mixed_scope_doctor"
+convention = "terraform"
+fixture = "ok/mixed-scope"
+verb = "doctor"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_mixed_scope_doctor.snap"
+toolchain = "full_with_cargo"

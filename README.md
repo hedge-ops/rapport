@@ -31,7 +31,15 @@ right place for installs, operations, deploys, local servers, dependency
 updates, and bespoke workflows; those workflows can call rapport when they need
 the standard lifecycle answer.
 
+`rapport doctor <path>` is the preflight and troubleshooting command for that
+same target set. It resolves the targets under the requested path, then reports
+which tools, probes, marker files, scripts, lanes, and conventions are ready for
+rapport to run. Doctor uses lightweight version/probe commands and configuration
+inspection only; it does not run lifecycle work such as build, test, lint, fix,
+validate, or audit.
+
 ```text
+rapport doctor <path>    # check readiness without running lifecycle work
 rapport fix <path>       # cargo fmt
 rapport lint <path>      # cargo fmt -- --check; cargo clippy --all-targets -- -D warnings
 rapport build <path>     # cargo check
