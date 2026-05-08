@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -122,20 +123,28 @@ def main() -> int:
     failures: list[str] = []
 
     print("\n=== e2e ===", flush=True)
+    suite_started = time.perf_counter()
     for case in cases:
+        case_started = time.perf_counter()
         failure = run_case(case, rapport_bin, update=args.update)
+        case_duration = format_duration(time.perf_counter() - case_started)
         if failure is None:
-            print(f"ok   {case.name}")
+            print(f"ok   {case.name} ({case_duration})")
         else:
-            print(f"FAIL {case.name}")
+            print(f"FAIL {case.name} ({case_duration})")
             failures.append(failure)
+    suite_duration = format_duration(time.perf_counter() - suite_started)
 
     print("\n=== summary ===")
-    print(f"{len(cases)} case(s), {len(failures)} failure(s)")
+    print(f"{len(cases)} case(s), {len(failures)} failure(s), {suite_duration} total")
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
     return 0
+
+
+def format_duration(seconds: float) -> str:
+    return f"{seconds:.2f}s"
 
 
 def load_cases() -> list[Case]:
