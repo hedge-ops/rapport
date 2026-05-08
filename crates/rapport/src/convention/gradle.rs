@@ -1,5 +1,5 @@
-use super::{LifecycleStep, Project, declarative::ConventionDefinition};
-use crate::Verb;
+use super::{DoctorCheck, LifecycleStep, Project, declarative::ConventionDefinition};
+use crate::{CommandRunner, Verb};
 use rapport_cli::FileSystem;
 use std::sync::LazyLock;
 
@@ -69,6 +69,53 @@ pub(super) fn validate() -> Vec<LifecycleStep> {
 
 pub(super) fn audit() -> Vec<LifecycleStep> {
     gradle_steps(Verb::Audit)
+}
+
+const NO_FIX_VERBS: [Verb; 5] = [
+    Verb::Lint,
+    Verb::Build,
+    Verb::Test,
+    Verb::Validate,
+    Verb::Audit,
+];
+
+pub(super) fn doctor_checks(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> (Vec<DoctorCheck>, Vec<DoctorCheck>) {
+    let tools = vec![super::tool_check(
+        project,
+        runner,
+        "java",
+        "java",
+        ["-version"],
+        &NO_FIX_VERBS,
+        Some(toolchain_install_hint()),
+    )];
+    let configuration = vec![
+        super::file_check(
+            files,
+            &project.manifest_path(),
+            project.marker(),
+            &NO_FIX_VERBS,
+            "Add a Gradle settings file at the project root.",
+        ),
+        super::file_check(
+            files,
+            &project.root.join("gradlew"),
+            "./gradlew",
+            &NO_FIX_VERBS,
+            "Run `gradle wrapper` from the project root and commit the wrapper script.",
+        ),
+        super::convention_check(
+            validate_manifest(project, files),
+            "Gradle wrapper convention",
+            &NO_FIX_VERBS,
+            "Keep a checked-in Gradle wrapper and settings file at the project root.",
+        ),
+    ];
+    (tools, configuration)
 }
 
 pub(crate) fn curate_failure_output(output: &str) -> String {

@@ -1,0 +1,30 @@
+exit: 1
+stdout:
+---
+## Targets
+
+- [project] - Bun (`package.json`)
+
+## Bun Target
+
+- path: [project]
+- marker: `package.json`
+- tool [ok] bun; usable on PATH; probe `bun --version`; affects fix, lint, build, test, validate, audit
+- config [ok] package.json; present; affects fix, lint, build, test, validate, audit
+- config [ok] bun.lock or bun.lockb; present; affects fix, lint, build, test, validate, audit
+- config [missing] package.json script `fix`; missing; affects fix; Add a string `scripts.fix` command to `package.json`.
+- config [missing] package.json script `lint`; missing; affects lint, validate; Add a string `scripts.lint` command to `package.json`.
+- config [missing] package.json script `build`; missing; affects build, validate; Add a string `scripts.build` command to `package.json`.
+- config [ok] package.json script `test`; present; affects test, validate
+- config [missing] package.json script `audit`; missing; affects audit; Add a string `scripts.audit` command to `package.json`.
+- config [ok] Bun package convention; valid; affects fix, lint, build, test, validate, audit
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport doctor [project]
+stderr:
+---
+(empty)

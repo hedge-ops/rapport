@@ -315,6 +315,10 @@ impl Project {
         self.marker
     }
 
+    pub(crate) fn ecosystem(&self) -> &'static str {
+        self.convention.name()
+    }
+
     pub(crate) fn manifest_path(&self) -> Utf8PathBuf {
         self.root.join(self.marker())
     }
@@ -405,6 +409,268 @@ impl Project {
             _ => output.to_owned(),
         }
     }
+
+    pub(crate) fn doctor_report(
+        &self,
+        runner: &dyn CommandRunner,
+        files: &impl FileSystem,
+    ) -> DoctorTargetReport {
+        let (tools, configuration) = match self.convention {
+            ProjectConvention::Cargo => cargo::doctor_checks(self, runner, files),
+            ProjectConvention::Zola => zola::doctor_checks(self, runner, files),
+            ProjectConvention::Bun => bun::doctor_checks(self, runner, files),
+            ProjectConvention::SwiftPackageManager => swift::doctor_checks(self, runner, files),
+            ProjectConvention::Fastlane => fastlane::doctor_checks(self, runner, files),
+            ProjectConvention::Gradle => gradle::doctor_checks(self, runner, files),
+            ProjectConvention::Kustomize => kustomize::doctor_checks(self, runner, files),
+            ProjectConvention::Terraform => terraform::doctor_checks(self, runner, files),
+        };
+
+        DoctorTargetReport {
+            target: DoctorTarget {
+                path: self.root.clone(),
+                ecosystem: self.ecosystem(),
+                marker: self.marker(),
+            },
+            tools,
+            configuration,
+        }
+    }
+}
+
+pub(super) const ALL_VERBS: [Verb; 6] = [
+    Verb::Fix,
+    Verb::Lint,
+    Verb::Build,
+    Verb::Test,
+    Verb::Validate,
+    Verb::Audit,
+];
+
+#[derive(Debug, Clone)]
+pub(crate) struct DoctorTargetReport {
+    pub(crate) target: DoctorTarget,
+    pub(crate) tools: Vec<DoctorCheck>,
+    pub(crate) configuration: Vec<DoctorCheck>,
+}
+
+impl DoctorTargetReport {
+    pub(crate) fn has_failures(&self) -> bool {
+        self.tools
+            .iter()
+            .chain(&self.configuration)
+            .any(DoctorCheck::is_failure)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DoctorTarget {
+    pub(crate) path: Utf8PathBuf,
+    pub(crate) ecosystem: &'static str,
+    pub(crate) marker: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DoctorStatus {
+    Pass,
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DoctorCheck {
+    pub(crate) status: DoctorStatus,
+    pub(crate) name: String,
+    pub(crate) detail: String,
+    pub(crate) probe: Option<String>,
+    pub(crate) affects: Vec<Verb>,
+    pub(crate) remediation: Option<String>,
+}
+
+impl DoctorCheck {
+    pub(super) fn pass(
+        name: impl Into<String>,
+        detail: impl Into<String>,
+        affects: &[Verb],
+        probe: Option<String>,
+    ) -> Self {
+        Self {
+            status: DoctorStatus::Pass,
+            name: name.into(),
+            detail: detail.into(),
+            probe,
+            affects: affects.to_vec(),
+            remediation: None,
+        }
+    }
+
+    pub(super) fn warn(
+        name: impl Into<String>,
+        detail: impl Into<String>,
+        affects: &[Verb],
+        probe: Option<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
+        Self {
+            status: DoctorStatus::Warn,
+            name: name.into(),
+            detail: detail.into(),
+            probe,
+            affects: affects.to_vec(),
+            remediation: Some(remediation.into()),
+        }
+    }
+
+    pub(super) fn fail(
+        name: impl Into<String>,
+        detail: impl Into<String>,
+        affects: &[Verb],
+        probe: Option<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
+        Self {
+            status: DoctorStatus::Fail,
+            name: name.into(),
+            detail: detail.into(),
+            probe,
+            affects: affects.to_vec(),
+            remediation: Some(remediation.into()),
+        }
+    }
+
+    fn is_failure(&self) -> bool {
+        self.status == DoctorStatus::Fail
+    }
+}
+
+fn tool_check<const N: usize>(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    name: &str,
+    program: &'static str,
+    args: [&'static str; N],
+    affects: &[Verb],
+    remediation: Option<&'static str>,
+) -> DoctorCheck {
+    let spec = CommandSpec::new(program, args);
+    let probe = format_command(&spec);
+    match runner.run(&spec, &project.root) {
+        Ok(outcome) if outcome.success => {
+            DoctorCheck::pass(name, "usable on PATH", affects, Some(probe))
+        }
+        Ok(_) => DoctorCheck::fail(
+            name,
+            "probe exited unsuccessfully",
+            affects,
+            Some(probe),
+            remediation.unwrap_or("Install the tool and make sure it is usable on PATH."),
+        ),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => DoctorCheck::fail(
+            name,
+            "not found on PATH",
+            affects,
+            Some(probe),
+            remediation.unwrap_or("Install the tool and make sure it is on PATH."),
+        ),
+        Err(err) => DoctorCheck::fail(
+            name,
+            format!("failed to invoke probe: {err}"),
+            affects,
+            Some(probe),
+            remediation.unwrap_or("Make sure the tool can be invoked from PATH."),
+        ),
+    }
+}
+
+fn alternative_tool_check(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    name: &str,
+    alternatives: &[(&'static str, &'static [&'static str], &'static str)],
+    affects: &[Verb],
+    remediation: &'static str,
+) -> DoctorCheck {
+    let mut probes = Vec::new();
+    for (program, args, success_name) in alternatives {
+        let spec = CommandSpec::new(*program, args.iter().copied());
+        let probe = format_command(&spec);
+        probes.push(probe.clone());
+        match runner.run(&spec, &project.root) {
+            Ok(outcome) if outcome.success => {
+                return DoctorCheck::pass(
+                    name,
+                    format!("{success_name} is usable"),
+                    affects,
+                    Some(probe),
+                );
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return DoctorCheck::fail(
+                    name,
+                    format!("failed to invoke probe: {err}"),
+                    affects,
+                    Some(probe),
+                    remediation,
+                );
+            }
+        }
+    }
+    DoctorCheck::fail(
+        name,
+        "no supported alternative was usable",
+        affects,
+        Some(probes.join(" or ")),
+        remediation,
+    )
+}
+
+fn file_check(
+    files: &impl FileSystem,
+    path: &Utf8Path,
+    name: &str,
+    affects: &[Verb],
+    remediation: &'static str,
+) -> DoctorCheck {
+    if files.is_file(path) {
+        DoctorCheck::pass(name, "present", affects, None)
+    } else {
+        DoctorCheck::fail(name, "missing", affects, None, remediation)
+    }
+}
+
+fn directory_check(
+    files: &impl FileSystem,
+    path: &Utf8Path,
+    name: &str,
+    affects: &[Verb],
+    remediation: &'static str,
+) -> DoctorCheck {
+    if files.is_dir(path) {
+        DoctorCheck::pass(name, "present", affects, None)
+    } else {
+        DoctorCheck::fail(name, "missing", affects, None, remediation)
+    }
+}
+
+fn convention_check(
+    result: Result<(), String>,
+    name: &str,
+    affects: &[Verb],
+    remediation: &'static str,
+) -> DoctorCheck {
+    match result {
+        Ok(()) => DoctorCheck::pass(name, "valid", affects, None),
+        Err(reason) => DoctorCheck::fail(name, reason, affects, None, remediation),
+    }
+}
+
+fn format_command(spec: &CommandSpec) -> String {
+    std::iter::once(spec.program.as_str())
+        .chain(spec.args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug)]

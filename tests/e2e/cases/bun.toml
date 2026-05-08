@@ -47,6 +47,14 @@ expected_exit = 0
 snapshot = "rapport/bun_ok_basic_package_audit.snap"
 
 [[case]]
+name = "bun_fail_missing_script_doctor"
+convention = "bun"
+fixture = "fail/missing-script-no-children"
+verb = "doctor"
+expected_exit = 1
+snapshot = "rapport/bun_fail_missing_script_doctor.snap"
+
+[[case]]
 name = "bun_ok_workspace_root_with_scripts_build"
 convention = "bun"
 fixture = "ok/workspace-root-with-scripts"

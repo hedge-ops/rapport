@@ -1,0 +1,25 @@
+exit: 1
+stdout:
+---
+## Targets
+
+- [project] - Cargo (`Cargo.toml`)
+
+## Cargo Target
+
+- path: [project]
+- marker: `Cargo.toml`
+- tool [missing] cargo; not found on PATH; probe `cargo --version`; affects fix, lint, build, test, validate, audit; Install Rust from https://www.rust-lang.org/tools/install and make sure `cargo` is on PATH.
+- tool [missing] cargo fmt; not found on PATH; probe `cargo fmt --version`; affects fix, lint, validate, audit; Install rustfmt with your Rust toolchain, for example `rustup component add rustfmt`.
+- tool [missing] cargo clippy; not found on PATH; probe `cargo clippy --version`; affects lint, validate, audit; Install Clippy with your Rust toolchain, for example `rustup component add clippy`.
+- config [ok] Cargo.toml; present; affects fix, lint, build, test, validate, audit
+
+status: FAIL
+duration: [duration]
+
+## Next
+
+└ run rapport doctor [project]
+stderr:
+---
+(empty)

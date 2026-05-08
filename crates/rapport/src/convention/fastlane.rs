@@ -1,4 +1,5 @@
-use super::{LifecycleStep, Phase, Project, lifecycle_step};
+use super::{DoctorCheck, LifecycleStep, Phase, Project, lifecycle_step};
+use crate::{CommandRunner, Verb};
 use rapport_cli::FileSystem;
 use std::collections::BTreeSet;
 
@@ -72,6 +73,76 @@ pub(super) fn validate() -> Vec<LifecycleStep> {
 
 pub(super) fn audit() -> Vec<LifecycleStep> {
     vec![fastlane_step(Phase::Audit, "audit")]
+}
+
+pub(super) fn doctor_checks(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> (Vec<DoctorCheck>, Vec<DoctorCheck>) {
+    let tools = vec![super::tool_check(
+        project,
+        runner,
+        "bundle",
+        primary_program(),
+        ["--version"],
+        &super::ALL_VERBS,
+        Some(toolchain_install_hint()),
+    )];
+    let mut configuration = vec![
+        super::file_check(
+            files,
+            &project.root.join("Gemfile"),
+            "Gemfile",
+            &super::ALL_VERBS,
+            "Add a `Gemfile` pinning Fastlane.",
+        ),
+        super::file_check(
+            files,
+            &project.root.join("fastlane/Fastfile"),
+            "fastlane/Fastfile",
+            &super::ALL_VERBS,
+            "Add `fastlane/Fastfile` with the standard rapport lanes.",
+        ),
+    ];
+    configuration.extend(lane_checks(project, files));
+    configuration.push(super::convention_check(
+        validate_manifest(project, files),
+        "Fastlane convention",
+        &super::ALL_VERBS,
+        "Add `Gemfile` and standard `fix`, `lint`, `build`, `test`, `validate`, and `audit` lanes.",
+    ));
+    (tools, configuration)
+}
+
+fn lane_checks(project: &Project, files: &impl FileSystem) -> Vec<DoctorCheck> {
+    let contents = files
+        .read_to_string(project.root.join("fastlane/Fastfile"))
+        .unwrap_or_default();
+    let lanes = parse_lane_names(&contents);
+    [
+        ("fix", Verb::Fix),
+        ("lint", Verb::Lint),
+        ("build", Verb::Build),
+        ("test", Verb::Test),
+        ("validate", Verb::Validate),
+        ("audit", Verb::Audit),
+    ]
+    .into_iter()
+    .map(|(lane, verb)| {
+        if lanes.contains(lane) {
+            DoctorCheck::pass(format!("fastlane lane `{lane}`"), "present", &[verb], None)
+        } else {
+            DoctorCheck::fail(
+                format!("fastlane lane `{lane}`"),
+                "missing",
+                &[verb],
+                None,
+                format!("Add `lane :{lane}` to `fastlane/Fastfile`."),
+            )
+        }
+    })
+    .collect()
 }
 
 fn fastlane_step(phase: Phase, lane: &'static str) -> LifecycleStep {

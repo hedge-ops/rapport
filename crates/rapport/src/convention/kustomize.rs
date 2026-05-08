@@ -1,5 +1,7 @@
-use super::{LifecycleStep, Phase, Project, ToolResolutionError, lifecycle_step, message_step};
-use crate::{CommandRunner, CommandSpec};
+use super::{
+    DoctorCheck, LifecycleStep, Phase, Project, ToolResolutionError, lifecycle_step, message_step,
+};
+use crate::{CommandRunner, CommandSpec, Verb};
 use rapport_cli::FileSystem;
 use std::io;
 
@@ -66,6 +68,60 @@ pub(super) fn test() -> Vec<LifecycleStep> {
 
 pub(super) fn audit() -> Vec<LifecycleStep> {
     Vec::new()
+}
+
+const LINT_VALIDATE_AUDIT: [Verb; 3] = [Verb::Lint, Verb::Validate, Verb::Audit];
+const KUSTOMIZE_VERBS: [Verb; 4] = [Verb::Lint, Verb::Build, Verb::Validate, Verb::Audit];
+
+pub(super) fn doctor_checks(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> (Vec<DoctorCheck>, Vec<DoctorCheck>) {
+    let tools = vec![
+        renderer_check(project, runner),
+        super::tool_check(
+            project,
+            runner,
+            "kubeconform",
+            KUBECONFORM,
+            ["-v"],
+            &LINT_VALIDATE_AUDIT,
+            Some(
+                "Install kubeconform from https://github.com/yannh/kubeconform and make sure `kubeconform` is on PATH.",
+            ),
+        ),
+    ];
+    let configuration = vec![
+        super::file_check(
+            files,
+            &project.manifest_path(),
+            project.marker(),
+            &KUSTOMIZE_VERBS,
+            "Add a readable `kustomization.yaml` or `kustomization.yml` file.",
+        ),
+        super::convention_check(
+            validate_manifest(project, files),
+            "Kustomize manifest",
+            &KUSTOMIZE_VERBS,
+            "Make the Kustomize manifest readable from the target root.",
+        ),
+    ];
+    (tools, configuration)
+}
+
+fn renderer_check(project: &Project, runner: &dyn CommandRunner) -> DoctorCheck {
+    super::alternative_tool_check(
+        project,
+        runner,
+        "Kustomize renderer",
+        &[
+            (KUSTOMIZE, &["version"], "kustomize"),
+            (KUBECTL, &["version", "--client"], "kubectl kustomize"),
+        ],
+        &KUSTOMIZE_VERBS,
+        renderer_install_hint(),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

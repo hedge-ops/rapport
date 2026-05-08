@@ -47,6 +47,24 @@ expected_exit = 0
 snapshot = "rapport/cargo_ok_basic_crate_audit.snap"
 
 [[case]]
+name = "cargo_ok_basic_crate_doctor"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "doctor"
+toolchain = "fake"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_doctor.snap"
+
+[[case]]
+name = "cargo_fail_missing_tool_doctor"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "doctor"
+path_env = "empty"
+expected_exit = 1
+snapshot = "rapport/cargo_fail_missing_tool_doctor.snap"
+
+[[case]]
 name = "cargo_ok_workspace_build"
 convention = "cargo"
 fixture = "ok/workspace"
@@ -77,6 +95,15 @@ fixture = "ok/umbrella-two-workspaces"
 verb = "build"
 expected_exit = 0
 snapshot = "rapport/cargo_ok_umbrella_two_workspaces_build.snap"
+
+[[case]]
+name = "cargo_ok_umbrella_two_workspaces_doctor"
+convention = "cargo"
+fixture = "ok/umbrella-two-workspaces"
+verb = "doctor"
+toolchain = "fake"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_umbrella_two_workspaces_doctor.snap"
 
 [[case]]
 name = "cargo_ok_workspace_scope_no_member_duplication_build"

@@ -1,5 +1,8 @@
-use super::{LifecycleAction, LifecycleStep, Phase, Project, ToolResolutionError, lifecycle_step};
-use crate::{CommandRunner, CommandSpec};
+use super::{
+    DoctorCheck, LifecycleAction, LifecycleStep, Phase, Project, ToolResolutionError,
+    lifecycle_step,
+};
+use crate::{CommandRunner, CommandSpec, Verb};
 use rapport_cli::FileSystem;
 use std::io;
 
@@ -79,6 +82,55 @@ pub(super) fn test() -> Vec<LifecycleStep> {
 
 pub(super) fn audit() -> Vec<LifecycleStep> {
     vec![swift_step(Phase::ReleaseBuild, ["build", "-c", "release"])]
+}
+
+pub(super) fn doctor_checks(
+    project: &Project,
+    runner: &dyn CommandRunner,
+    files: &impl FileSystem,
+) -> (Vec<DoctorCheck>, Vec<DoctorCheck>) {
+    let tools = vec![
+        super::tool_check(
+            project,
+            runner,
+            "swift",
+            primary_program(),
+            ["--version"],
+            &super::ALL_VERBS,
+            Some(toolchain_install_hint()),
+        ),
+        formatter_check(project, runner),
+    ];
+    let configuration = vec![
+        super::file_check(
+            files,
+            &project.root.join("Package.swift"),
+            "Package.swift",
+            &super::ALL_VERBS,
+            "Add a SwiftPM `Package.swift` manifest at the package root.",
+        ),
+        super::convention_check(
+            validate_manifest(project, files),
+            "Swift tools version",
+            &super::ALL_VERBS,
+            "Start `Package.swift` with a valid `// swift-tools-version:` declaration.",
+        ),
+    ];
+    (tools, configuration)
+}
+
+fn formatter_check(project: &Project, runner: &dyn CommandRunner) -> DoctorCheck {
+    super::alternative_tool_check(
+        project,
+        runner,
+        "Swift formatter",
+        &[
+            ("swift", &["format", "--version"], "swift format"),
+            ("swift-format", &["--version"], "swift-format"),
+        ],
+        &[Verb::Fix, Verb::Lint, Verb::Validate, Verb::Audit],
+        formatter_install_hint(),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
