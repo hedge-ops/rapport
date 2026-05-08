@@ -40,10 +40,10 @@ validate, or audit.
 
 ```text
 rapport doctor <path>    # check readiness without running lifecycle work
-rapport fix <path>       # cargo fmt
-rapport lint <path>      # cargo fmt -- --check; cargo clippy --all-targets -- -D warnings
-rapport build <path>     # cargo check
-rapport test <path>      # cargo test
+rapport fix <path>       # cargo fmt --all, or cargo fmt --package <name>
+rapport lint <path>      # cargo fmt check; strict cargo clippy --all-targets -- -D warnings
+rapport build <path>     # cargo check --workspace, or cargo check --package <name>
+rapport test <path>      # cargo nextest run when available, otherwise cargo test
 rapport validate <path>  # lint + build + test
 rapport audit <path>     # validate + cargo build --release + cargo doc --no-deps
 ```
@@ -60,6 +60,41 @@ recursive discovery.
 
 Cargo projects are detected by `Cargo.toml`; SwiftPM projects are detected by
 `Package.swift` with a leading `// swift-tools-version:` declaration.
+
+Cargo scopes are intentionally deterministic. A Cargo workspace root runs once
+with workspace-wide flags such as `--workspace` for compile/test work and
+`--all` for formatting, so workspace members are not duplicated. A package root,
+including a workspace member invoked directly or from one of its child
+directories, runs package-scoped with `--package <name>`. Umbrella directories
+that contain multiple independent Cargo projects run each child target once.
+
+Cargo testing is nextest-first: rapport probes `cargo nextest --version` and
+runs `cargo nextest run` when it is usable. If `cargo-nextest` is missing or the
+probe fails, lifecycle runs fall back to `cargo test`. `rapport doctor` reports
+`cargo nextest` as a warning rather than a failure because the fallback is part
+of the convention.
+
+Cargo linting is strict and read-only: formatting is checked first, then clippy
+runs with `--all-targets -- -D warnings` using the same workspace or package
+scope as the rest of the lifecycle. `build` remains the fastest useful compile
+proof (`cargo check`); `audit` is slower release confidence (`validate`, then a
+release build and docs without dependency docs).
+
+Packages or workspaces whose normal dev cycle requires Cargo feature or target
+flags can declare the narrow rapport Cargo metadata surface in `Cargo.toml`:
+
+```toml
+[package.metadata.rapport.cargo]
+features = ["extra"]
+no-default-features = true
+target = "wasm32-unknown-unknown"
+```
+
+Use `[workspace.metadata.rapport.cargo]` for flags that apply to a whole
+workspace. `features`, `all-features`, `no-default-features`, and `target` are
+supported for compile, lint, test, release, and docs phases. Per-member flag
+differences during a single workspace-root run are out of scope for v1; invoke
+the member package path when a package needs package-specific flags.
 
 Lifecycle verbs keep their conventional scope:
 

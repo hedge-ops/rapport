@@ -1027,7 +1027,7 @@ mod tests {
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
-                args: vec!["check".into()],
+                args: vec!["check".into(), "--package".into(), "sample".into()],
                 cwd: dir.path.clone(),
             }]
         );
@@ -1036,7 +1036,7 @@ mod tests {
     #[test]
     fn doctor_checks_cargo_readiness_without_running_lifecycle_work() {
         let dir = TestDir::cargo_project();
-        let runner = FakeRunner::all_pass(3);
+        let runner = FakeRunner::all_pass(4);
 
         let (code, out, err) = run_with(&["doctor", dir.as_str()], &runner);
 
@@ -1046,6 +1046,11 @@ mod tests {
         assert!(out.contains("Cargo (`Cargo.toml`)"));
         assert!(out.contains("tool [ok] cargo; usable on PATH; probe `cargo --version`"));
         assert!(out.contains("tool [ok] cargo fmt; usable on PATH; probe `cargo fmt --version`"));
+        assert!(
+            out.contains(
+                "tool [ok] cargo nextest; usable on PATH; probe `cargo nextest --version`"
+            )
+        );
         assert!(out.contains("config [ok] Cargo.toml; present"));
         assert!(out.contains("status: pass"));
         assert_eq!(
@@ -1064,6 +1069,11 @@ mod tests {
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec!["clippy".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["nextest".into(), "--version".into()],
                     cwd: dir.path.clone(),
                 },
             ]
@@ -1113,7 +1123,7 @@ mod tests {
             "infra/main.tf",
             "resource \"null_resource\" \"example\" {}\n",
         );
-        let runner = FakeRunner::all_pass(5);
+        let runner = FakeRunner::all_pass(6);
 
         let (code, out, err) = run_with(&["doctor", dir.as_str()], &runner);
 
@@ -1142,6 +1152,11 @@ mod tests {
                     cwd: dir.path.join("apps/api"),
                 },
                 RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["nextest".into(), "--version".into()],
+                    cwd: dir.path.join("apps/api"),
+                },
+                RecordedCommand {
                     program: "terraform".into(),
                     args: vec!["--version".into()],
                     cwd: dir.path.join("infra"),
@@ -1158,7 +1173,7 @@ mod tests {
     #[test]
     fn validate_runs_lint_build_test_pipeline() {
         let dir = TestDir::cargo_project();
-        let runner = FakeRunner::all_pass(4);
+        let runner = FakeRunner::all_pass(5);
 
         let (code, out, err) = run_with(&["validate", dir.as_str()], &runner);
 
@@ -1170,13 +1185,26 @@ mod tests {
             vec![
                 RecordedCommand {
                     program: "cargo".into(),
-                    args: vec!["fmt".into(), "--".into(), "--check".into()],
+                    args: vec!["nextest".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec![
+                        "fmt".into(),
+                        "--package".into(),
+                        "sample".into(),
+                        "--".into(),
+                        "--check".into(),
+                    ],
                     cwd: dir.path.clone(),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
                     args: vec![
                         "clippy".into(),
+                        "--package".into(),
+                        "sample".into(),
                         "--all-targets".into(),
                         "--".into(),
                         "-D".into(),
@@ -1186,15 +1214,88 @@ mod tests {
                 },
                 RecordedCommand {
                     program: "cargo".into(),
-                    args: vec!["check".into()],
+                    args: vec!["check".into(), "--package".into(), "sample".into()],
                     cwd: dir.path.clone(),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
-                    args: vec!["test".into()],
+                    args: vec![
+                        "nextest".into(),
+                        "run".into(),
+                        "--package".into(),
+                        "sample".into()
+                    ],
                     cwd: dir.path.clone(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn test_prefers_nextest_but_falls_back_to_cargo_test_when_missing() {
+        let dir = TestDir::cargo_project();
+        let runner = FakeRunner::new(vec![Ok(fail("", "missing nextest")), Ok(pass())]);
+
+        let (code, out, err) = run_with(&["test", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!("└ run rapport validate {}", dir.as_str())));
+        assert_eq!(
+            runner.calls(),
+            vec![
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["nextest".into(), "--version".into()],
+                    cwd: dir.path.clone(),
+                },
+                RecordedCommand {
+                    program: "cargo".into(),
+                    args: vec!["test".into(), "--package".into(), "sample".into()],
+                    cwd: dir.path.clone(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn cargo_metadata_supplies_conventional_feature_and_target_args() {
+        let dir = TestDir::new();
+        dir.write(
+            "Cargo.toml",
+            "[package]\n\
+             name = \"sample\"\n\
+             version = \"0.1.0\"\n\
+             edition = \"2024\"\n\n\
+             [features]\n\
+             extra = []\n\n\
+             [package.metadata.rapport.cargo]\n\
+             no-default-features = true\n\
+             features = [\"extra\"]\n\
+             target = \"wasm32-unknown-unknown\"\n",
+        );
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, _out, err) = run_with(&["build", dir.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec![
+                    "check".into(),
+                    "--package".into(),
+                    "sample".into(),
+                    "--no-default-features".into(),
+                    "--features".into(),
+                    "extra".into(),
+                    "--target".into(),
+                    "wasm32-unknown-unknown".into(),
+                ],
+                cwd: dir.path.clone(),
+            }]
         );
     }
 
@@ -1220,7 +1321,7 @@ mod tests {
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
-                args: vec!["check".into()],
+                args: vec!["check".into(), "--package".into(), "app".into()],
                 cwd: crate_dir,
             }]
         );
@@ -1241,7 +1342,7 @@ mod tests {
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
-                args: vec!["check".into()],
+                args: vec!["check".into(), "--package".into(), "sample".into()],
                 cwd: dir.path.clone(),
             }]
         );
@@ -1320,7 +1421,7 @@ mod tests {
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
-                args: vec!["check".into()],
+                args: vec!["check".into(), "--package".into(), "sample".into()],
                 cwd: dir.path.clone(),
             }]
         );
@@ -2431,12 +2532,12 @@ mod tests {
             vec![
                 RecordedCommand {
                     program: "cargo".into(),
-                    args: vec!["check".into()],
+                    args: vec!["check".into(), "--package".into(), "api".into()],
                     cwd: dir.path.join("services/api"),
                 },
                 RecordedCommand {
                     program: "cargo".into(),
-                    args: vec!["check".into()],
+                    args: vec!["check".into(), "--package".into(), "cli".into()],
                     cwd: dir.path.join("tools/cli"),
                 },
             ]
@@ -2463,8 +2564,38 @@ mod tests {
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
-                args: vec!["check".into()],
+                args: vec!["check".into(), "--workspace".into()],
                 cwd: dir.path.clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn cargo_workspace_member_path_remains_package_scoped() {
+        let dir = TestDir::new();
+        dir.write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/alpha\", \"crates/beta\"]\nresolver = \"3\"\n",
+        );
+        dir.write_cargo_package("crates/alpha", "alpha");
+        dir.write_cargo_package("crates/beta", "beta");
+        let member_child = dir.path.join("crates/alpha/src");
+        let runner = FakeRunner::all_pass(1);
+
+        let (code, out, err) = run_with(&["build", member_child.as_str()], &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(&format!(
+            "└ run rapport test {}",
+            dir.path.join("crates/alpha")
+        )));
+        assert_eq!(
+            runner.calls(),
+            vec![RecordedCommand {
+                program: "cargo".into(),
+                args: vec!["check".into(), "--package".into(), "alpha".into()],
+                cwd: dir.path.join("crates/alpha"),
             }]
         );
     }
@@ -2488,7 +2619,7 @@ mod tests {
             vec![
                 RecordedCommand {
                     program: "cargo".into(),
-                    args: vec!["check".into()],
+                    args: vec!["check".into(), "--package".into(), "api".into()],
                     cwd: dir.path.join("apps/api"),
                 },
                 RecordedCommand {
@@ -2533,7 +2664,7 @@ mod tests {
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
-                args: vec!["check".into()],
+                args: vec!["check".into(), "--package".into(), "api".into()],
                 cwd: dir.path.join("apps/api"),
             }]
         );
@@ -2554,7 +2685,7 @@ mod tests {
             runner.calls(),
             vec![RecordedCommand {
                 program: "cargo".into(),
-                args: vec!["check".into()],
+                args: vec!["check".into(), "--package".into(), "sample".into()],
                 cwd: dir.path.clone(),
             }]
         );

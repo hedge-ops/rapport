@@ -12,7 +12,7 @@ stdout:
 - tool [ok] cargo; usable on PATH; probe `cargo --version`; affects fix, lint, build, test, validate, audit
 - tool [ok] cargo fmt; usable on PATH; probe `cargo fmt --version`; affects fix, lint, validate, audit
 - tool [ok] cargo clippy; usable on PATH; probe `cargo clippy --version`; affects lint, validate, audit
-- tool [ok] cargo nextest; usable on PATH; probe `cargo nextest --version`; affects test, validate, audit
+- tool [warn] cargo nextest; not usable; rapport will fall back to cargo test; probe `cargo nextest --version`; affects test, validate, audit; Install cargo-nextest with `cargo install cargo-nextest`, or let rapport use its documented `cargo test` fallback.
 - config [ok] Cargo.toml; present; affects fix, lint, build, test, validate, audit
 
 status: pass
