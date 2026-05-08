@@ -270,11 +270,15 @@ def run_case(case: Case, rapport_bin: Path, *, update: bool) -> str | None:
 
 
 def fixture_ignore(_dir: str, names: list[str]) -> set[str]:
-    return {
-        name
-        for name in names
-        if name in {"target", ".build", ".swiftpm", ".git"}
-    }
+    ignored: set[str] = set()
+    for name in names:
+        if name == ".git":
+            ignored.add(name)
+        elif name in {"target", ".build", ".swiftpm"} and not (
+            Path(_dir) / name / ".rapport-keep"
+        ).exists():
+            ignored.add(name)
+    return ignored
 
 
 def configure_cargo(env: dict[str, str], context: RunContext, case: Case) -> tuple[dict[str, str], RunContext]:
@@ -430,6 +434,10 @@ def configure_terraform(env: dict[str, str], context: RunContext, case: Case) ->
     if mode == "full":
         write_executable(tool_root / "terraform", terraform_script())
         write_executable(tool_root / "tflint", tflint_script())
+    elif mode == "full_with_cargo":
+        write_executable(tool_root / "terraform", terraform_script())
+        write_executable(tool_root / "tflint", tflint_script())
+        write_executable(tool_root / "cargo", cargo_script())
     elif mode == "terraform_only":
         write_executable(tool_root / "terraform", terraform_script())
     elif mode == "missing_terraform":
@@ -473,6 +481,23 @@ def configure_zola(env: dict[str, str], context: RunContext, case: Case) -> tupl
 def write_executable(path: Path, contents: str) -> None:
     path.write_text(contents)
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def cargo_script() -> str:
+    return """#!/bin/sh
+set -u
+
+case "${1:-}" in
+check)
+    echo "cargo check passed"
+    exit 0
+    ;;
+*)
+    echo "unexpected cargo args: $*" >&2
+    exit 2
+    ;;
+esac
+"""
 
 
 def swift_script(*, supports_driver_formatter: bool) -> str:

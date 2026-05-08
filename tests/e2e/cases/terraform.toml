@@ -99,3 +99,12 @@ fixture = "ok/ignored-cache"
 verb = "build"
 expected_exit = 0
 snapshot = "rapport/terraform_ok_ignored_cache_build.snap"
+
+[[case]]
+name = "terraform_ok_mixed_scope_build"
+convention = "terraform"
+fixture = "ok/mixed-scope"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/terraform_ok_mixed_scope_build.snap"
+toolchain = "full_with_cargo"

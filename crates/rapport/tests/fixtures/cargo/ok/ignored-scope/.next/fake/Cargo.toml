@@ -1,0 +1,5 @@
+[package]
+name = "ignored-next-output"
+version = "0.1.0"
+edition = "2024"
+

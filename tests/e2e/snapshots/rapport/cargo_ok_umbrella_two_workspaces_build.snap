@@ -3,8 +3,8 @@ stdout:
 ---
 ## Targets
 
-- pass - Bun project: [project]/packages/api
-- pass - Bun project: [project]/packages/web
+- pass - Cargo project: [project]/services/api
+- pass - Cargo project: [project]/tools/cli
 
 status: pass
 duration: [duration]

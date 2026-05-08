@@ -140,6 +140,18 @@ impl SectionBuilder {
     }
 
     #[must_use]
+    pub fn items<I, S>(mut self, iter: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Display,
+    {
+        for item in iter {
+            self.inner = self.inner.text(format!("- {item}"));
+        }
+        self
+    }
+
+    #[must_use]
     pub fn captured(mut self, text: impl Display) -> Self {
         let s = text.to_string();
         let trimmed = s.trim();

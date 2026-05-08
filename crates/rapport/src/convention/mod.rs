@@ -266,13 +266,6 @@ impl ProjectConvention {
         }
     }
 
-    fn discovers_nested_targets(self) -> bool {
-        matches!(
-            self,
-            Self::Zola | Self::Bun | Self::Kustomize | Self::Terraform
-        )
-    }
-
     fn should_skip_discovery_directory(self, name: &str) -> bool {
         match self {
             Self::Zola => zola::should_skip_directory(name),
@@ -299,51 +292,23 @@ impl Project {
         start: &Utf8Path,
         files: &impl FileSystem,
     ) -> Result<Vec<Self>, DiscoveryError> {
-        let mut current = absolute_path(start)?;
-        let mut nearest_project = None;
+        let root = absolute_path(start)?;
+        let upward = discover_upward(&root, start, files)?;
 
-        loop {
-            for convention in PROJECT_CONVENTIONS {
-                if nearest_project.is_none()
-                    && let Some(marker) = convention.matching_marker(&current, files)
-                {
-                    nearest_project = Some(Self {
-                        convention: *convention,
-                        marker,
-                        root: current.clone(),
-                    });
-                }
-            }
-            if files.exists(current.join(".git")) {
-                if let Some(project) = nearest_project {
-                    if project.is_bun_scriptless_container(files) {
-                        let mut projects = Vec::new();
-                        discover_nested_targets(&project.root, files, &mut projects)?;
-                        if !projects.is_empty() {
-                            return Ok(projects);
-                        }
-                    }
-                    return Ok(vec![project]);
-                }
-
-                let root = absolute_path(start)?;
-                let mut projects = Vec::new();
-                discover_nested_targets(&root, files, &mut projects)?;
-                return if projects.is_empty() {
-                    Err(DiscoveryError::NoSupportedProject {
-                        start: start.to_owned(),
-                        git_root: current,
-                    })
-                } else {
-                    Ok(projects)
-                };
-            }
-            if !current.pop() {
-                return Err(DiscoveryError::OutsideGitRepository {
-                    start: start.to_owned(),
-                });
-            }
+        let mut scoped_projects = Vec::new();
+        discover_nested_targets(&root, files, &[], &mut scoped_projects)?;
+        if !scoped_projects.is_empty() {
+            return Ok(scoped_projects);
         }
+
+        if let Some(project) = upward.nearest_project {
+            return Ok(vec![project]);
+        }
+
+        Err(DiscoveryError::NoSupportedProject {
+            start: start.to_owned(),
+            git_root: upward.git_root,
+        })
     }
 
     pub(crate) fn marker(&self) -> &'static str {
@@ -442,42 +407,77 @@ impl Project {
     }
 }
 
+#[derive(Debug)]
+struct UpwardDiscovery {
+    nearest_project: Option<Project>,
+    git_root: Utf8PathBuf,
+}
+
+fn discover_upward(
+    root: &Utf8Path,
+    start: &Utf8Path,
+    files: &impl FileSystem,
+) -> Result<UpwardDiscovery, DiscoveryError> {
+    let mut current = root.to_owned();
+    let mut nearest_project = None;
+
+    loop {
+        if nearest_project.is_none() {
+            nearest_project = matching_projects_at(&current, files).into_iter().next();
+        }
+        if files.exists(current.join(".git")) {
+            return Ok(UpwardDiscovery {
+                nearest_project,
+                git_root: current,
+            });
+        }
+        if !current.pop() {
+            return Err(DiscoveryError::OutsideGitRepository {
+                start: start.to_owned(),
+            });
+        }
+    }
+}
+
 fn discover_nested_targets(
     root: &Utf8Path,
     files: &impl FileSystem,
+    covered_conventions: &[ProjectConvention],
     projects: &mut Vec<Project>,
 ) -> Result<(), DiscoveryError> {
     if should_skip_discovery_directory(root) {
         return Ok(());
     }
 
-    for convention in PROJECT_CONVENTIONS {
-        if convention.discovers_nested_targets()
-            && let Some(marker) = convention.matching_marker(root, files)
-        {
-            let project = Project {
-                convention: *convention,
-                marker,
-                root: root.to_owned(),
-            };
-            if project.is_bun_scriptless_container(files) {
-                let before = projects.len();
-                discover_nested_children(root, files, projects)?;
-                if projects.len() > before {
-                    return Ok(());
-                }
-            }
-            projects.push(project);
-            return Ok(());
+    let direct_projects = matching_projects_at(root, files)
+        .into_iter()
+        .filter(|project| !covered_conventions.contains(&project.convention))
+        .collect::<Vec<_>>();
+
+    let mut descendant_covered = covered_conventions.to_vec();
+    for project in &direct_projects {
+        if !project.is_bun_scriptless_container(files) {
+            descendant_covered.push(project.convention);
         }
     }
 
-    discover_nested_children(root, files, projects)
+    let mut child_projects = Vec::new();
+    discover_nested_children(root, files, &descendant_covered, &mut child_projects)?;
+
+    for project in direct_projects {
+        if project.is_bun_scriptless_container(files) && !child_projects.is_empty() {
+            continue;
+        }
+        projects.push(project);
+    }
+    projects.extend(child_projects);
+    Ok(())
 }
 
 fn discover_nested_children(
     root: &Utf8Path,
     files: &impl FileSystem,
+    covered_conventions: &[ProjectConvention],
     projects: &mut Vec<Project>,
 ) -> Result<(), DiscoveryError> {
     for entry in files
@@ -488,21 +488,66 @@ fn discover_nested_children(
         })?
     {
         if files.is_dir(&entry) {
-            discover_nested_targets(&entry, files, projects)?;
+            discover_nested_targets(&entry, files, covered_conventions, projects)?;
         }
     }
     Ok(())
+}
+
+fn matching_projects_at(root: &Utf8Path, files: &impl FileSystem) -> Vec<Project> {
+    let mut projects = PROJECT_CONVENTIONS
+        .iter()
+        .filter_map(|convention| {
+            convention
+                .matching_marker(root, files)
+                .map(|marker| Project {
+                    convention: *convention,
+                    marker,
+                    root: root.to_owned(),
+                })
+        })
+        .collect::<Vec<_>>();
+
+    if projects
+        .iter()
+        .any(|project| project.convention == ProjectConvention::Zola)
+    {
+        projects.retain(|project| project.convention != ProjectConvention::Bun);
+    }
+
+    projects
 }
 
 fn should_skip_discovery_directory(root: &Utf8Path) -> bool {
     let Some(name) = root.file_name() else {
         return false;
     };
-    name == ".git"
+    DEFAULT_SKIP_DISCOVERY_DIRECTORIES.contains(&name)
         || PROJECT_CONVENTIONS
             .iter()
             .any(|convention| convention.should_skip_discovery_directory(name))
 }
+
+const DEFAULT_SKIP_DISCOVERY_DIRECTORIES: &[&str] = &[
+    ".git",
+    ".build",
+    ".cache",
+    ".gradle",
+    ".next",
+    ".swiftpm",
+    ".terraform",
+    ".terraform-cache",
+    ".terragrunt-cache",
+    ".turbo",
+    "DerivedData",
+    "Pods",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "vendor",
+];
 
 #[derive(Debug)]
 pub(crate) enum ToolResolutionError {
