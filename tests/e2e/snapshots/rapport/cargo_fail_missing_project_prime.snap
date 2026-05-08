@@ -1,0 +1,42 @@
+exit: 0
+stdout:
+---
+# rapport prime - convention guide
+
+## Purpose
+
+- rapport gives agents one conventional dev-cycle surface across supported targets
+- standard lifecycle verbs are `fix`, `lint`, `build`, `test`, `validate`, and `audit`
+- use `prime` for convention guidance before edits; use `doctor` to check whether detected targets are runnable now
+
+## Boundary
+
+- rapport owns lifecycle proof: format/fix, lint, build, test, validate, and audit
+- task runners own installs, local servers, deploys, migrations, generators, releases, and bespoke workflows
+- Justfiles and similar runners may call rapport when they need the standard lifecycle answer
+
+## Scope
+
+- requested: [project]
+- git root: [project]
+- detected targets: none
+
+## Supported Markers
+
+- `Cargo.toml` for Cargo
+- `config.toml` for Zola
+- `package.json` for Bun
+- `Package.swift` for SwiftPM
+- `fastlane/Fastfile` for Fastlane
+- `settings.gradle.kts` for Gradle
+- `settings.gradle` for Gradle
+- `kustomization.yaml` for Kustomize
+- `kustomization.yml` for Kustomize
+- `*.tf` for Terraform
+
+## Next
+
+└ run rapport help prime
+stderr:
+---
+(empty)

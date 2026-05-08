@@ -1,0 +1,47 @@
+exit: 0
+stdout:
+---
+# rapport prime - convention guide
+
+## Purpose
+
+- rapport gives agents one conventional dev-cycle surface across supported targets
+- standard lifecycle verbs are `fix`, `lint`, `build`, `test`, `validate`, and `audit`
+- use `prime` for convention guidance before edits; use `doctor` to check whether detected targets are runnable now
+
+## Boundary
+
+- rapport owns lifecycle proof: format/fix, lint, build, test, validate, and audit
+- task runners own installs, local servers, deploys, migrations, generators, releases, and bespoke workflows
+- Justfiles and similar runners may call rapport when they need the standard lifecycle answer
+
+## Targets
+
+- [project]/apps/api - Cargo (`Cargo.toml`)
+- [project]/infra - Terraform (`*.tf`)
+
+## Cargo Convention
+
+- target: [project]/apps/api (`Cargo.toml`)
+- convention: ok
+- expects: requires `Cargo.toml` at a package or workspace root
+- expects: fix/lint use `cargo fmt` and strict `cargo clippy --all-targets -- -D warnings`
+- expects: build uses `cargo check`; test prefers `cargo nextest run` and falls back to `cargo test`
+- expects: audit adds `cargo build --release` and `cargo doc --no-deps`
+- expects: optional `[package.metadata.rapport.cargo]` or `[workspace.metadata.rapport.cargo]` may set feature/target flags
+
+## Terraform Convention
+
+- target: [project]/infra (`*.tf`)
+- convention: ok
+- expects: requires at least one `*.tf` file at the Terraform target root
+- expects: fix/lint use `terraform fmt`; build uses `terraform validate`
+- expects: test is a no-op unless a project wraps extra checks elsewhere
+- expects: optional `.tflint.hcl` enables required TFLint lint/audit coverage
+
+## Next
+
+└ run rapport doctor [project]
+stderr:
+---
+(empty)

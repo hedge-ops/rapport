@@ -56,6 +56,14 @@ expected_exit = 0
 snapshot = "rapport/cargo_ok_basic_crate_doctor.snap"
 
 [[case]]
+name = "cargo_ok_basic_crate_prime"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "prime"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_basic_crate_prime.snap"
+
+[[case]]
 name = "cargo_fail_missing_tool_doctor"
 convention = "cargo"
 fixture = "ok/basic-crate"
@@ -189,6 +197,14 @@ fixture = "fail/missing-project"
 verb = "build"
 expected_exit = 2
 snapshot = "rapport/cargo_fail_missing_project_build.snap"
+
+[[case]]
+name = "cargo_fail_missing_project_prime"
+convention = "cargo"
+fixture = "fail/missing-project"
+verb = "prime"
+expected_exit = 0
+snapshot = "rapport/cargo_fail_missing_project_prime.snap"
 
 [[case]]
 name = "cargo_fail_fmt_needed_lint"

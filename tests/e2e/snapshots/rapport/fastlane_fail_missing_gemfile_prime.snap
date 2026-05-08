@@ -1,0 +1,36 @@
+exit: 0
+stdout:
+---
+# rapport prime - convention guide
+
+## Purpose
+
+- rapport gives agents one conventional dev-cycle surface across supported targets
+- standard lifecycle verbs are `fix`, `lint`, `build`, `test`, `validate`, and `audit`
+- use `prime` for convention guidance before edits; use `doctor` to check whether detected targets are runnable now
+
+## Boundary
+
+- rapport owns lifecycle proof: format/fix, lint, build, test, validate, and audit
+- task runners own installs, local servers, deploys, migrations, generators, releases, and bespoke workflows
+- Justfiles and similar runners may call rapport when they need the standard lifecycle answer
+
+## Targets
+
+- [project] - Fastlane (`fastlane/Fastfile`)
+
+## Fastlane Convention
+
+- target: [project] (`fastlane/Fastfile`)
+- convention: missing - Fastlane projects must include a `Gemfile` pinning Fastlane so rapport can run `bundle exec fastlane`.
+- expects: requires `Gemfile` and `fastlane/Fastfile`
+- expects: Fastfile must define lanes `fix`, `lint`, `build`, `test`, `validate`, and `audit`
+- expects: each lifecycle verb runs through `bundle exec fastlane <lane>`
+- expects: Xcode-specific build, signing, and release details belong inside the Fastlane lanes
+
+## Next
+
+└ run rapport doctor [project]
+stderr:
+---
+(empty)
