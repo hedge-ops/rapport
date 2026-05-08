@@ -129,7 +129,7 @@ impl ProjectConvention {
 
     fn validate_manifest(self, project: &Project, files: &impl FileSystem) -> Result<(), String> {
         match self {
-            Self::Cargo => Ok(()),
+            Self::Cargo => cargo::validate_manifest(project, files),
             Self::Zola => zola::validate_manifest(project, files),
             Self::Bun => bun::validate_manifest(project, files),
             Self::SwiftPackageManager => swift::validate_manifest(project, files),
@@ -147,7 +147,7 @@ impl ProjectConvention {
         files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
-            Self::Cargo => Ok(cargo::fix()),
+            Self::Cargo => cargo::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::Zola => zola::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::fix(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::fix(project, runner),
@@ -165,7 +165,7 @@ impl ProjectConvention {
         files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
-            Self::Cargo => Ok(cargo::lint()),
+            Self::Cargo => cargo::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::Zola => zola::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::lint(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => swift::lint(project, runner),
@@ -183,7 +183,7 @@ impl ProjectConvention {
         files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
-            Self::Cargo => Ok(cargo::build()),
+            Self::Cargo => cargo::build(project, files).map_err(ToolResolutionError::Convention),
             Self::Zola => zola::build(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::build(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => Ok(swift::build()),
@@ -197,10 +197,13 @@ impl ProjectConvention {
     fn test(
         self,
         project: &Project,
+        runner: &dyn CommandRunner,
         files: &impl FileSystem,
     ) -> Result<Vec<LifecycleStep>, ToolResolutionError> {
         match self {
-            Self::Cargo => Ok(cargo::test()),
+            Self::Cargo => {
+                cargo::test(project, runner, files).map_err(ToolResolutionError::Convention)
+            }
             Self::Zola => zola::test(project, files).map_err(ToolResolutionError::Convention),
             Self::Bun => bun::test(project, files).map_err(ToolResolutionError::Convention),
             Self::SwiftPackageManager => Ok(swift::test()),
@@ -239,7 +242,9 @@ impl ProjectConvention {
             Self::Cargo | Self::SwiftPackageManager | Self::Kustomize | Self::Terraform => {
                 let mut steps = project.validate_steps(runner, files)?;
                 steps.extend(match self {
-                    Self::Cargo => cargo::audit(),
+                    Self::Cargo => {
+                        cargo::audit(project, files).map_err(ToolResolutionError::Convention)?
+                    }
                     Self::SwiftPackageManager => swift::audit(),
                     Self::Kustomize => kustomize::audit(),
                     Self::Terraform => terraform::audit(),
@@ -377,7 +382,7 @@ impl Project {
             Verb::Fix => self.convention.fix(self, runner, fs),
             Verb::Lint => self.convention.lint(self, runner, fs),
             Verb::Build => self.convention.build(self, runner, fs),
-            Verb::Test => self.convention.test(self, fs),
+            Verb::Test => self.convention.test(self, runner, fs),
             Verb::Validate => self.convention.validate(self, runner, fs),
             Verb::Audit => self.convention.audit(self, runner, fs),
         }
@@ -397,7 +402,7 @@ impl Project {
         }
         let mut steps = self.convention.lint(self, runner, files)?;
         steps.extend(self.convention.build(self, runner, files)?);
-        steps.extend(self.convention.test(self, files)?);
+        steps.extend(self.convention.test(self, runner, files)?);
         Ok(steps)
     }
 

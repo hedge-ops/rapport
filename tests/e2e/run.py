@@ -5,6 +5,7 @@ import argparse
 import difflib
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -357,6 +358,7 @@ def configure_cargo(env: dict[str, str], context: RunContext, case: Case) -> tup
     for key in UNSET_CARGO_ENV:
         env.pop(key, None)
 
+    original_path = env.get("PATH", "")
     target = context.temp_root / "target"
     cargo_home = context.temp_root / "cargo-home"
     target.mkdir()
@@ -374,8 +376,41 @@ def configure_cargo(env: dict[str, str], context: RunContext, case: Case) -> tup
     if mode == "fake":
         tool_root = context.temp_root / "toolchain"
         tool_root.mkdir()
-        write_executable(tool_root / "cargo", cargo_script())
+        write_executable(tool_root / "cargo", cargo_script(nextest=True))
         env["PATH"] = str(tool_root)
+    elif mode == "fake_nextest":
+        tool_root = context.temp_root / "toolchain"
+        tool_root.mkdir()
+        write_executable(tool_root / "cargo", cargo_script(nextest=True, allow_test=False))
+        env["PATH"] = str(tool_root)
+    elif mode == "fake_missing_nextest":
+        tool_root = context.temp_root / "toolchain"
+        tool_root.mkdir()
+        write_executable(tool_root / "cargo", cargo_script(nextest=False, allow_test=True))
+        env["PATH"] = str(tool_root)
+    elif mode == "fake_target":
+        tool_root = context.temp_root / "toolchain"
+        tool_root.mkdir()
+        write_executable(
+            tool_root / "cargo",
+            cargo_script(nextest=True, expected_target="wasm32-unknown-unknown"),
+        )
+        env["PATH"] = str(tool_root)
+    elif mode == "fake_features":
+        tool_root = context.temp_root / "toolchain"
+        tool_root.mkdir()
+        write_executable(
+            tool_root / "cargo",
+            cargo_script(nextest=True, expected_features="extra"),
+        )
+        env["PATH"] = str(tool_root)
+    elif mode == "host":
+        cargo = shutil.which("cargo", path=original_path)
+        if cargo is not None:
+            tool_root = context.temp_root / "toolchain"
+            tool_root.mkdir()
+            write_executable(tool_root / "cargo", cargo_host_wrapper(Path(cargo)))
+            env["PATH"] = os.pathsep.join([str(tool_root), original_path])
     elif mode != "host":
         raise ValueError(f"unsupported cargo toolchain mode: {mode}")
 
@@ -564,9 +599,73 @@ def write_executable(path: Path, contents: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def cargo_script() -> str:
+def cargo_host_wrapper(cargo: Path) -> str:
+    return f"""#!/bin/sh
+set -u
+
+if [ "${{1:-}}" = "nextest" ]; then
+    echo "error: no such command: nextest" >&2
+    exit 101
+fi
+
+exec {shlex.quote(str(cargo))} "$@"
+"""
+
+
+def cargo_script(
+    *,
+    nextest: bool,
+    allow_test: bool = True,
+    expected_features: str = "",
+    expected_target: str = "",
+) -> str:
+    nextest_version = (
+        'echo "cargo-nextest 0.9.90"\n        exit 0'
+        if nextest
+        else 'echo "error: no such command: nextest" >&2\n        exit 101'
+    )
+    nextest_run = (
+        'assert_expected_args "$@"\n        echo "cargo nextest passed"\n        exit 0'
+        if nextest
+        else 'echo "error: no such command: nextest" >&2\n        exit 101'
+    )
+    test_run = (
+        'assert_expected_args "$@"\n        echo "cargo test passed"\n        exit 0'
+        if allow_test
+        else 'echo "unexpected cargo test fallback: $*" >&2\n        exit 2'
+    )
     return """#!/bin/sh
 set -u
+
+expected_features='""" + expected_features + """'
+expected_target='""" + expected_target + """'
+
+has_option_value() {
+    option="$1"
+    expected="$2"
+    shift 2
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "$option" ]; then
+            if [ "${2:-}" = "$expected" ]; then
+                return 0
+            fi
+            return 1
+        fi
+        shift
+    done
+    return 1
+}
+
+assert_expected_args() {
+    if [ -n "$expected_features" ] && ! has_option_value "--features" "$expected_features" "$@"; then
+        echo "expected --features $expected_features in args: $*" >&2
+        exit 2
+    fi
+    if [ -n "$expected_target" ] && ! has_option_value "--target" "$expected_target" "$@"; then
+        echo "expected --target $expected_target in args: $*" >&2
+        exit 2
+    fi
+}
 
 case "${1:-}" in
 --version)
@@ -578,19 +677,44 @@ fmt)
         echo "rustfmt 1.8.0"
         exit 0
     fi
-    echo "unexpected cargo fmt args: $*" >&2
-    exit 2
+    echo "cargo fmt passed"
+    exit 0
     ;;
 clippy)
     if [ "${2:-}" = "--version" ]; then
         echo "clippy 0.1.89"
         exit 0
     fi
-    echo "unexpected cargo clippy args: $*" >&2
-    exit 2
+    assert_expected_args "$@"
+    echo "cargo clippy passed"
+    exit 0
     ;;
 check)
+    assert_expected_args "$@"
     echo "cargo check passed"
+    exit 0
+    ;;
+nextest)
+    if [ "${2:-}" = "--version" ]; then
+        """ + nextest_version + """
+    fi
+    if [ "${2:-}" = "run" ]; then
+        """ + nextest_run + """
+    fi
+    echo "unexpected cargo nextest args: $*" >&2
+    exit 2
+    ;;
+test)
+    """ + test_run + """
+    ;;
+build)
+    assert_expected_args "$@"
+    echo "cargo build passed"
+    exit 0
+    ;;
+doc)
+    assert_expected_args "$@"
+    echo "cargo doc passed"
     exit 0
     ;;
 *)

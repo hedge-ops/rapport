@@ -81,6 +81,15 @@ expected_exit = 0
 snapshot = "rapport/cargo_ok_workspace_test.snap"
 
 [[case]]
+name = "cargo_ok_workspace_member_build"
+convention = "cargo"
+fixture = "ok/workspace"
+path = "crates/alpha"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_workspace_member_build.snap"
+
+[[case]]
 name = "cargo_ok_workspace_validate"
 convention = "cargo"
 fixture = "ok/workspace"
@@ -112,6 +121,50 @@ fixture = "ok/workspace"
 verb = "build"
 expected_exit = 0
 snapshot = "rapport/cargo_ok_workspace_scope_no_member_duplication_build.snap"
+
+[[case]]
+name = "cargo_ok_nextest_present_test"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "test"
+toolchain = "fake_nextest"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_nextest_present_test.snap"
+
+[[case]]
+name = "cargo_ok_nextest_missing_test"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "test"
+toolchain = "fake_missing_nextest"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_nextest_missing_test.snap"
+
+[[case]]
+name = "cargo_ok_nextest_missing_doctor"
+convention = "cargo"
+fixture = "ok/basic-crate"
+verb = "doctor"
+toolchain = "fake_missing_nextest"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_nextest_missing_doctor.snap"
+
+[[case]]
+name = "cargo_ok_feature_gated_build"
+convention = "cargo"
+fixture = "ok/feature-gated"
+verb = "build"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_feature_gated_build.snap"
+
+[[case]]
+name = "cargo_ok_target_specific_build"
+convention = "cargo"
+fixture = "ok/target-specific"
+verb = "build"
+toolchain = "fake_target"
+expected_exit = 0
+snapshot = "rapport/cargo_ok_target_specific_build.snap"
 
 [[case]]
 name = "cargo_ok_ignored_scope_build"

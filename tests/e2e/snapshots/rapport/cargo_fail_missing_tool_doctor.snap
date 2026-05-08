@@ -12,6 +12,7 @@ stdout:
 - tool [missing] cargo; not found on PATH; probe `cargo --version`; affects fix, lint, build, test, validate, audit; Install Rust from https://www.rust-lang.org/tools/install and make sure `cargo` is on PATH.
 - tool [missing] cargo fmt; not found on PATH; probe `cargo fmt --version`; affects fix, lint, validate, audit; Install rustfmt with your Rust toolchain, for example `rustup component add rustfmt`.
 - tool [missing] cargo clippy; not found on PATH; probe `cargo clippy --version`; affects lint, validate, audit; Install Clippy with your Rust toolchain, for example `rustup component add clippy`.
+- tool [warn] cargo nextest; failed to invoke probe: No such file or directory (os error 2); rapport will fall back to cargo test; probe `cargo nextest --version`; affects test, validate, audit; Install cargo-nextest with `cargo install cargo-nextest`, or let rapport use its documented `cargo test` fallback.
 - config [ok] Cargo.toml; present; affects fix, lint, build, test, validate, audit
 
 status: FAIL

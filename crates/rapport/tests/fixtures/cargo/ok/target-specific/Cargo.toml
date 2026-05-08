@@ -1,0 +1,10 @@
+[package]
+name = "target_specific"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.rapport.cargo]
+target = "wasm32-unknown-unknown"
+
+[lib]
+path = "src/lib.rs"

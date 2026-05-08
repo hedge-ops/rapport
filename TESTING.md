@@ -103,6 +103,11 @@ The harness also removes ambient Rust configuration such as `RUSTFLAGS`,
 `RUSTDOCFLAGS`, `RUSTC_WRAPPER`, and related variables that could change output
 on one machine but not another.
 
+By default, Cargo e2e cases wrap the host `cargo` and hide ambient
+`cargo-nextest` so fallback snapshots remain stable on machines with or without
+nextest installed. Dedicated fake-toolchain cases cover nextest-present,
+nextest-missing, feature-gated, and target-specific Cargo behavior.
+
 SwiftPM cases use generated fake `swift` and `swift-format` tools. Fastlane
 cases use a generated fake `bundle` tool that simulates `bundle exec fastlane`.
 Kustomize cases use generated fake `kubectl`, standalone `kustomize`, and
