@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::date::Date;
 
+// facet's derive emits an `unsafe impl`, which trips `unsafe_derive_deserialize`; deserialization itself is safe.
+#[allow(clippy::unsafe_derive_deserialize)]
 #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Instant {
     /// The number of seconds since the unix epoch.

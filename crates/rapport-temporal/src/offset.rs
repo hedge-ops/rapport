@@ -3,10 +3,15 @@
 use std::fmt::{Display, Formatter};
 
 use crate::{Error, date::Date, recurrence::Interval};
+use facet::Facet;
 use regex_macro::regex;
+use serde::{Deserialize, Serialize};
 
 /// A relative offset from a reference date, commonly used for follow-ups and scheduling
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// facet's derive emits an `unsafe impl`, which trips `unsafe_derive_deserialize`; deserialization itself is safe.
+#[allow(clippy::unsafe_derive_deserialize)]
+#[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(C)]
 pub enum RelativeOffset {
     Tomorrow,
     NextBusinessDay,
@@ -262,5 +267,36 @@ mod tests {
             parsed, option,
             "expecting {display} to parse back to original option"
         );
+    }
+
+    // Mirrors the consumer (app_v2) usage: `RelativeOffset` is carried inside a
+    // facet-0.44 enum that also derives serde + Hash/Eq and is `#[repr(C)]`. This
+    // compiles only if `RelativeOffset` (and the `Interval` it wraps) satisfy all
+    // of those bounds, which is the whole point of the derives.
+    #[test]
+    fn satisfies_facet_0_44_consumer_bounds() {
+        #[derive(
+            facet::Facet, serde::Serialize, serde::Deserialize, Hash, PartialEq, Eq, Clone, Debug,
+        )]
+        #[repr(C)]
+        #[allow(dead_code, clippy::unsafe_derive_deserialize)]
+        enum DateSelection {
+            Offset(RelativeOffset),
+            None,
+        }
+
+        fn assert_consumer_bounds<'a, T>()
+        where
+            T: facet::Facet<'a>
+                + serde::Serialize
+                + serde::de::DeserializeOwned
+                + std::hash::Hash
+                + Eq,
+        {
+        }
+
+        assert_consumer_bounds::<DateSelection>();
+        assert_consumer_bounds::<RelativeOffset>();
+        assert_consumer_bounds::<Interval>();
     }
 }
