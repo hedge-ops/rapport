@@ -28,13 +28,14 @@ impl RelativeOffset {
     /// The common options
     #[must_use]
     #[allow(unused)]
-    pub fn common_options() -> [Self; 10] {
+    pub fn common_options() -> [Self; 11] {
         [
             Self::Tomorrow,
             Self::NextBusinessDay,
             Self::Days(Interval::two()),
             Self::Days(Interval::three()),
             Self::NextWeek,
+            Self::InWeeks(Interval::one()),
             Self::InWeeks(Interval::two()),
             Self::NextMonth,
             Self::InMonths(Interval::two()),
@@ -123,7 +124,7 @@ impl Display for RelativeOffset {
                 if interval.is_many() {
                     f.write_str(format!("in {interval} weeks").as_str())
                 } else {
-                    f.write_str("next week")
+                    f.write_str("in 1 week")
                 }
             }
             RelativeOffset::NextMonth => f.write_str("next month"),
@@ -257,6 +258,7 @@ mod tests {
     #[case::eighth(RelativeOffset::common_options()[7])]
     #[case::ninth(RelativeOffset::common_options()[8])]
     #[case::tenth(RelativeOffset::common_options()[9])]
+    #[case::eleventh(RelativeOffset::common_options()[10])]
     fn common_options_can_display_then_parse(#[case] option: RelativeOffset) {
         let display = option.to_string();
         let parsed = assert_ok!(
@@ -266,6 +268,24 @@ mod tests {
         assert_eq!(
             parsed, option,
             "expecting {display} to parse back to original option"
+        );
+    }
+
+    #[test]
+    fn common_options_include_one_week_and_next_week() {
+        let options = RelativeOffset::common_options();
+
+        assert!(options.contains(&RelativeOffset::InWeeks(Interval::one())));
+        assert!(options.contains(&RelativeOffset::NextWeek));
+    }
+
+    #[test]
+    fn one_week_and_next_week_resolve_differently_when_not_same_day() {
+        let today = assert_ok!(Date::from_str("2025-01-03"), "precondition: today parses");
+
+        assert_ne!(
+            RelativeOffset::InWeeks(Interval::one()).resolve_from(today),
+            RelativeOffset::NextWeek.resolve_from(today)
         );
     }
 
