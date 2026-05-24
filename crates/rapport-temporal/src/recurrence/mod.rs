@@ -17,6 +17,7 @@ use std::{
     str::FromStr,
 };
 
+use facet::Facet;
 use nonempty::NonEmpty;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
@@ -308,7 +309,11 @@ fn take_first<T>(vec: &mut Vec<T>) -> Option<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+// facet's derive emits an `unsafe impl`, which trips `unsafe_derive_deserialize`; deserialization itself is safe.
+#[allow(clippy::unsafe_derive_deserialize)]
+#[derive(
+    Facet, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, derive_more::Display,
+)]
 #[display("{_0}")]
 pub struct Interval(NonZeroU16);
 
