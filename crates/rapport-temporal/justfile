@@ -1,0 +1,53 @@
+# default target for local development
+default: dev
+
+# --------------------------------------------------------------------------
+# Development
+# --------------------------------------------------------------------------
+
+# check required tools are installed
+doctor:
+    @echo '{{ style("command") }}doctor:{{ NORMAL }}'
+    @echo "  No additional tools required"
+
+# removes build artifacts
+clean:
+    @echo '{{ style("command") }}clean:{{ NORMAL }}'
+    cargo clean -p rapport-temporal
+
+# builds the crate
+build:
+    @echo '{{ style("command") }}build:{{ NORMAL }}'
+    cargo build -p rapport-temporal
+
+# runs tests
+test:
+    @echo '{{ style("command") }}test:{{ NORMAL }}'
+    cargo nextest run -p rapport-temporal --features testing
+
+# checks test quality with mutation testing
+test-mutants:
+    @echo '{{ style("command") }}test-mutants:{{ NORMAL }}'
+    cargo mutants --package rapport-temporal --features testing
+
+# auto-fix formatting issues
+fix:
+    @echo '{{ style("command") }}fix:{{ NORMAL }}'
+    cargo fmt -p rapport-temporal
+
+# validate formatting, features, and linting
+check:
+    @echo '{{ style("command") }}check:{{ NORMAL }}'
+    cargo fmt -p rapport-temporal -- --check
+    cargo clippy -p rapport-temporal --all-targets --features testing -- -D warnings -A clippy::empty_line_after_doc_comments
+
+# find unused dependencies
+check-deps:
+    @echo '{{ style("command") }}check-deps:{{ NORMAL }}'
+    rustup run nightly cargo udeps -p rapport-temporal --all-targets --features testing
+
+# local development: fix, check, build, test
+dev: fix check build test
+
+# CI pipeline: check, build, test
+ci: check build test

@@ -141,6 +141,15 @@ mod tests {
     use rstest::rstest;
     use tracing_test::traced_test;
 
+    #[test]
+    fn interval_should_return_configured_interval() {
+        let schedule = YearlyRecurrenceSchedule::new(Interval::two(), Month::June, None);
+
+        let actual = schedule.interval();
+
+        assert_eq!(actual, Interval::two());
+    }
+
     #[traced_test]
     #[rstest]
     #[case::normal_date(

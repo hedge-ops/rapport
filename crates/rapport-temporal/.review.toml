@@ -1,0 +1,13 @@
+date = "2026-06-16"
+grade = "A"
+
+[mutation_testing]
+last_run = "2026-06-16"
+command = "builder crates/rapport-temporal test-mutants"
+outcome = "passed"
+total = 551
+caught = 410
+missed = 0
+timed_out = 0
+unviable = 141
+baseline_failures = 0

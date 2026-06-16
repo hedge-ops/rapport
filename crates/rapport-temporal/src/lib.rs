@@ -29,6 +29,9 @@ pub mod query;
 pub mod recurrence;
 pub mod time;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
 pub(crate) trait DisplayExt {
     fn displayed(self) -> String;
 }
@@ -47,4 +50,17 @@ pub enum Error {
     InvalidRecurrence(String),
     #[error("invalid offset: {0}")]
     InvalidOffset(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::DisplayExt;
+
+    #[test]
+    fn displayed_should_print_inner_value_or_none() {
+        assert_eq!(Some(7).displayed(), "7");
+        assert_eq!(Option::<u8>::None.displayed(), "none");
+    }
 }

@@ -34,6 +34,8 @@ pub struct RecurrenceRule {
     schedule: RecurrenceSchedule,
 }
 
+const MAX_RECURRENCE_ADVANCEMENTS: usize = 1_000_000;
+
 impl RecurrenceRule {
     #[must_use]
     pub fn new(starting: Date, schedule: RecurrenceSchedule) -> Self {
@@ -48,10 +50,35 @@ impl RecurrenceRule {
     #[must_use]
     pub fn next_occurrence_after(&self, value: Date) -> Date {
         let mut next_value = self.schedule.next_occurrence_after(self.starting);
-        while next_value <= value {
-            next_value = self.schedule.next_occurrence_after(next_value);
+
+        for _ in 0..MAX_RECURRENCE_ADVANCEMENTS {
+            if next_value > value {
+                return next_value;
+            }
+
+            let previous_value = next_value;
+            next_value = self.schedule.next_occurrence_after(previous_value);
+            if next_value <= previous_value {
+                tracing::error!(
+                    starting = %self.starting,
+                    after = %value,
+                    previous = %previous_value,
+                    next = %next_value,
+                    schedule = ?self.schedule,
+                    "stopping recurrence calculation because schedule did not advance"
+                );
+                return value.day_after();
+            }
         }
-        next_value
+
+        tracing::error!(
+            starting = %self.starting,
+            after = %value,
+            schedule = ?self.schedule,
+            max_advancements = MAX_RECURRENCE_ADVANCEMENTS,
+            "stopping recurrence calculation after too many advancements"
+        );
+        value.day_after()
     }
 
     /// Returns the next occurrence from this point forward.
@@ -623,6 +650,12 @@ mod tests {
     #[rstest]
     #[case::from_last_month("2025-06-01", "2025-07-01", RecurrenceSchedule::daily(), "2025-07-02")]
     #[case::years_ago("2020-06-01", "2025-07-01", RecurrenceSchedule::daily(), "2025-07-02")]
+    #[case::weekly_after_start(
+        "2025-06-09",
+        "2025-07-02",
+        RecurrenceSchedule::weekly_on(Weekday::Monday),
+        "2025-07-07"
+    )]
     fn recurrence_rule_next_occurrence_after(
         #[case] starting: &str,
         #[case] from: &str,
@@ -637,6 +670,149 @@ mod tests {
         let actual = rule.next_occurrence_after(from);
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn recurrence_rule_should_expose_starting_schedule_and_string_form() {
+        let starting = Date::from_str_unchecked("2025-06-09");
+        let schedule = RecurrenceSchedule::weekly_on(Weekday::Tuesday);
+        let rule = RecurrenceRule::new(starting, schedule.clone());
+
+        assert_eq!(rule.starting(), starting);
+        assert_eq!(rule.schedule(), &schedule);
+        assert_eq!(rule.into_string(), "weekly on Tuesday");
+    }
+
+    #[test]
+    fn recurrence_rule_next_occurrence_after_should_stop_when_schedule_cannot_advance() {
+        let max_date = Date::from_naive_date(crate::date::NaiveDate::MAX);
+        let rule = RecurrenceRule::daily(max_date);
+
+        let actual = rule.next_occurrence_after(max_date);
+
+        assert_eq!(actual, max_date);
+    }
+
+    #[rstest]
+    #[case::valid_weekly("weekly on Monday", true)]
+    #[case::valid_monthly("monthly on the 15th", true)]
+    #[case::invalid_weekday("weekly on Moonday", false)]
+    #[case::invalid_interval("every zero days", false)]
+    fn recurrence_schedule_validate_should_report_parseability(
+        #[case] input: &str,
+        #[case] expected: bool,
+    ) {
+        let actual = RecurrenceSchedule::validate(input);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn recurrence_schedule_common_should_include_standard_options() {
+        let starting = Date::from_str_unchecked("2025-06-09");
+
+        let actual = RecurrenceSchedule::common(starting);
+
+        assert_eq!(
+            actual,
+            vec![
+                RecurrenceSchedule::daily(),
+                RecurrenceSchedule::weekly(starting),
+                RecurrenceSchedule::every_two_weeks(starting),
+                RecurrenceSchedule::monthly(starting),
+                RecurrenceSchedule::quarterly(starting),
+                RecurrenceSchedule::yearly(starting),
+            ]
+        );
+    }
+
+    #[test]
+    fn recurrence_schedule_into_weekly_should_only_extract_weekly_schedules() {
+        let weekly = RecurrenceSchedule::weekly_on(Weekday::Monday);
+
+        let actual = assert_some!(
+            weekly.into_weekly(),
+            "expecting weekly schedule to be extracted"
+        );
+
+        assert_eq!(actual, WeeklyRecurrenceSchedule::weekly_on(Weekday::Monday));
+        assert!(
+            RecurrenceSchedule::daily().into_weekly().is_none(),
+            "expecting non-weekly schedule not to extract as weekly"
+        );
+    }
+
+    #[test]
+    fn recurrence_schedule_into_monthly_should_only_extract_monthly_schedules() {
+        let monthly =
+            RecurrenceSchedule::Monthly(MonthlyRecurrenceSchedule::monthly_each(DayOfMonth::Ninth));
+
+        let actual = assert_some!(
+            monthly.into_monthly(),
+            "expecting monthly schedule to be extracted"
+        );
+
+        assert_eq!(
+            actual,
+            MonthlyRecurrenceSchedule::monthly_each(DayOfMonth::Ninth)
+        );
+        assert!(
+            RecurrenceSchedule::daily().into_monthly().is_none(),
+            "expecting non-monthly schedule not to extract as monthly"
+        );
+    }
+
+    #[rstest]
+    #[case::daily(
+        RecurrenceSchedule::Daily(DailyRecurrenceSchedule::new(Interval::three())),
+        Interval::three()
+    )]
+    #[case::weekly(
+        RecurrenceSchedule::Weekly(WeeklyRecurrenceSchedule::new(
+            Interval::two(),
+            Weekday::Monday
+        )),
+        Interval::two()
+    )]
+    #[case::monthly(
+        RecurrenceSchedule::Monthly(MonthlyRecurrenceSchedule::new(
+            Interval::three(),
+            MonthlySpecification::each(DayOfMonth::Ninth)
+        )),
+        Interval::three()
+    )]
+    #[case::yearly(
+        RecurrenceSchedule::Yearly(YearlyRecurrenceSchedule::new(
+            Interval::two(),
+            Month::June,
+            None
+        )),
+        Interval::two()
+    )]
+    fn recurrence_schedule_interval_should_delegate_to_inner_schedule(
+        #[case] schedule: RecurrenceSchedule,
+        #[case] expected: Interval,
+    ) {
+        assert_eq!(schedule.interval(), expected);
+    }
+
+    #[test]
+    fn take_first_should_remove_and_return_the_first_element() {
+        let mut values = vec![1, 2, 3];
+
+        let actual = take_first(&mut values);
+
+        assert_eq!(actual, Some(1));
+        assert_eq!(values, vec![2, 3]);
+        assert_eq!(take_first::<u8>(&mut Vec::new()), None);
+    }
+
+    #[test]
+    fn interval_should_expose_nonzero_count_and_plurality() {
+        assert_eq!(Interval::one().get(), 1);
+        assert!(!Interval::one().is_many());
+        assert_eq!(Interval::four().get(), 4);
+        assert!(Interval::four().is_many());
     }
 
     #[rstest]

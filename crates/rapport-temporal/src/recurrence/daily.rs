@@ -40,7 +40,16 @@ mod tests {
     use rstest::rstest;
 
     use super::DailyRecurrenceSchedule;
-    use crate::recurrence::Interval;
+    use crate::recurrence::{Interval, Schedule};
+
+    #[test]
+    fn interval_should_return_configured_interval() {
+        let schedule = DailyRecurrenceSchedule::new(Interval::three());
+
+        let actual = schedule.interval();
+
+        assert_eq!(actual, Interval::three());
+    }
 
     #[rstest]
     #[case::daily("2025-06-05", Interval::one(), "2025-06-06")]
@@ -50,7 +59,7 @@ mod tests {
         #[case] interval: Interval,
         #[case] expected: &str,
     ) {
-        use crate::{date::Date, recurrence::Schedule};
+        use crate::date::Date;
 
         let recurrence = DailyRecurrenceSchedule { interval };
 

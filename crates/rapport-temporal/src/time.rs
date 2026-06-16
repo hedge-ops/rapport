@@ -279,9 +279,13 @@ mod tests {
     }
 
     #[test]
-    fn now_should_convert_to_instant() {
-        let instant: Instant = SystemTime::now().into();
-        assert!(instant.seconds > 0, "expecting instant to have seconds");
+    fn system_time_should_convert_to_instant() {
+        let system_time = UNIX_EPOCH + std::time::Duration::from_secs(1_721_030_400);
+
+        let instant: Instant = system_time.into();
+
+        assert_eq!(instant.seconds, 1_721_030_400);
+        assert_eq!(instant.nanos, 0);
     }
 
     #[rstest]
@@ -379,5 +383,46 @@ mod tests {
             later >= earlier,
             "expecting later to be greater than or equal to earlier"
         );
+    }
+
+    #[test]
+    fn instant_into_date_should_use_local_calendar_date() {
+        let instant = Instant::from_timestamp(1_759_226_820);
+
+        let actual = instant.into_date();
+
+        assert_eq!(actual.into_iso_string(), "2025-09-30");
+    }
+
+    #[test]
+    fn duration_from_std_should_preserve_seconds_and_nanoseconds() {
+        let duration = std::time::Duration::new(2, 500_000_001);
+
+        let actual = Duration::from_std(duration);
+
+        assert_eq!(actual.nanos, 2_500_000_001);
+    }
+
+    #[rstest]
+    #[case::exact_seconds(2_000_000_000, 2)]
+    #[case::with_subsecond_nanos(2_500_000_001, 2)]
+    fn duration_as_secs_should_return_whole_seconds(#[case] nanos: u64, #[case] expected: u64) {
+        let duration = Duration { nanos };
+
+        let actual = duration.as_secs();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn duration_into_std_should_preserve_nanoseconds() {
+        let duration = Duration {
+            nanos: 2_500_000_001,
+        };
+
+        let actual = duration.into_std();
+
+        assert_eq!(actual.as_secs(), 2);
+        assert_eq!(actual.subsec_nanos(), 500_000_001);
     }
 }

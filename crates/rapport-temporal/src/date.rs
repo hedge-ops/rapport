@@ -293,17 +293,13 @@ impl Date {
     /// If today is that weekday, returns the *previous* occurrence (not today).
     #[must_use]
     pub fn last_weekday(self, weekday: Weekday) -> Self {
-        let today_weekday = self.weekday();
-        let days_back = if today_weekday == weekday {
-            7 // If today is the target weekday, go back a full week
+        let today_num = self.weekday().num_days_from_monday();
+        let target_num = weekday.num_days_from_monday();
+        let days_since = (today_num + Weekday::COUNT - target_num) % Weekday::COUNT;
+        let days_back = if days_since == 0 {
+            Weekday::COUNT
         } else {
-            let today_num = today_weekday.num_days_from_monday();
-            let target_num = weekday.num_days_from_monday();
-            if today_num > target_num {
-                today_num - target_num
-            } else {
-                7 - (target_num - today_num)
-            }
+            days_since
         };
         self.sub_days(days_back)
     }
@@ -509,22 +505,13 @@ pub enum Weekday {
 
 impl Weekday {
     pub(crate) fn next_occurrence_after(self, date: Date) -> Date {
-        let after_weekday = date.weekday();
-
-        let days_to_add = if after_weekday == self {
-            // If today is the target day, return next week's occurrence
+        let after_num_days = date.weekday().num_days_from_monday();
+        let self_num_days = self.num_days_from_monday();
+        let days_until = (self_num_days + Self::COUNT - after_num_days) % Self::COUNT;
+        let days_to_add = if days_until == 0 {
             Self::COUNT
         } else {
-            let after_num_days = after_weekday.num_days_from_monday();
-            let self_num_days = self.num_days_from_monday();
-
-            if self_num_days > after_num_days {
-                // target is later this week
-                self_num_days - after_num_days
-            } else {
-                // target is next week
-                Self::COUNT - after_num_days + self_num_days
-            }
+            days_until
         };
 
         date.add_days(days_to_add)
@@ -1203,9 +1190,11 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+    use chrono::Local;
     use claims::{assert_err, assert_ok, assert_some};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
+    use strum::VariantArray;
     use tracing_test::traced_test;
 
     const SAMPLE_DATE_STR: &str = "2025-01-30";
@@ -1300,6 +1289,32 @@ mod tests {
     }
 
     #[rstest]
+    #[case::one_day("2025-01-30", 1, "2025-01-31")]
+    #[case::across_month("2025-01-30", 3, "2025-02-02")]
+    #[case::interval_three("2025-01-30", usize::from(Interval::three()), "2025-02-02")]
+    fn add_days_should_advance_by_calendar_days(
+        #[case] input: &str,
+        #[case] days: usize,
+        #[case] expected: &str,
+    ) {
+        let input = Date::from_str_unchecked(input);
+        let expected = Date::from_str_unchecked(expected);
+
+        let actual = input.add_days(days);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn add_interval_days_should_use_interval_value() {
+        let input = Date::from_str_unchecked("2025-01-30");
+
+        let actual = input.add_interval_days(Interval::three());
+
+        assert_eq!(actual, Date::from_str_unchecked("2025-02-02"));
+    }
+
+    #[rstest]
     #[case::first("1st", DayOfMonth::First)]
     #[case::second("2nd", DayOfMonth::Second)]
     #[case::third("3rd", DayOfMonth::Third)]
@@ -1371,6 +1386,89 @@ mod tests {
     }
 
     #[rstest]
+    #[case::same_day("2025-01-30", "2025-01-30", 0)]
+    #[case::forward("2025-02-02", "2025-01-30", 3)]
+    #[case::reversed("2025-01-30", "2025-02-02", 3)]
+    fn days_between_should_return_absolute_day_count(
+        #[case] left: &str,
+        #[case] right: &str,
+        #[case] expected: usize,
+    ) {
+        let left = Date::from_str_unchecked(left);
+        let right = Date::from_str_unchecked(right);
+
+        let actual = left.days_between(right);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::middle_of_month("2025-01-15", "2025-02-15")]
+    #[case::end_of_short_month("2025-01-31", "2025-02-28")]
+    #[case::december_wraps_year("2025-12-15", "2026-01-15")]
+    fn date_next_month_should_add_one_calendar_month(#[case] input: &str, #[case] expected: &str) {
+        let input = Date::from_str_unchecked(input);
+        let expected = Date::from_str_unchecked(expected);
+
+        let actual = input.next_month();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::weekday("2025-06-02", "2025-06-03")]
+    #[case::friday_skips_weekend("2025-06-06", "2025-06-09")]
+    #[case::saturday_skips_to_monday("2025-06-07", "2025-06-09")]
+    #[case::sunday_skips_to_monday("2025-06-08", "2025-06-09")]
+    fn next_business_day_should_skip_weekends(#[case] input: &str, #[case] expected: &str) {
+        let input = Date::from_str_unchecked(input);
+        let expected = Date::from_str_unchecked(expected);
+
+        let actual = input.next_business_day();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::next_sunday_from_sunday("2025-06-08", "2025-06-15")]
+    #[case::next_sunday_from_monday("2025-06-09", "2025-06-15")]
+    fn next_sunday_should_return_a_future_sunday(#[case] input: &str, #[case] expected: &str) {
+        let input = Date::from_str_unchecked(input);
+        let expected = Date::from_str_unchecked(expected);
+
+        let actual = input.next_sunday();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::next_saturday_from_saturday("2025-06-07", "2025-06-14")]
+    #[case::next_saturday_from_friday("2025-06-06", "2025-06-07")]
+    fn next_saturday_should_return_a_future_saturday(#[case] input: &str, #[case] expected: &str) {
+        let input = Date::from_str_unchecked(input);
+        let expected = Date::from_str_unchecked(expected);
+
+        let actual = input.next_saturday();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::saturday_returns_same_day("2025-06-07", "2025-06-07")]
+    #[case::friday_returns_tomorrow("2025-06-06", "2025-06-07")]
+    fn soonest_saturday_should_include_today_when_it_is_saturday(
+        #[case] input: &str,
+        #[case] expected: &str,
+    ) {
+        let input = Date::from_str_unchecked(input);
+        let expected = Date::from_str_unchecked(expected);
+
+        let actual = input.soonest_saturday();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
     #[case("2025-01-01", "2025-01-01")]
     #[case("2025-01-02", "2025-01-01")]
     #[case("2025-06-30", "2025-01-01")]
@@ -1381,6 +1479,158 @@ mod tests {
         let expected = Date::from_str_unchecked(expected);
         let actual = date.first_of_year();
         assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::same_weekday_returns_previous_week("2025-06-02", Weekday::Monday, "2025-05-26")]
+    #[case::earlier_this_week("2025-06-06", Weekday::Tuesday, "2025-06-03")]
+    #[case::previous_week("2025-06-03", Weekday::Saturday, "2025-05-31")]
+    fn last_weekday_should_return_previous_occurrence(
+        #[case] input: &str,
+        #[case] weekday: Weekday,
+        #[case] expected: &str,
+    ) {
+        let input = Date::from_str_unchecked(input);
+        let expected = Date::from_str_unchecked(expected);
+
+        let actual = input.last_weekday(weekday);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn january_first_should_create_first_day_of_year() {
+        let actual = assert_some!(
+            Date::january_first(Year(2025)),
+            "expecting january first to be a valid date"
+        );
+
+        assert_eq!(actual, Date::from_str_unchecked("2025-01-01"));
+    }
+
+    #[test]
+    fn from_naive_date_should_preserve_calendar_date() {
+        let naive_date = assert_some!(
+            NaiveDate::from_ymd_opt(2025, 9, 30),
+            "expecting fixture date to be valid"
+        );
+
+        let actual = Date::from_naive_date(naive_date);
+
+        assert_eq!(actual.into_iso_string(), "2025-09-30");
+    }
+
+    #[test]
+    fn today_should_match_local_calendar_date() {
+        let before = Date::from_naive_date(Local::now().date_naive());
+
+        let actual = Date::today();
+
+        let after = Date::from_naive_date(Local::now().date_naive());
+        assert!(
+            actual == before || actual == after,
+            "expecting today to match local calendar date"
+        );
+    }
+
+    #[test]
+    fn weekday_next_occurrence_after_days_should_pick_the_nearest_day() {
+        let from = Date::from_str_unchecked("2025-06-07");
+        let days = assert_some!(
+            NonEmpty::from_slice(&[Weekday::Friday, Weekday::Tuesday]),
+            "expecting fixture weekdays to be non-empty"
+        );
+
+        let actual = Weekday::next_occurrence_after_days(&days, from);
+
+        assert_eq!(actual, Date::from_str_unchecked("2025-06-10"));
+    }
+
+    #[rstest]
+    #[case::monday(Weekday::Monday, "M")]
+    #[case::tuesday(Weekday::Tuesday, "T")]
+    #[case::wednesday(Weekday::Wednesday, "W")]
+    #[case::thursday(Weekday::Thursday, "T")]
+    #[case::friday(Weekday::Friday, "F")]
+    #[case::saturday(Weekday::Saturday, "S")]
+    #[case::sunday(Weekday::Sunday, "S")]
+    fn weekday_first_initial_should_use_calendar_initials(
+        #[case] weekday: Weekday,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(weekday.first_initial(), expected);
+    }
+
+    #[rstest]
+    #[case::january(1, Month::January, "Jan")]
+    #[case::february(2, Month::February, "Feb")]
+    #[case::march(3, Month::March, "Mar")]
+    #[case::april(4, Month::April, "Apr")]
+    #[case::may(5, Month::May, "May")]
+    #[case::june(6, Month::June, "Jun")]
+    #[case::july(7, Month::July, "Jul")]
+    #[case::august(8, Month::August, "Aug")]
+    #[case::september(9, Month::September, "Sep")]
+    #[case::october(10, Month::October, "Oct")]
+    #[case::november(11, Month::November, "Nov")]
+    #[case::december(12, Month::December, "Dec")]
+    fn month_should_convert_from_number_and_print_short_description(
+        #[case] number: u32,
+        #[case] expected_month: Month,
+        #[case] expected_short_description: &str,
+    ) {
+        let actual_month = assert_some!(
+            Month::from_number(number),
+            "expecting month number to convert"
+        );
+
+        assert_eq!(actual_month, expected_month);
+        assert_eq!(actual_month.short_description(), expected_short_description);
+    }
+
+    #[rstest]
+    #[case::zero(0)]
+    #[case::thirteen(13)]
+    fn month_from_number_should_reject_invalid_numbers(#[case] number: u32) {
+        assert!(
+            Month::from_number(number).is_none(),
+            "expecting invalid month number to be rejected"
+        );
+    }
+
+    #[test]
+    fn day_of_month_should_convert_all_calendar_days_from_values() {
+        for (index, expected) in DayOfMonth::VARIANTS.iter().copied().enumerate() {
+            let value = u32::try_from(index).unwrap_or_default() + 1;
+
+            let actual = assert_some!(
+                DayOfMonth::from_value(value),
+                "expecting calendar day value to convert"
+            );
+
+            assert_eq!(actual, expected);
+            assert_eq!(actual.to_value(), value);
+        }
+    }
+
+    #[rstest]
+    #[case::zero(0)]
+    #[case::thirty_two(32)]
+    fn day_of_month_from_value_should_reject_invalid_values(#[case] value: u32) {
+        assert!(
+            DayOfMonth::from_value(value).is_none(),
+            "expecting invalid day of month to be rejected"
+        );
+    }
+
+    #[rstest]
+    #[case::first(Quarter::Q1, 1)]
+    #[case::second(Quarter::Q2, 2)]
+    #[case::third(Quarter::Q3, 3)]
+    #[case::fourth(Quarter::Q4, 4)]
+    fn quarter_should_convert_to_and_from_number(#[case] quarter: Quarter, #[case] number: u8) {
+        assert_eq!(quarter.to_number(), number);
+        assert_eq!(Quarter::from_number(number), Some(quarter));
     }
 
     #[rstest]

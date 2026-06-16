@@ -100,6 +100,15 @@ mod tests {
     use claims::assert_some;
     use nonempty::NonEmpty;
 
+    #[test]
+    fn interval_should_return_configured_interval() {
+        let schedule = WeeklyRecurrenceSchedule::new(Interval::two(), Weekday::Monday);
+
+        let actual = schedule.interval();
+
+        assert_eq!(actual, Interval::two());
+    }
+
     #[rstest]
     #[case::weekly("2025-06-07", Interval::one(), &[Weekday::Saturday], "2025-06-14")]
     #[case::different_day("2025-06-07", Interval::one(), &[Weekday::Tuesday], "2025-06-10")]
