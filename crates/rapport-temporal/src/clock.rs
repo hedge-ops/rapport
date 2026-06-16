@@ -83,3 +83,39 @@ impl From<&FakeClock> for Clock {
         value.clone().into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn clock_today_should_use_the_current_instant() {
+        let fake = FakeClock::new(Instant::from_timestamp(1_759_226_820));
+        let clock = Clock::from(&fake);
+
+        let actual = clock.today();
+
+        assert_eq!(actual.into_iso_string(), "2025-09-30");
+    }
+
+    #[test]
+    fn fake_clock_add_days_should_advance_by_whole_days() {
+        let fake = FakeClock::new(Instant::from_timestamp(1_759_226_820));
+
+        fake.add_days(2);
+
+        assert_eq!(fake.now().to_string(), "2025-10-02 10:07:00 UTC");
+    }
+
+    #[test]
+    fn fake_clock_set_time_should_replace_shared_time() {
+        let fake = FakeClock::new(Instant::from_timestamp(1_759_226_820));
+        let cloned = fake.clone();
+
+        fake.set_time(Instant::from_timestamp(1_764_497_220));
+
+        assert_eq!(cloned.now().to_string(), "2025-11-30 10:07:00 UTC");
+    }
+}

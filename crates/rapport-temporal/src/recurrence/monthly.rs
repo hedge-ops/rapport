@@ -228,7 +228,7 @@ mod tests {
     use crate::recurrence::MonthlySpecification;
     use crate::{
         date::{DayOfMonth, Weekday},
-        recurrence::{DaySpecification, Interval, Ordinal},
+        recurrence::{DaySpecification, Interval, Ordinal, Schedule},
     };
     use claims::assert_some;
     use nonempty::NonEmpty;
@@ -398,6 +398,80 @@ mod tests {
             recurrence,
             OrdinalMonthlyRecurrence::new(Ordinal::First, DaySpecification::Any),
             "expecting the ordinal recurrence to default to the first day"
+        );
+    }
+
+    #[test]
+    fn monthly_recurrence_schedule_interval_should_return_configured_interval() {
+        let schedule = MonthlyRecurrenceSchedule::new(
+            Interval::three(),
+            MonthlySpecification::each(DayOfMonth::Ninth),
+        );
+
+        let actual = schedule.interval();
+
+        assert_eq!(actual, Interval::three());
+    }
+
+    #[test]
+    fn monthly_specification_into_each_should_only_extract_each_specification() {
+        let days = assert_some!(
+            NonEmpty::from_slice(&[DayOfMonth::Ninth, DayOfMonth::Fifteenth]),
+            "expecting fixture days to be non-empty"
+        );
+
+        let actual = assert_some!(
+            MonthlySpecification::Each(days.clone()).into_each(),
+            "expecting each specification to extract days"
+        );
+
+        assert_eq!(actual, days);
+        assert!(
+            MonthlySpecification::OnThe(OrdinalMonthlyRecurrence::new(
+                Ordinal::First,
+                DaySpecification::Weekday
+            ))
+            .into_each()
+            .is_none(),
+            "expecting ordinal specification not to extract days"
+        );
+    }
+
+    #[test]
+    fn monthly_specification_into_on_the_should_only_extract_ordinal_specification() {
+        let recurrence = OrdinalMonthlyRecurrence::new(Ordinal::Last, DaySpecification::Weekday);
+
+        let actual = assert_some!(
+            MonthlySpecification::OnThe(recurrence).into_on_the(),
+            "expecting ordinal specification to extract recurrence"
+        );
+
+        assert_eq!(actual, recurrence);
+        assert!(
+            MonthlySpecification::each(DayOfMonth::Ninth)
+                .into_on_the()
+                .is_none(),
+            "expecting each specification not to extract ordinal recurrence"
+        );
+    }
+
+    #[test]
+    fn ordinal_monthly_recurrence_mutators_should_replace_one_field() {
+        let recurrence = OrdinalMonthlyRecurrence::new(
+            Ordinal::First,
+            DaySpecification::Specific(Weekday::Monday),
+        );
+
+        assert_eq!(
+            recurrence.with_another_ordinal(Ordinal::Last),
+            OrdinalMonthlyRecurrence::new(
+                Ordinal::Last,
+                DaySpecification::Specific(Weekday::Monday)
+            )
+        );
+        assert_eq!(
+            recurrence.with_another_day_specification(DaySpecification::Weekend),
+            OrdinalMonthlyRecurrence::new(Ordinal::First, DaySpecification::Weekend)
         );
     }
 }

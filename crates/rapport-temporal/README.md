@@ -9,7 +9,7 @@ We won't worry about what happens after the sun dies, we'll get stuff done here.
 Add this to your `Cargo.toml`:
 
 ```toml
-rapport-temporal = "0.1.0"
+rapport-temporal = "0.2.2"
 ```
 
 ## Usage
@@ -21,6 +21,22 @@ use rapport_temporal::recurrence::RecurrenceRule;
 let today = Date::today();
 let rule = RecurrenceRule::parse("weekly on monday", today).unwrap();
 let next_monday = rule.next_occurrence_after(today);
+```
+
+## Testing Fixtures
+
+Enable the `testing` feature in test-only dependencies when another crate needs
+fixed dates or times:
+
+```toml
+rapport-temporal = { version = "0.2.2", features = ["testing"] }
+```
+
+```rust
+use rapport_temporal::testing::{now, today};
+
+let current_date = today();
+let current_time = now();
 ```
 
 ## License
