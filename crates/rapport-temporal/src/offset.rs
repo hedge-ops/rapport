@@ -290,11 +290,11 @@ mod tests {
     }
 
     // Mirrors the consumer (app_v2) usage: `RelativeOffset` is carried inside a
-    // facet-0.44 enum that also derives serde + Hash/Eq and is `#[repr(C)]`. This
+    // facet-0.46 enum that also derives serde + Hash/Eq and is `#[repr(C)]`. This
     // compiles only if `RelativeOffset` (and the `Interval` it wraps) satisfy all
     // of those bounds, which is the whole point of the derives.
     #[test]
-    fn satisfies_facet_0_44_consumer_bounds() {
+    fn satisfies_facet_0_46_consumer_bounds() {
         #[derive(
             facet::Facet, serde::Serialize, serde::Deserialize, Hash, PartialEq, Eq, Clone, Debug,
         )]

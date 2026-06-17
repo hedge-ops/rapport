@@ -14,7 +14,7 @@ authors = ["Michael Hedgpeth <michael@hedge-ops.com>"]
 camino = "1.1"
 chrono = { version = "0.4.42", features = ["serde"] }
 derive_more = { version = "2.0.1", features = ["display", "from_str"] }
-facet = { version = "=0.44", features = ["nonzero", "uuid"] }
+facet = { version = "=0.46", features = ["nonzero", "uuid"] }
 nonempty = "0.12.0"
 parking_lot = "0.12.1"
 regex = { version = "1.12.2", features = ["unicode-perl"] }
