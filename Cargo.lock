@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "rapport-temporal"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "claims",
@@ -566,6 +566,7 @@ dependencies = [
  "regex-macro",
  "rstest",
  "serde",
+ "serde_json",
  "strum",
  "thiserror",
  "tracing",

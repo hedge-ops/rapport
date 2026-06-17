@@ -1219,6 +1219,24 @@ mod tests {
         assert!(!Date::is_valid_date_str(invalid_date_str));
     }
 
+    #[test]
+    fn date_should_serialize_as_an_iso_string() {
+        let date = Date::from_str_unchecked("2026-04-27");
+
+        let json = assert_ok!(serde_json::to_string(&date));
+        assert_eq!(json, r#""2026-04-27""#);
+
+        let parsed: Date = assert_ok!(serde_json::from_str(&json));
+        assert_eq!(parsed, date);
+    }
+
+    #[test]
+    fn date_should_reject_a_malformed_iso_string() {
+        let result: Result<Date, _> = serde_json::from_str(r#""January 1, 2025""#);
+
+        assert_err!(result);
+    }
+
     #[rstest]
     #[case::same_day("2025-06-07", Weekday::Saturday, "2025-06-14")]
     #[case::next_day("2025-06-07", Weekday::Sunday, "2025-06-08")]

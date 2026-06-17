@@ -50,6 +50,12 @@ pub enum Error {
     InvalidRecurrence(String),
     #[error("invalid offset: {0}")]
     InvalidOffset(String),
+    #[error(
+        "instant is not a valid RFC 3339 timestamp (expected e.g. `2026-06-17T12:00:00Z`): {0}"
+    )]
+    InvalidInstant(String),
+    #[error("instant must be UTC (offset must be zero, e.g. a `Z` suffix or `+00:00`): {0}")]
+    NonUtcInstant(String),
 }
 
 #[cfg(test)]
