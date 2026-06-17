@@ -2,10 +2,11 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc};
 use facet::Facet;
 use serde::{Deserialize, Serialize};
 
+use crate::Error;
 use crate::date::Date;
 
 // facet's derive emits an `unsafe impl`, which trips `unsafe_derive_deserialize`; deserialization itself is safe.
@@ -83,6 +84,35 @@ impl Instant {
             .unwrap_or_default()
     }
 
+    /// Formats this instant as a UTC RFC 3339 string with a `Z` suffix, such as
+    /// `2026-06-17T12:00:00Z`.
+    ///
+    /// Fractional seconds are only included when present, expanding to milli-,
+    /// micro-, or nanosecond precision as needed.
+    #[must_use]
+    pub fn to_rfc3339(self) -> String {
+        self.into_utc_datetime()
+            .to_rfc3339_opts(SecondsFormat::AutoSi, true)
+    }
+
+    /// Parses a UTC RFC 3339 timestamp string into an `Instant`.
+    ///
+    /// Fractional seconds up to nanosecond precision are supported. Both a `Z`
+    /// suffix and an explicit `+00:00` offset are accepted as UTC.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInstant`] when the string is not a valid RFC 3339
+    /// timestamp, and [`Error::NonUtcInstant`] when it carries a non-zero offset.
+    pub fn from_rfc3339(value: &str) -> Result<Self, Error> {
+        let parsed = DateTime::parse_from_rfc3339(value)
+            .map_err(|_| Error::InvalidInstant(value.to_owned()))?;
+        if parsed.offset().local_minus_utc() != 0 {
+            return Err(Error::NonUtcInstant(value.to_owned()));
+        }
+        Ok(Self::from_utc_datetime(parsed.with_timezone(&Utc)))
+    }
+
     #[must_use]
     pub fn subtract_minutes(self, value: u64) -> Self {
         let seconds = self.seconds.saturating_sub(value);
@@ -105,6 +135,95 @@ impl Instant {
 impl std::fmt::Display for Instant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.into_utc_datetime().fmt(f)
+    }
+}
+
+/// Serde helpers that represent an [`Instant`] as a UTC RFC 3339 string.
+///
+/// Attach the module to a required `Instant` field with
+/// `#[serde(with = "rapport_temporal::time::rfc3339")]`, and use the nested
+/// [`option`](rfc3339::option) module for an `Option<Instant>` field with
+/// `#[serde(with = "rapport_temporal::time::rfc3339::option")]`.
+///
+/// ```
+/// use rapport_temporal::time::{rfc3339, Instant};
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct Event {
+///     #[serde(with = "rfc3339")]
+///     at: Instant,
+///     #[serde(with = "rfc3339::option")]
+///     ended_at: Option<Instant>,
+/// }
+/// ```
+pub mod rfc3339 {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+    use super::Instant;
+
+    /// Serializes an [`Instant`] as a UTC RFC 3339 string with a `Z` suffix.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error raised by the underlying serializer.
+    pub fn serialize<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&instant.to_rfc3339())
+    }
+
+    /// Deserializes a UTC RFC 3339 string into an [`Instant`].
+    ///
+    /// # Errors
+    ///
+    /// Fails when the value is not a string, is not a valid RFC 3339 timestamp,
+    /// or carries a non-UTC offset.
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Instant, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Instant::from_rfc3339(&raw).map_err(D::Error::custom)
+    }
+
+    /// Serde helpers for an optional [`Instant`] field, mapping `None` to a
+    /// missing/`null` value and `Some` to a UTC RFC 3339 string.
+    pub mod option {
+        use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+
+        use super::super::Instant;
+
+        /// Serializes an `Option<Instant>` as either `null` or a UTC RFC 3339 string.
+        ///
+        /// # Errors
+        ///
+        /// Propagates any error raised by the underlying serializer.
+        pub fn serialize<S>(instant: &Option<Instant>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match instant {
+                Some(instant) => serializer.serialize_some(&instant.to_rfc3339()),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        /// Deserializes an `Option<Instant>` from either `null` or a UTC RFC 3339 string.
+        ///
+        /// # Errors
+        ///
+        /// Fails when a present value is not a string, is not a valid RFC 3339
+        /// timestamp, or carries a non-UTC offset.
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Instant>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let raw = Option::<String>::deserialize(deserializer)?;
+            raw.map(|raw| Instant::from_rfc3339(&raw).map_err(D::Error::custom))
+                .transpose()
+        }
     }
 }
 
@@ -204,11 +323,151 @@ impl Duration {
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
-    use claims::{assert_ok, assert_some};
+    use claims::{assert_err, assert_ok, assert_some};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
+    use serde::{Deserialize, Serialize};
 
     use super::*;
+
+    #[rstest]
+    #[case::whole_seconds(0, 0, "1970-01-01T00:00:00Z")]
+    #[case::milliseconds(0, 500_000_000, "1970-01-01T00:00:00.500Z")]
+    #[case::microseconds(0, 123_456_000, "1970-01-01T00:00:00.123456Z")]
+    #[case::nanoseconds(0, 123_456_789, "1970-01-01T00:00:00.123456789Z")]
+    fn to_rfc3339_should_use_utc_z_suffix_with_auto_precision(
+        #[case] seconds: u64,
+        #[case] nanos: u32,
+        #[case] expected: &str,
+    ) {
+        let instant = Instant { seconds, nanos };
+
+        assert_eq!(instant.to_rfc3339(), expected);
+    }
+
+    #[test]
+    fn to_rfc3339_should_format_a_realistic_utc_datetime() {
+        let datetime = assert_some!(
+            Utc.with_ymd_and_hms(2026, 6, 17, 12, 0, 0).single(),
+            "precondition: fixture datetime is unambiguous"
+        );
+
+        let instant = Instant::from_utc_datetime(datetime);
+
+        assert_eq!(instant.to_rfc3339(), "2026-06-17T12:00:00Z");
+    }
+
+    #[rstest]
+    #[case::z_suffix("2026-06-17T12:00:00Z", 0)]
+    #[case::explicit_zero_offset("2026-06-17T12:00:00+00:00", 0)]
+    #[case::fractional_nanos("2026-06-17T12:00:00.123456789Z", 123_456_789)]
+    fn from_rfc3339_should_accept_utc_timestamps(#[case] input: &str, #[case] expected_nanos: u32) {
+        let instant = assert_ok!(Instant::from_rfc3339(input));
+
+        let datetime = assert_some!(
+            Utc.with_ymd_and_hms(2026, 6, 17, 12, 0, 0).single(),
+            "precondition: fixture datetime is unambiguous"
+        );
+        assert_eq!(instant.seconds, datetime.timestamp().max(0).unsigned_abs());
+        assert_eq!(instant.nanos, expected_nanos);
+    }
+
+    #[rstest]
+    #[case::whole_seconds(1_781_697_600, 0)]
+    #[case::with_nanos(1_781_697_600, 123_456_789)]
+    #[case::epoch(0, 0)]
+    fn rfc3339_should_round_trip(#[case] seconds: u64, #[case] nanos: u32) {
+        let instant = Instant { seconds, nanos };
+
+        let round_tripped = assert_ok!(Instant::from_rfc3339(&instant.to_rfc3339()));
+
+        assert_eq!(round_tripped, instant);
+    }
+
+    #[rstest]
+    #[case::empty("")]
+    #[case::not_a_timestamp("not-a-timestamp")]
+    #[case::date_only("2026-06-17")]
+    #[case::missing_offset("2026-06-17T12:00:00")]
+    #[case::invalid_month("2026-13-01T00:00:00Z")]
+    fn from_rfc3339_should_reject_malformed_timestamps(#[case] input: &str) {
+        let error = assert_err!(Instant::from_rfc3339(input));
+
+        assert!(
+            matches!(error, Error::InvalidInstant(_)),
+            "expected InvalidInstant for {input:?}, got {error:?}"
+        );
+    }
+
+    #[rstest]
+    #[case::positive_offset("2026-06-17T12:00:00+01:00")]
+    #[case::negative_offset("2026-06-17T12:00:00-05:00")]
+    fn from_rfc3339_should_reject_non_utc_timestamps(#[case] input: &str) {
+        let error = assert_err!(Instant::from_rfc3339(input));
+
+        assert!(
+            matches!(error, Error::NonUtcInstant(_)),
+            "expected NonUtcInstant for {input:?}, got {error:?}"
+        );
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct SerdeSample {
+        #[serde(with = "rfc3339")]
+        at: Instant,
+        #[serde(with = "rfc3339::option")]
+        ended_at: Option<Instant>,
+    }
+
+    #[test]
+    fn serde_helpers_should_round_trip_required_and_optional_fields() {
+        let sample = SerdeSample {
+            at: Instant {
+                seconds: 0,
+                nanos: 123_456_789,
+            },
+            ended_at: Some(Instant {
+                seconds: 1_781_697_600,
+                nanos: 0,
+            }),
+        };
+
+        let json = assert_ok!(serde_json::to_string(&sample));
+        assert_eq!(
+            json,
+            r#"{"at":"1970-01-01T00:00:00.123456789Z","ended_at":"2026-06-17T12:00:00Z"}"#
+        );
+
+        let parsed: SerdeSample = assert_ok!(serde_json::from_str(&json));
+        assert_eq!(parsed, sample);
+    }
+
+    #[test]
+    fn serde_optional_helper_should_map_none_to_null() {
+        let sample = SerdeSample {
+            at: Instant {
+                seconds: 0,
+                nanos: 0,
+            },
+            ended_at: None,
+        };
+
+        let json = assert_ok!(serde_json::to_string(&sample));
+        assert_eq!(json, r#"{"at":"1970-01-01T00:00:00Z","ended_at":null}"#);
+
+        let parsed: SerdeSample = assert_ok!(serde_json::from_str(&json));
+        assert_eq!(parsed, sample);
+    }
+
+    #[rstest]
+    #[case::malformed(r#"{"at":"nonsense","ended_at":null}"#)]
+    #[case::non_utc(r#"{"at":"2026-06-17T12:00:00+01:00","ended_at":null}"#)]
+    #[case::malformed_optional(r#"{"at":"1970-01-01T00:00:00Z","ended_at":"nonsense"}"#)]
+    fn serde_helpers_should_reject_invalid_inputs(#[case] json: &str) {
+        let result: Result<SerdeSample, _> = serde_json::from_str(json);
+
+        assert_err!(result);
+    }
 
     #[rstest]
     #[case::summer_date(2025, 7, 24)]
@@ -239,11 +498,9 @@ mod tests {
             "expecting local time to exist"
         )
         .timestamp();
+        let expected_seconds: u64 = expected_seconds.max(0).try_into().unwrap_or_default();
 
-        assert_eq!(
-            instant.seconds,
-            expected_seconds.max(0).try_into().unwrap_or_default()
-        );
+        assert_eq!(instant.seconds, expected_seconds);
         assert_eq!(instant.nanos, 0);
 
         // convert back to date

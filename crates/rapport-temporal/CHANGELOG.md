@@ -6,6 +6,18 @@ crate adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-17
+
+### Added
+
+- First-class serde support for `Instant` as a UTC RFC 3339 string. New
+  `Instant::to_rfc3339` and `Instant::from_rfc3339` format and parse `Z`-suffixed
+  UTC timestamps with optional fractional seconds up to nanosecond precision.
+- Reusable `time::rfc3339` and `time::rfc3339::option` serde helper modules for
+  required and optional `Instant` fields via `#[serde(with = "...")]`.
+- `Error::InvalidInstant` and `Error::NonUtcInstant` variants giving clear,
+  distinct errors for malformed and non-UTC timestamps.
+
 ## [0.2.2] - 2026-06-16
 
 ### Added
@@ -43,7 +55,8 @@ Initial release.
 - `query` parser turning human/agent expressions into typed values.
 - `clock` for testable time.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.2...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.3...HEAD
+[0.2.3]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.2...rapport-temporal-v0.2.3
 [0.2.2]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.1...rapport-temporal-v0.2.2
 [0.2.0]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.1.0...rapport-temporal-v0.2.0
 [0.1.0]: https://github.com/hedge-ops/rapport/releases/tag/rapport-temporal-v0.1.0

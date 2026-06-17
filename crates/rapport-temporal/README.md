@@ -9,7 +9,7 @@ We won't worry about what happens after the sun dies, we'll get stuff done here.
 Add this to your `Cargo.toml`:
 
 ```toml
-rapport-temporal = "0.2.2"
+rapport-temporal = "0.2.3"
 ```
 
 ## Usage
@@ -22,6 +22,30 @@ let today = Date::today();
 let rule = RecurrenceRule::parse("weekly on monday", today).unwrap();
 let next_monday = rule.next_occurrence_after(today);
 ```
+
+## RFC 3339 Instants
+
+`Date` serializes as an ISO `YYYY-MM-DD` string out of the box. For `Instant`,
+the `time::rfc3339` serde helpers represent a value as a UTC RFC 3339 string with
+a `Z` suffix (with optional fractional seconds up to nanosecond precision). Use
+them on required and optional fields:
+
+```rust
+use rapport_temporal::time::{rfc3339, Instant};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct Event {
+    #[serde(with = "rfc3339")]
+    at: Instant,
+    #[serde(with = "rfc3339::option")]
+    ended_at: Option<Instant>,
+}
+```
+
+You can also format and parse directly with `Instant::to_rfc3339` and
+`Instant::from_rfc3339`. Parsing rejects malformed timestamps and any non-UTC
+offset with a clear error.
 
 ## Testing Fixtures
 
