@@ -6,6 +6,15 @@ crate adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-17
+
+### Changed
+
+- Bumped `facet` from `=0.44` to `=0.46`. The 0.46 release was API-compatible
+  for this crate (no source changes were required), but a `Facet` impl derived
+  under 0.46 does not satisfy a 0.44 trait bound, so any consumer relying on the
+  `Facet` impl must also be on facet 0.46.
+
 ## [0.2.3] - 2026-06-17
 
 ### Added
@@ -55,7 +64,8 @@ Initial release.
 - `query` parser turning human/agent expressions into typed values.
 - `clock` for testable time.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.3...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.4...HEAD
+[0.2.4]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.3...rapport-temporal-v0.2.4
 [0.2.3]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.2...rapport-temporal-v0.2.3
 [0.2.2]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.1...rapport-temporal-v0.2.2
 [0.2.0]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.1.0...rapport-temporal-v0.2.0
