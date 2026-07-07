@@ -5,18 +5,22 @@ mod runner;
 mod state;
 mod telemetry;
 mod view;
+mod work;
 
 pub use context::{Clock, CommandContext, SystemClock, find_repo_root};
 pub use paths::RapportPaths;
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
-pub use state::{WORK_STATE_SCHEMA_VERSION, WorkState, WorkStateError, WorkStateStore};
+pub use state::{
+    WORK_STATE_SCHEMA_VERSION, WorkFact, WorkStage, WorkState, WorkStateError, WorkStateStore,
+    WorkStatus,
+};
 pub use telemetry::{
     CommandEvent, CommandEventOutcome, EVENT_SCHEMA_VERSION, TelemetryError, TelemetryWriter,
 };
 pub use view::{Outcome, RunHint, View, ViewBuilder};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use cli::Cli;
+use cli::{Cli, Command, WorkCommand};
 use nonempty::nonempty;
 use rapport_files::{FileSystem, RealFileSystem, Utf8PathBuf};
 use std::io::Write;
@@ -65,7 +69,7 @@ where
     match Cli::try_parse_from(std::iter::once(String::from("rapport")).chain(arguments.clone())) {
         Ok(cli) => {
             let mut context = CommandContext::new(cwd, fs, clock, runner, out, err);
-            execute_foundation_command(&cli, arguments, &mut context)
+            execute_command(&cli, arguments, &mut context)
         }
         Err(error) if error.kind() == ErrorKind::DisplayHelp => {
             let _ = write!(out, "{error}");
@@ -89,7 +93,7 @@ fn current_utf8_dir() -> Result<Utf8PathBuf, String> {
         .map_err(|path| format!("current dir is not valid UTF-8: {}", path.to_string_lossy()))
 }
 
-fn execute_foundation_command<F, C, O, E>(
+fn execute_command<F, C, O, E>(
     cli: &Cli,
     argv: Vec<String>,
     context: &mut CommandContext<'_, F, C, O, E>,
@@ -100,9 +104,33 @@ where
     O: Write,
     E: Write,
 {
+    match &cli.command {
+        Command::Work(work_args) => match &work_args.command {
+            WorkCommand::Status => work::status(argv, context),
+            WorkCommand::Start(start_args) => work::start(start_args, argv, context),
+            WorkCommand::Add(_) | WorkCommand::Rules(_) => {
+                execute_pending_command(cli.command_path(), cli.pending_issue(), argv, context)
+            }
+        },
+        Command::Build(_) | Command::Integrate(_) => {
+            execute_pending_command(cli.command_path(), cli.pending_issue(), argv, context)
+        }
+    }
+}
+
+fn execute_pending_command<F, C, O, E>(
+    command: &'static str,
+    pending_issue: &'static str,
+    argv: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
     let exit_code = 2;
-    let command = cli.command_path();
-    let pending_issue = cli.pending_issue();
     let _ = writeln!(
         context.err,
         "{}",
@@ -265,11 +293,177 @@ mod tests {
     }
 
     #[test]
+    fn work_status_reports_no_active_work() {
+        let mut fs = InMemoryFileSystem::default();
+        let (code, out, err) = run_with_fs(&["work", "status"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("No active work state found"));
+        assert!(out.contains("rapport work start"));
+        assert_eq!(err, "");
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work status");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
+        assert_eq!(event.exit_code, 0);
+    }
+
+    #[test]
+    fn work_status_reports_active_work() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/.rapport/work.toml",
+            r#"
+schema_version = 1
+title = "Do the thing"
+objective = "Make it real"
+ticket = "PW-123"
+paths = ["app/api"]
+stage = "development"
+status = "active"
+created_at = "2026-07-07T23:00:00Z"
+updated_at = "2026-07-07T23:00:00Z"
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(&["work", "status"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Do the thing"));
+        assert!(out.contains("Make it real"));
+        assert!(out.contains("app/api"));
+        assert!(out.contains("rapport build"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn work_status_reports_invalid_state() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string("/repo/.rapport/work.toml", "schema_version =")
+            .unwrap();
+
+        let (code, out, err) = run_with_fs(&["work", "status"], &mut fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Could not read active work state"));
+        assert!(err.contains("work state parse error"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work status");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn work_start_creates_minimal_state() {
+        let mut fs = InMemoryFileSystem::default();
+        let (code, out, err) = run_with_fs(&["work", "start", "--title", "Do the thing"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Do the thing"));
+        assert!(out.contains("No paths added yet."));
+        assert_eq!(err, "");
+        let state = load_state(&fs);
+
+        assert_eq!(state.title, "Do the thing");
+        assert_eq!(state.stage, WorkStage::Development);
+        assert_eq!(state.status, WorkStatus::Active);
+        assert_eq!(state.created_at, "2026-07-07T23:00:00Z");
+        assert_eq!(state.updated_at, "2026-07-07T23:00:00Z");
+        assert!(state.paths.is_empty());
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work start");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn work_start_supports_ticket_objective_plan_and_multiple_paths() {
+        let mut fs = InMemoryFileSystem::default();
+        let (code, out, err) = run_with_fs(
+            &[
+                "work",
+                "start",
+                "--title",
+                "Do the thing",
+                "--ticket",
+                "PW-123",
+                "--plan",
+                "plan-7",
+                "--objective",
+                "Make it real",
+                "--path",
+                "app/api",
+                "--path",
+                "app/core",
+            ],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("PW-123"));
+        assert!(out.contains("app/api"));
+        assert!(out.contains("app/core"));
+        assert_eq!(err, "");
+        let state = load_state(&fs);
+
+        assert_eq!(state.ticket.as_deref(), Some("PW-123"));
+        assert_eq!(state.plan.as_deref(), Some("plan-7"));
+        assert_eq!(state.objective.as_deref(), Some("Make it real"));
+        assert_eq!(state.paths, vec!["app/api", "app/core"]);
+    }
+
+    #[test]
+    fn work_start_rejects_existing_active_work() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/.rapport/work.toml",
+            r#"
+schema_version = 1
+title = "Existing work"
+paths = ["app/api"]
+stage = "development"
+status = "active"
+created_at = "2026-07-07T23:00:00Z"
+updated_at = "2026-07-07T23:00:00Z"
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(&["work", "start", "--title", "New work"], &mut fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Active work already exists"));
+        assert!(err.contains("Existing work"));
+        let state = load_state(&fs);
+
+        assert_eq!(state.title, "Existing work");
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work start");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
     fn help_does_not_write_telemetry() {
         let mut fs = InMemoryFileSystem::default();
         let (code, _out, _err) = run_with_fs(&["work", "--help"], &mut fs);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(!fs.is_file("/repo/.rapport/events.jsonl"));
+    }
+
+    fn first_event(fs: &InMemoryFileSystem) -> CommandEvent {
+        let events = fs.read_to_string("/repo/.rapport/events.jsonl").unwrap();
+        serde_json::from_str(events.lines().next().unwrap()).unwrap()
+    }
+
+    fn load_state(fs: &InMemoryFileSystem) -> WorkState {
+        WorkStateStore::new(RapportPaths::new("/repo"))
+            .load(fs)
+            .unwrap()
+            .unwrap()
     }
 }
