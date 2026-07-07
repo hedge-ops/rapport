@@ -1,8 +1,6 @@
 # default target for local development
 default: dev
 
-mod cargo 'tests/cargo'
-
 # --------------------------------------------------------------------------
 # Development
 # --------------------------------------------------------------------------
@@ -28,14 +26,6 @@ test:
     @echo '{{ style("command") }}test:{{ NORMAL }}'
     cargo nextest run --workspace
 
-# runs CLI end-to-end fixtures outside Cargo's test runner
-e2e:
-    @echo '{{ style("command") }}e2e:{{ NORMAL }}'
-    uv run --locked python tests/e2e/run.py
-
-# backwards-compatible alias for the e2e suite
-acceptance: e2e
-
 # runs tests with coverage report
 cover:
     @echo '{{ style("command") }}cover:{{ NORMAL }}'
@@ -60,8 +50,8 @@ check-deps:
 # local development: fix, check, build, test
 dev: fix check build test
 
-# CI pipeline: check, build, test, e2e
-ci: check build test e2e
+# CI pipeline: check, build, test
+ci: check build test
 
 # Update Cargo dependencies and test
 update-deps:

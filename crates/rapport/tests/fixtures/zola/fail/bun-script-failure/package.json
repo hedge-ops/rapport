@@ -1,7 +1,0 @@
-{
-  "name": "zola-site",
-  "private": true,
-  "scripts": {
-    "build": "fail-build"
-  }
-}

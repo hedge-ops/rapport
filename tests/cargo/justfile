@@ -1,4 +1,0 @@
-# runs the Cargo subset of CLI e2e tests
-acceptance:
-    @echo '{{ style("command") }}tests/cargo/acceptance:{{ NORMAL }}'
-    bash ./acceptance.sh

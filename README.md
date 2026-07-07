@@ -88,8 +88,8 @@ just test
 just ci
 ```
 
-The current external e2e matrix exists for the older lifecycle runner and is
-not the long-term contract for the workflow layer.
+Command-level coverage should grow around the new `work -> build -> integrate`
+surface as it lands.
 
 ## License
 

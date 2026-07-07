@@ -1,4 +1,0 @@
-base_url = "https://example.com"
-
-[markdown]
-highlighting_theme = "base16-ocean-dark"

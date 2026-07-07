@@ -1,4 +1,0 @@
-base_url = "https://example.com"
-
-[search]
-index_format = "elasticlunr_javascript"
