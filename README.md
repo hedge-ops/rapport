@@ -72,9 +72,6 @@ Keeper crates:
 
 - `rapport-prose` - markdown-ish output primitives;
 - `rapport-temporal` - date, time, and recurrence primitives.
-
-Planned crate:
-
 - `rapport-files` - fake/real filesystem support for testable workflow code.
 
 ## Development

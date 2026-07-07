@@ -1,4 +1,4 @@
-//! Testable filesystem primitives for rapport CLIs.
+//! Testable filesystem primitives for Rapport workflow code.
 
 pub use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -209,5 +209,24 @@ mod tests {
         let err = assert_err!(fs.read_to_string(&path));
 
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn in_memory_file_system_reads_immediate_children_sorted() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_file("/work/z.toml");
+        fs.add_file("/work/a.toml");
+        fs.add_file("/work/nested/config.toml");
+
+        let children = assert_ok!(fs.read_dir("/work"));
+
+        assert_eq!(
+            children,
+            vec![
+                Utf8PathBuf::from("/work/a.toml"),
+                Utf8PathBuf::from("/work/nested"),
+                Utf8PathBuf::from("/work/z.toml"),
+            ]
+        );
     }
 }
