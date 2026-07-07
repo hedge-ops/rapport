@@ -14,8 +14,12 @@ authors.workspace = true
 [dependencies]
 rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
 rapport-files = { path = "../rapport-files", version = "0.1.0" }
+chrono.workspace = true
 clap.workspace = true
 nonempty.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 indoc = "2.0"
