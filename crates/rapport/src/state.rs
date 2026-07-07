@@ -10,20 +10,107 @@ pub const WORK_STATE_SCHEMA_VERSION: u16 = 1;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkState {
     pub schema_version: u16,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    pub stage: WorkStage,
+    pub status: WorkStatus,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<WorkFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrate: Option<WorkFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signoff: Option<WorkFact>,
 }
 
-impl WorkState {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            schema_version: WORK_STATE_SCHEMA_VERSION,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkStage {
+    Development,
+}
+
+impl fmt::Display for WorkStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Development => f.write_str("development"),
         }
     }
 }
 
-impl Default for WorkState {
-    fn default() -> Self {
-        Self::new()
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkStatus {
+    Active,
+}
+
+impl fmt::Display for WorkStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Active => f.write_str("active"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkFact {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+impl WorkState {
+    #[must_use]
+    pub fn new(title: impl Into<String>, created_at: impl Into<String>) -> Self {
+        let timestamp = created_at.into();
+        Self {
+            schema_version: WORK_STATE_SCHEMA_VERSION,
+            title: title.into(),
+            objective: None,
+            ticket: None,
+            plan: None,
+            paths: Vec::new(),
+            stage: WorkStage::Development,
+            status: WorkStatus::Active,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            build: None,
+            integrate: None,
+            signoff: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_objective(mut self, objective: Option<String>) -> Self {
+        self.objective = objective;
+        self
+    }
+
+    #[must_use]
+    pub fn with_ticket(mut self, ticket: Option<String>) -> Self {
+        self.ticket = ticket;
+        self
+    }
+
+    #[must_use]
+    pub fn with_plan(mut self, plan: Option<String>) -> Self {
+        self.plan = plan;
+        self
+    }
+
+    #[must_use]
+    pub fn with_paths(mut self, paths: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.paths = paths.into_iter().map(Into::into).collect();
+        self
     }
 }
 
@@ -122,11 +209,40 @@ mod tests {
     fn work_state_saves_and_loads_minimal_state() {
         let mut fs = InMemoryFileSystem::default();
         let store = WorkStateStore::new(RapportPaths::new("/repo"));
+        let state = WorkState::new("Do the thing", "2026-07-07T23:00:00Z");
 
-        store.save(&mut fs, &WorkState::new()).unwrap();
+        store.save(&mut fs, &state).unwrap();
 
-        assert_eq!(store.load(&fs).unwrap(), Some(WorkState::new()));
+        assert_eq!(store.load(&fs).unwrap(), Some(state));
         assert!(fs.is_dir("/repo/.rapport"));
+    }
+
+    #[test]
+    fn work_state_loads_active_work_fixture() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/.rapport/work.toml",
+            r#"
+schema_version = 1
+title = "Do the thing"
+objective = "Make it real"
+ticket = "PW-123"
+paths = ["app/api", "app/core"]
+stage = "development"
+status = "active"
+created_at = "2026-07-07T23:00:00Z"
+updated_at = "2026-07-07T23:00:00Z"
+"#,
+        )
+        .unwrap();
+        let store = WorkStateStore::new(RapportPaths::new("/repo"));
+
+        let state = store.load(&fs).unwrap().unwrap();
+
+        assert_eq!(state.title, "Do the thing");
+        assert_eq!(state.objective.as_deref(), Some("Make it real"));
+        assert_eq!(state.ticket.as_deref(), Some("PW-123"));
+        assert_eq!(state.paths, vec!["app/api", "app/core"]);
     }
 
     #[test]

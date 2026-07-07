@@ -100,10 +100,13 @@ pub enum WorkCommand {
 pub struct WorkStartArgs {
     /// Human title for the work.
     #[arg(long)]
-    pub title: Option<String>,
+    pub title: String,
     /// Durable ticket or issue identifier.
     #[arg(long)]
     pub ticket: Option<String>,
+    /// Durable plan identifier.
+    #[arg(long)]
+    pub plan: Option<String>,
     /// Desired outcome for the work.
     #[arg(long)]
     pub objective: Option<String>,
