@@ -4,9 +4,21 @@ mod view;
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 pub use view::{Outcome, RunHint, View, ViewBuilder};
 
+use clap::{Parser, error::ErrorKind};
 use nonempty::nonempty;
 use std::io::Write;
 use std::process::ExitCode;
+
+#[derive(Debug, Parser)]
+#[command(name = "rapport", about = "repository workflow cli")]
+struct Cli {
+    #[arg(
+        value_name = "COMMAND",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    command: Vec<String>,
+}
 
 /// Run the current `rapport` binary entrypoint.
 ///
@@ -23,6 +35,16 @@ where
     if arguments.is_empty() || arguments.iter().any(|arg| arg == "-h" || arg == "--help") {
         let _ = writeln!(out, "{}", render_help());
         ExitCode::SUCCESS
+    } else if let Err(error) =
+        Cli::try_parse_from(std::iter::once(String::from("rapport")).chain(arguments))
+    {
+        if error.kind() == ErrorKind::DisplayHelp {
+            let _ = writeln!(out, "{}", render_help());
+            ExitCode::SUCCESS
+        } else {
+            let _ = write!(err, "{error}");
+            ExitCode::from(2)
+        }
     } else {
         let _ = writeln!(err, "{}", render_pending_cli());
         ExitCode::from(2)
@@ -67,7 +89,11 @@ mod tests {
     struct NeverRunner;
 
     impl CommandRunner for NeverRunner {
-        fn run(&self, _spec: &CommandSpec, _cwd: &camino::Utf8Path) -> io::Result<CommandOutcome> {
+        fn run(
+            &self,
+            _spec: &CommandSpec,
+            _cwd: &rapport_files::Utf8Path,
+        ) -> io::Result<CommandOutcome> {
             panic!("placeholder CLI must not run external commands");
         }
     }

@@ -13,7 +13,8 @@ authors.workspace = true
 
 [dependencies]
 rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
-camino.workspace = true
+rapport-files = { path = "../rapport-files", version = "0.1.0" }
+clap.workspace = true
 nonempty.workspace = true
 
 [dev-dependencies]

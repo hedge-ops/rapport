@@ -1,8 +1,8 @@
 [package]
-name = "rapport-cli"
-description = "easily build clis that humans and agents will love"
-keywords = ["clap", "cli", "command-line", "agent", "ergonomic"]
-categories = ["command-line-interface", "development-tools"]
+name = "rapport-files"
+description = "Testable filesystem primitives for Rapport workflow code."
+keywords = ["filesystem", "testing", "cli", "agent", "workflow"]
+categories = ["filesystem", "development-tools::testing"]
 readme = "README.md"
 version = "0.1.0"
 edition.workspace = true
@@ -16,7 +16,6 @@ camino.workspace = true
 
 [dev-dependencies]
 claims.workspace = true
-rstest.workspace = true
 
 [lints]
 workspace = true
