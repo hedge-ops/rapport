@@ -2,7 +2,7 @@
 
 pub use camino::{Utf8Path, Utf8PathBuf};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::io;
+use std::io::{self, Write as _};
 
 pub trait FileSystem {
     fn is_dir(&self, path: impl AsRef<Utf8Path>) -> bool;
@@ -22,6 +22,31 @@ pub trait FileSystem {
     ///
     /// Returns the underlying filesystem error when the directory cannot be read.
     fn read_dir(&self, path: impl AsRef<Utf8Path>) -> io::Result<Vec<Utf8PathBuf>>;
+
+    /// Create a directory and all missing parent directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the directory cannot be created.
+    fn create_dir_all(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()>;
+
+    /// Write a UTF-8 file, replacing any existing contents.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the path cannot be written.
+    fn write_string(
+        &mut self,
+        path: impl AsRef<Utf8Path>,
+        contents: impl AsRef<str>,
+    ) -> io::Result<()>;
+
+    /// Append one UTF-8 line to a file, creating it when it does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the path cannot be appended.
+    fn append_line(&mut self, path: impl AsRef<Utf8Path>, line: impl AsRef<str>) -> io::Result<()>;
 
     fn exists(&self, path: impl AsRef<Utf8Path>) -> bool {
         self.is_dir(path.as_ref()) || self.is_file(path)
@@ -58,6 +83,32 @@ impl FileSystem for RealFileSystem {
         }
         entries.sort();
         Ok(entries)
+    }
+
+    fn create_dir_all(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()> {
+        std::fs::create_dir_all(path.as_ref())
+    }
+
+    fn write_string(
+        &mut self,
+        path: impl AsRef<Utf8Path>,
+        contents: impl AsRef<str>,
+    ) -> io::Result<()> {
+        if let Some(parent) = path.as_ref().parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path.as_ref(), contents.as_ref())
+    }
+
+    fn append_line(&mut self, path: impl AsRef<Utf8Path>, line: impl AsRef<str>) -> io::Result<()> {
+        if let Some(parent) = path.as_ref().parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path.as_ref())?;
+        writeln!(file, "{}", line.as_ref())
     }
 }
 
@@ -141,6 +192,30 @@ impl FileSystem for InMemoryFileSystem {
             }
         }
         Ok(entries.into_iter().collect())
+    }
+
+    fn create_dir_all(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()> {
+        self.add_directory(path);
+        Ok(())
+    }
+
+    fn write_string(
+        &mut self,
+        path: impl AsRef<Utf8Path>,
+        contents: impl AsRef<str>,
+    ) -> io::Result<()> {
+        self.add_file_with_contents(path, contents.as_ref());
+        Ok(())
+    }
+
+    fn append_line(&mut self, path: impl AsRef<Utf8Path>, line: impl AsRef<str>) -> io::Result<()> {
+        if let Some(parent) = path.as_ref().parent() {
+            self.add_directory(parent);
+        }
+        let entry = self.files.entry(path.as_ref().to_path_buf()).or_default();
+        entry.push_str(line.as_ref());
+        entry.push('\n');
+        Ok(())
     }
 }
 
@@ -227,6 +302,32 @@ mod tests {
                 Utf8PathBuf::from("/work/nested"),
                 Utf8PathBuf::from("/work/z.toml"),
             ]
+        );
+    }
+
+    #[test]
+    fn in_memory_file_system_writes_files() {
+        let mut fs = InMemoryFileSystem::default();
+
+        assert_ok!(fs.write_string("/work/.rapport/work.toml", "schema_version = 1\n"));
+
+        assert!(fs.is_dir("/work/.rapport"));
+        assert_eq!(
+            assert_ok!(fs.read_to_string("/work/.rapport/work.toml")),
+            "schema_version = 1\n"
+        );
+    }
+
+    #[test]
+    fn in_memory_file_system_appends_lines() {
+        let mut fs = InMemoryFileSystem::default();
+
+        assert_ok!(fs.append_line("/work/.rapport/events.jsonl", "{\"one\":1}"));
+        assert_ok!(fs.append_line("/work/.rapport/events.jsonl", "{\"two\":2}"));
+
+        assert_eq!(
+            assert_ok!(fs.read_to_string("/work/.rapport/events.jsonl")),
+            "{\"one\":1}\n{\"two\":2}\n"
         );
     }
 }
