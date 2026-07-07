@@ -1,17 +1,15 @@
 # rapport
 
-The agent-friendly builder. Standardizes `format`, `check`, `test`, `build`,
-`dev`, and `ci` across languages, so humans and agents have one thing to call
-anywhere in the repository.
+The repository workflow CLI for Rapport.
 
-## Status
+Rapport keeps human-directed agent work grounded in repository-owned rules,
+build conventions, GitHub integration, and local state.
 
-This `0.0.x` release reserves the name on crates.io while the real thing is
-being built. The vision and progress live in the
-[workspace README](https://github.com/hedge-ops/rapport).
+The first loop is:
 
-If you `cargo install rapport` today, you'll get a placeholder that points you
-back here. Watch the repo to know when it's ready.
+```text
+work -> build -> integrate
+```
 
 ## License
 
