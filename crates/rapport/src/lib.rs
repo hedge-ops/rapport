@@ -4,6 +4,7 @@ mod context;
 mod init;
 mod integrate;
 mod paths;
+mod prime;
 mod rules;
 mod runner;
 mod state;
@@ -108,6 +109,7 @@ where
     E: Write,
 {
     match &cli.command {
+        Command::Prime => prime::run(argv, context),
         Command::Init => init::run(argv, context),
         Command::Work(work_args) => match &work_args.command {
             WorkCommand::Status => work::status(argv, context),
@@ -242,7 +244,8 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("repository rapport for human-directed agent work"));
-        assert!(out.contains("work -> build -> integrate"));
+        assert!(out.contains("prime -> work -> build -> integrate -> work complete"));
+        assert!(out.contains("prime"));
         assert!(out.contains("work"));
         assert_eq!(err, "");
     }
@@ -253,8 +256,38 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("Rapport keeps human-directed agent work grounded"));
-        assert!(out.contains("work -> build -> integrate"));
+        assert!(out.contains("prime -> work -> build -> integrate -> work complete"));
         assert_eq!(err, "");
+    }
+
+    #[test]
+    fn prime_help_exists() {
+        let (code, out, err) = run_with(&["prime", "--help"]);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Show how agents should use Rapport"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn prime_renders_workflow_and_records_telemetry() {
+        let mut fs = InMemoryFileSystem::default();
+
+        let (code, out, err) = run_with_fs(&["prime"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("rapport prime"));
+        assert!(out.contains("planning, coding, testing, building, reviewing"));
+        assert!(out.contains("rapport work start"));
+        assert!(out.contains("rapport work rules list"));
+        assert!(out.contains("rapport build"));
+        assert!(out.contains("rapport integrate"));
+        assert!(out.contains("rapport work complete"));
+        assert_eq!(err, "");
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "prime");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
     }
 
     #[test]
@@ -348,8 +381,9 @@ mod tests {
         assert_eq!(err, "");
         let agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
 
-        assert!(agents.contains("## Rapport"));
-        assert!(agents.contains("rapport work start"));
+        assert!(agents.contains("## Software Factory"));
+        assert!(agents.contains("rapport prime"));
+        assert!(!agents.contains("rapport work start"));
         let event = first_event(&fs);
 
         assert_eq!(event.command, "init");

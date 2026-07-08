@@ -1,7 +1,7 @@
 <!-- rapport:init:start -->
-## Rapport
+## Software Factory
 
-This repository uses Rapport for human-directed agent work. Start with `rapport work start`, inspect context with `rapport work status` and `rapport work rules list`, validate with `rapport build`, and integrate with `rapport integrate`.
+This project uses Rapport for planning, coding, testing, building, and reviewing code. Call `rapport prime` for all the details before doing any of these activities.
 <!-- rapport:init:end -->
 
 ## Dogfooding Rapport
