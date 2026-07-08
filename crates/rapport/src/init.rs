@@ -111,7 +111,7 @@ fn append_section(contents: &str, section: &str) -> String {
 
 fn rapport_section() -> String {
     format!(
-        "{START_MARKER}\n## Rapport\n\nThis repository uses Rapport for human-directed agent work. Start with `rapport work start`, inspect context with `rapport work status` and `rapport work rules list`, validate with `rapport build`, and integrate with `rapport integrate`.\n{END_MARKER}\n"
+        "{START_MARKER}\n## Software Factory\n\nThis project uses Rapport for planning, coding, testing, building, and reviewing code. Call `rapport prime` for all the details before doing any of these activities.\n{END_MARKER}\n"
     )
 }
 
@@ -205,7 +205,8 @@ mod tests {
         let updated = upsert_rapport_section(Some("# Instructions\n\nKeep it tidy.\n"));
 
         assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("## Rapport"));
+        assert!(updated.contains("## Software Factory"));
+        assert!(updated.contains("rapport prime"));
         assert_eq!(updated.matches(START_MARKER).count(), 1);
     }
 
@@ -216,7 +217,8 @@ mod tests {
         ));
 
         assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("human-directed agent work"));
+        assert!(updated.contains("planning, coding, testing, building, and reviewing code"));
+        assert!(updated.contains("rapport prime"));
         assert!(!updated.contains("\nold\n"));
         assert_eq!(updated.matches(START_MARKER).count(), 1);
     }
