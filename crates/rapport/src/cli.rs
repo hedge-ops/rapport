@@ -50,6 +50,8 @@ pub enum WorkCommand {
     Start(WorkStartArgs),
     /// Show active local work state.
     Status,
+    /// Archive and clear completed local work.
+    Complete(WorkCompleteArgs),
     /// Add facts to active local work.
     Add(WorkAddArgs),
     /// Inspect repository-owned rules for active work.
@@ -73,6 +75,16 @@ pub struct WorkStartArgs {
     /// Path to include in the active work session.
     #[arg(long = "path", value_name = "PATH")]
     pub paths: Vec<Utf8PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkCompleteArgs {
+    /// Human summary for the completed work.
+    #[arg(long)]
+    pub summary: String,
+    /// Complete local-only work that has not been integrated.
+    #[arg(long)]
+    pub without_integrate: bool,
 }
 
 #[derive(Debug, Args)]

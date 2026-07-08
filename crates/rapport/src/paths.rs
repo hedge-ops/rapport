@@ -29,6 +29,16 @@ impl RapportPaths {
     }
 
     #[must_use]
+    pub fn history_dir(&self) -> Utf8PathBuf {
+        self.rapport_dir().join("history")
+    }
+
+    #[must_use]
+    pub fn history_file(&self, filename: &str) -> Utf8PathBuf {
+        self.history_dir().join(filename)
+    }
+
+    #[must_use]
     pub fn events_file(&self) -> Utf8PathBuf {
         self.rapport_dir().join("events.jsonl")
     }
@@ -46,6 +56,14 @@ mod tests {
         assert_eq!(
             paths.work_state_file(),
             Utf8PathBuf::from("/repo/.rapport/work.toml")
+        );
+        assert_eq!(
+            paths.history_dir(),
+            Utf8PathBuf::from("/repo/.rapport/history")
+        );
+        assert_eq!(
+            paths.history_file("done.toml"),
+            Utf8PathBuf::from("/repo/.rapport/history/done.toml")
         );
         assert_eq!(
             paths.events_file(),
