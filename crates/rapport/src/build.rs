@@ -216,11 +216,9 @@ fn validation_command() -> CommandSpec {
 }
 
 fn build_fact(status: &str, timestamp: &str, paths: &[String]) -> WorkFact {
-    WorkFact {
-        status: status.to_string(),
-        at: Some(timestamp.to_string()),
-        summary: Some(format!("`just {JUST_TARGET}` for {}", paths.join(", "))),
-    }
+    WorkFact::new(status)
+        .at(timestamp)
+        .summary(format!("`just {JUST_TARGET}` for {}", paths.join(", ")))
 }
 
 fn finish<F, C, O, E>(

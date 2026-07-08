@@ -49,6 +49,7 @@ them:
 - folder-collocated owner rules in `**/rules.toml`;
 - conventional Just targets for project-specific validation;
 - Git and GitHub for commits, pull requests, and status checks;
+- optional `signoffs.toml` entries for local command checks and manual signoffs;
 - ignored local state in `.rapport/work.toml`;
 - append-only local telemetry in `.rapport/events.jsonl`.
 

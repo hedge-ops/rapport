@@ -66,6 +66,50 @@ pub struct WorkFact {
     pub at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub passed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending: Vec<String>,
+}
+
+impl WorkFact {
+    #[must_use]
+    pub fn new(status: impl Into<String>) -> Self {
+        Self {
+            status: status.into(),
+            at: None,
+            summary: None,
+            commit: None,
+            branch: None,
+            pr_url: None,
+            required: Vec::new(),
+            passed: Vec::new(),
+            failed: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn at(mut self, timestamp: impl Into<String>) -> Self {
+        self.at = Some(timestamp.into());
+        self
+    }
+
+    #[must_use]
+    pub fn summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = Some(summary.into());
+        self
+    }
 }
 
 impl WorkState {

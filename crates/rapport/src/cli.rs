@@ -25,26 +25,6 @@ pub struct Cli {
     pub command: Command,
 }
 
-impl Cli {
-    #[must_use]
-    pub fn command_path(&self) -> &'static str {
-        match &self.command {
-            Command::Work(work) => work.command_path(),
-            Command::Build(_) => "build",
-            Command::Integrate(_) => "integrate",
-        }
-    }
-
-    #[must_use]
-    pub fn pending_issue(&self) -> &'static str {
-        match &self.command {
-            Command::Work(work) => work.pending_issue(),
-            Command::Build(_) => "#56",
-            Command::Integrate(_) => "#57",
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Manage active local work state.
@@ -60,28 +40,6 @@ pub enum Command {
 pub struct WorkArgs {
     #[command(subcommand)]
     pub command: WorkCommand,
-}
-
-impl WorkArgs {
-    #[must_use]
-    pub fn command_path(&self) -> &'static str {
-        match &self.command {
-            WorkCommand::Start(_) => "work start",
-            WorkCommand::Status => "work status",
-            WorkCommand::Add(add) => add.command_path(),
-            WorkCommand::Rules(rules) => rules.command_path(),
-        }
-    }
-
-    #[must_use]
-    pub fn pending_issue(&self) -> &'static str {
-        match &self.command {
-            WorkCommand::Start(_) => "#53",
-            WorkCommand::Status => "#52",
-            WorkCommand::Add(_) => "#55",
-            WorkCommand::Rules(_) => "#54",
-        }
-    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -122,15 +80,6 @@ pub struct WorkAddArgs {
     pub command: WorkAddCommand,
 }
 
-impl WorkAddArgs {
-    #[must_use]
-    pub fn command_path(&self) -> &'static str {
-        match &self.command {
-            WorkAddCommand::Path { .. } => "work add path",
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 pub enum WorkAddCommand {
     /// Add a path to active work.
@@ -145,16 +94,6 @@ pub enum WorkAddCommand {
 pub struct WorkRulesArgs {
     #[command(subcommand)]
     pub command: WorkRulesCommand,
-}
-
-impl WorkRulesArgs {
-    #[must_use]
-    pub fn command_path(&self) -> &'static str {
-        match &self.command {
-            WorkRulesCommand::List { .. } => "work rules list",
-            WorkRulesCommand::Show { .. } => "work rules show",
-        }
-    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -182,8 +121,8 @@ pub struct BuildArgs {
 pub struct IntegrateArgs {
     /// Human summary for the integration record.
     #[arg(long)]
-    pub summary: Option<String>,
+    pub summary: String,
     /// Git commit or PR message body.
     #[arg(long)]
-    pub message: Option<String>,
+    pub message: String,
 }
