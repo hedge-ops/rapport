@@ -151,7 +151,7 @@ impl WorkRulesArgs {
     #[must_use]
     pub fn command_path(&self) -> &'static str {
         match &self.command {
-            WorkRulesCommand::List => "work rules list",
+            WorkRulesCommand::List { .. } => "work rules list",
             WorkRulesCommand::Show { .. } => "work rules show",
         }
     }
@@ -160,7 +160,10 @@ impl WorkRulesArgs {
 #[derive(Debug, Subcommand)]
 pub enum WorkRulesCommand {
     /// List rules that apply to active work.
-    List,
+    List {
+        /// Optional path to inspect instead of active work paths.
+        path: Option<Utf8PathBuf>,
+    },
     /// Show one rule by id.
     Show {
         /// Rule id to show.
