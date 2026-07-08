@@ -1,0 +1,4 @@
+includes = [
+  "/rules/rust.toml",
+  "/rules/testing.toml",
+]

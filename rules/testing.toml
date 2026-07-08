@@ -1,0 +1,151 @@
+[[rules]]
+id = "TEST-SEM-001"
+text = "Treat these standards as reviewable expectations. A rule that says \"prefer\" describes the default shape; deviations are acceptable only when local ownership, compatibility, or a documented tradeoff makes the alternative stronger."
+
+[[rules]]
+id = "TEST-CORE-001"
+text = "Treat tests as specifications. When a test fails, investigate and understand the failure instead of regenerating the test."
+
+[[rules]]
+id = "TEST-CORE-002"
+text = "Treat tests as production code with the same care and craft."
+
+[[rules]]
+id = "TEST-CORE-003"
+text = "Preserve fast feedback. The architecture, including Crux, was chosen for testability."
+
+[[rules]]
+id = "TEST-PYR-001"
+text = "Prefer many fast, isolated unit tests with no I/O."
+
+[[rules]]
+id = "TEST-PYR-002"
+text = "Use few integration tests, reserved for database, CLI, and Crux boundaries."
+
+[[rules]]
+id = "TEST-COVER-001"
+text = "Prefer `test-mutants` to find missing behavioral coverage."
+
+[[rules]]
+id = "TEST-COVER-002"
+text = "Fill mutation gaps with the simplest spec-like test that kills the mutant."
+
+[[rules]]
+id = "TEST-COVER-003"
+text = "Exclude source-crate testing helper modules from mutation coverage. Files such as `src/testing.rs` exist to support tests and feature-gated downstream fixtures, so they should be declared in cargo-mutants config instead of counted as production coverage gaps."
+
+[[rules]]
+id = "TEST-COVER-004"
+text = "Exclude intentionally equivalent mutants only with a narrow cargo-mutants regex and an adjacent comment explaining why no public behavior can observe the mutation."
+
+[[rules]]
+id = "TEST-COVER-005"
+text = "Consider property-based testing only when the missing behavior is a general invariant across many inputs, such as parsing round trips, normalization, ordering, serialization, or arithmetic."
+
+[[rules]]
+id = "TEST-STRUCT-001"
+text = "Use four-phase thinking - Setup, Exercise, Verify, Teardown - but do not mark phases explicitly."
+
+[[rules]]
+id = "TEST-DOC-001"
+text = "For unit tests, document behavior through clear names, assertions, and tracing logs."
+
+[[rules]]
+id = "TEST-DOC-002"
+text = "If a test needs runtime narration, use the `tracing` crate and follow logging rules. Do not add body comments that restate the code."
+
+[[rules]]
+id = "TEST-DOC-003"
+text = "Start model and API integration test docs with \"When...\" or another plain business-level sentence, and describe the scenario plus expected outcome in one or two lines."
+
+[[rules]]
+id = "TEST-DOC-004"
+text = "Use integration test docs for model tests, including relatives in `workspace_activity` and `workspace_sync`."
+
+[[rules]]
+id = "TEST-DOC-005"
+text = "Use integration test docs for API integration tests."
+
+[[rules]]
+id = "TEST-ASSERT-001"
+text = "Assert preconditions when setup output matters."
+
+[[rules]]
+id = "TEST-ASSERT-002"
+text = "Assertion messages must be lowercase and start with `expecting`."
+
+[[rules]]
+id = "TEST-NAME-001"
+text = "Use `$FUNCTION_should_$DO_WHAT` for normal tests where the test name matches the method under test."
+
+[[rules]]
+id = "TEST-NAME-002"
+text = "Use `#[case::descriptive_name]` for parameterized tests with `rstest`."
+
+[[rules]]
+id = "TEST-CRATE-001"
+text = "Use `claims` assertions for fallible or optional results: `assert_ok!`, `assert_err!`, `assert_some!`, and `assert_none!`."
+
+[[rules]]
+id = "TEST-CRATE-002"
+text = "Use `pretty_assertions::assert_eq` for equality assertions."
+
+[[rules]]
+id = "TEST-CRATE-003"
+text = "Use `rstest::rstest` for parameterized tests."
+
+[[rules]]
+id = "TEST-CRATE-004"
+text = "Use `tracing_test::traced_test` when logging assertions matter."
+
+[[rules]]
+id = "TEST-API-001"
+text = "Helpers that intentionally bypass ordinary error handling, such as `from_str_unchecked`, `for_testing`, or fixture builders, must be unavailable from production API surfaces."
+
+[[rules]]
+id = "TEST-API-002"
+text = "Gate source-crate testing helpers with `#[cfg(any(test, feature = \"testing\"))]` or `#[cfg(feature = \"testing\")]`."
+
+[[rules]]
+id = "TEST-API-003"
+text = "When a dependent crate needs source-crate helpers in tests, enable the source crate's `testing` feature from `dev-dependencies`."
+
+[[rules]]
+id = "TEST-API-004"
+text = "Use dedicated `*_testing` crates only for larger cross-crate harnesses or fakes that do not naturally belong to one source crate."
+
+[[rules]]
+id = "TEST-API-005"
+text = "Production-safe literal macros may stay public when they validate the same invariant as the fallible constructor and do not depend on a public unchecked helper."
+
+[[rules]]
+id = "TEST-TIME-001"
+text = "Never call system time or production `Date::today()` in tests."
+
+[[rules]]
+id = "TEST-TIME-002"
+text = "Use fixed `rapport_temporal::testing` fixtures for static dates/times."
+
+[[rules]]
+id = "TEST-TIME-003"
+text = "Inject `rapport_temporal::clock::FakeClock` when behavior depends on time movement."
+
+[[rules]]
+id = "TEST-TIME-004"
+text = "When another crate needs temporal fixtures, enable `rapport-temporal = { workspace = true, features = [\"testing\"] }` in `dev-dependencies` or the crate's own `testing` feature."
+
+[[rules]]
+id = "TEST-DATA-001"
+text = "Avoid magic strings. Extract repeated literal values into named constants."
+
+[[rules]]
+id = "TEST-DOUBLE-001"
+text = "Do not use mocking libraries. Use hand-rolled fakes."
+
+[[rules]]
+id = "TEST-DOUBLE-002"
+text = "Use `rapport_temporal::clock::{Clock, FakeClock}` for clock injection."
+
+[[rules]]
+id = "TEST-PARAM-001"
+text = "Use `rstest` for parameterization. Avoid duplicate test methods."

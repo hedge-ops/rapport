@@ -1,6 +1,7 @@
 mod cli;
 mod context;
 mod paths;
+mod rules;
 mod runner;
 mod state;
 mod telemetry;
@@ -20,7 +21,7 @@ pub use telemetry::{
 pub use view::{Outcome, RunHint, View, ViewBuilder};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use cli::{Cli, Command, WorkCommand};
+use cli::{Cli, Command, WorkCommand, WorkRulesCommand};
 use nonempty::nonempty;
 use rapport_files::{FileSystem, RealFileSystem, Utf8PathBuf};
 use std::io::Write;
@@ -108,7 +109,11 @@ where
         Command::Work(work_args) => match &work_args.command {
             WorkCommand::Status => work::status(argv, context),
             WorkCommand::Start(start_args) => work::start(start_args, argv, context),
-            WorkCommand::Add(_) | WorkCommand::Rules(_) => {
+            WorkCommand::Rules(rules_args) => match &rules_args.command {
+                WorkRulesCommand::List { path } => rules::list(path.as_ref(), argv, context),
+                WorkRulesCommand::Show { id } => rules::show(id, argv, context),
+            },
+            WorkCommand::Add(_) => {
                 execute_pending_command(cli.command_path(), cli.pending_issue(), argv, context)
             }
         },
@@ -447,6 +452,128 @@ updated_at = "2026-07-07T23:00:00Z"
     }
 
     #[test]
+    fn work_rules_list_reports_requested_path_rules() {
+        let mut fs = InMemoryFileSystem::default();
+        add_rule_owner(
+            &mut fs,
+            r#"
+includes = ["/rules/rust.toml"]
+"#,
+        );
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+[[rules]]
+id = "RUST-ORG-003"
+text = "Keep lib.rs small."
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(
+            &["work", "rules", "list", "crates/rapport/src/lib.rs"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("RUST-ORG-003"));
+        assert!(out.contains("Keep lib.rs small."));
+        assert!(out.contains("rules.toml"));
+        assert_eq!(err, "");
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work rules list");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn work_rules_list_uses_active_work_paths() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        add_rule_owner(
+            &mut fs,
+            r#"
+includes = ["/rules/testing.toml"]
+"#,
+        );
+        fs.write_string(
+            "/repo/rules/testing.toml",
+            r#"
+[[rules]]
+id = "TEST-CORE-001"
+text = "Treat tests as specifications."
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(&["work", "rules", "list"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("crates/rapport/src/lib.rs"));
+        assert!(out.contains("TEST-CORE-001"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn work_rules_list_reports_unresolved_paths() {
+        let mut fs = InMemoryFileSystem::default();
+
+        let (code, out, err) = run_with_fs(
+            &["work", "rules", "list", "crates/rapport/src/lib.rs"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("unresolved: no rules owner found"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn work_rules_show_finds_rule_applicable_to_current_work() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        add_rule_owner(
+            &mut fs,
+            r#"
+includes = ["/rules/rust.toml"]
+"#,
+        );
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+[[rules]]
+id = "RUST-ORG-003"
+text = "Keep lib.rs small."
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(&["work", "rules", "show", "RUST-ORG-003"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("RUST-ORG-003"));
+        assert!(out.contains("Keep lib.rs small."));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn work_rules_show_requires_applicable_rule() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        add_rule_owner(&mut fs, "");
+
+        let (code, out, err) = run_with_fs(&["work", "rules", "show", "RUST-ORG-404"], &mut fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Rule `RUST-ORG-404` is not applicable"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work rules show");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
     fn help_does_not_write_telemetry() {
         let mut fs = InMemoryFileSystem::default();
         let (code, _out, _err) = run_with_fs(&["work", "--help"], &mut fs);
@@ -465,5 +592,32 @@ updated_at = "2026-07-07T23:00:00Z"
             .load(fs)
             .unwrap()
             .unwrap()
+    }
+
+    fn add_rule_owner(fs: &mut InMemoryFileSystem, contents: &str) {
+        fs.write_string("/repo/rules.toml", contents).unwrap();
+    }
+
+    fn add_active_work_with_paths(fs: &mut InMemoryFileSystem, paths: &[&str]) {
+        let rendered_paths = paths
+            .iter()
+            .map(|path| format!("\"{path}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        fs.write_string(
+            "/repo/.rapport/work.toml",
+            format!(
+                r#"
+schema_version = 1
+title = "Do the thing"
+paths = [{rendered_paths}]
+stage = "development"
+status = "active"
+created_at = "2026-07-07T23:00:00Z"
+updated_at = "2026-07-07T23:00:00Z"
+"#
+            ),
+        )
+        .unwrap();
     }
 }
