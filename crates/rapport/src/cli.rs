@@ -27,6 +27,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Record Rapport usage in repository agent instructions.
+    Init,
     /// Manage active local work state.
     Work(WorkArgs),
     /// Validate active work with existing repository Just conventions.

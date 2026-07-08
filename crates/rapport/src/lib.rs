@@ -1,6 +1,7 @@
 mod build;
 mod cli;
 mod context;
+mod init;
 mod integrate;
 mod paths;
 mod rules;
@@ -107,6 +108,7 @@ where
     E: Write,
 {
     match &cli.command {
+        Command::Init => init::run(argv, context),
         Command::Work(work_args) => match &work_args.command {
             WorkCommand::Status => work::status(argv, context),
             WorkCommand::Start(start_args) => work::start(start_args, argv, context),
@@ -276,6 +278,15 @@ mod tests {
     }
 
     #[test]
+    fn init_help_exists() {
+        let (code, out, err) = run_with(&["init", "--help"]);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Record Rapport usage"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
     fn integrate_help_exists() {
         let (code, out, err) = run_with(&["integrate", "--help"]);
 
@@ -310,6 +321,55 @@ mod tests {
 
         assert_eq!(event.command, "integrate");
         assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn init_creates_root_agents_file() {
+        let mut fs = InMemoryFileSystem::default();
+
+        let (code, out, err) = run_with_fs(&["init"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("status` — created"));
+        assert!(out.contains("AGENTS.md"));
+        assert_eq!(err, "");
+        let agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
+
+        assert!(agents.contains("## Rapport"));
+        assert!(agents.contains("rapport work start"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "init");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn init_updates_existing_agents_file_idempotently() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/AGENTS.md",
+            "# Agent Notes\n\nKeep local context current.\n",
+        )
+        .unwrap();
+
+        let (first_code, first_out, first_err) = run_with_fs(&["init"], &mut fs);
+        let first_agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
+        let (second_code, second_out, second_err) = run_with_fs(&["init"], &mut fs);
+        let second_agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
+
+        assert_eq!(first_code, ExitCode::SUCCESS);
+        assert!(first_out.contains("status` — updated"));
+        assert_eq!(first_err, "");
+        assert_eq!(second_code, ExitCode::SUCCESS);
+        assert!(second_out.contains("status` — updated"));
+        assert_eq!(second_err, "");
+        assert_eq!(first_agents, second_agents);
+        assert!(second_agents.contains("# Agent Notes"));
+        assert_eq!(
+            second_agents.matches("<!-- rapport:init:start -->").count(),
+            1
+        );
+        assert_eq!(events(&fs).len(), 2);
     }
 
     #[test]
