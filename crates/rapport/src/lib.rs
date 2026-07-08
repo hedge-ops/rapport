@@ -1,3 +1,4 @@
+mod build;
 mod cli;
 mod context;
 mod paths;
@@ -115,7 +116,8 @@ where
             },
             WorkCommand::Add(add_args) => work::add(&add_args.command, argv, context),
         },
-        Command::Build(_) | Command::Integrate(_) => {
+        Command::Build(build_args) => build::run(build_args, argv, context),
+        Command::Integrate(_) => {
             execute_pending_command(cli.command_path(), cli.pending_issue(), argv, context)
         }
     }
@@ -172,6 +174,8 @@ fn render_pending_command(command: &str, pending_issue: &str) -> String {
 mod tests {
     use super::*;
     use rapport_files::InMemoryFileSystem;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
     use std::io;
 
     #[derive(Debug)]
@@ -202,12 +206,20 @@ mod tests {
     }
 
     fn run_with_fs(args: &[&str], fs: &mut InMemoryFileSystem) -> (ExitCode, String, String) {
+        run_with_runner(args, fs, &NeverRunner)
+    }
+
+    fn run_with_runner(
+        args: &[&str],
+        fs: &mut InMemoryFileSystem,
+        runner: &dyn CommandRunner,
+    ) -> (ExitCode, String, String) {
         let mut out = Vec::new();
         let mut err = Vec::new();
         fs.add_directory("/repo/.git");
         let code = run_with_environment(
             args.iter().map(|arg| (*arg).to_string()),
-            &NeverRunner,
+            runner,
             fs,
             &FixedClock,
             Utf8PathBuf::from("/repo"),
@@ -219,6 +231,54 @@ mod tests {
             String::from_utf8_lossy(&out).into_owned(),
             String::from_utf8_lossy(&err).into_owned(),
         )
+    }
+
+    #[derive(Debug)]
+    struct FakeRunner {
+        outcomes: RefCell<VecDeque<io::Result<CommandOutcome>>>,
+        calls: RefCell<Vec<(CommandSpec, Utf8PathBuf)>>,
+    }
+
+    impl FakeRunner {
+        fn with_outcomes(outcomes: impl IntoIterator<Item = io::Result<CommandOutcome>>) -> Self {
+            Self {
+                outcomes: RefCell::new(outcomes.into_iter().collect()),
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn successful(stdout: &str) -> Self {
+            Self::with_outcomes([Ok(CommandOutcome {
+                success: true,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })])
+        }
+
+        fn failing(stderr: &str) -> Self {
+            Self::with_outcomes([Ok(CommandOutcome {
+                success: false,
+                stdout: String::new(),
+                stderr: stderr.to_string(),
+            })])
+        }
+
+        fn calls(&self) -> Vec<(CommandSpec, Utf8PathBuf)> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl CommandRunner for FakeRunner {
+        fn run(
+            &self,
+            spec: &CommandSpec,
+            cwd: &rapport_files::Utf8Path,
+        ) -> io::Result<CommandOutcome> {
+            self.calls
+                .borrow_mut()
+                .push((spec.clone(), cwd.to_path_buf()));
+            self.outcomes.borrow_mut().pop_front().unwrap()
+        }
     }
 
     #[test]
@@ -276,11 +336,11 @@ mod tests {
     #[test]
     fn valid_pending_command_writes_failure_event() {
         let mut fs = InMemoryFileSystem::default();
-        let (code, out, err) = run_with_fs(&["build", "crates/rapport"], &mut fs);
+        let (code, out, err) = run_with_fs(&["integrate", "--summary", "done"], &mut fs);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains("workflow behavior lands in #56"));
+        assert!(err.contains("workflow behavior lands in #57"));
         assert!(err.contains("rapport --help"));
         let events = fs.read_to_string("/repo/.rapport/events.jsonl").unwrap();
         let event: CommandEvent = serde_json::from_str(events.lines().next().unwrap()).unwrap();
@@ -288,9 +348,13 @@ mod tests {
         assert_eq!(event.timestamp, "2026-07-07T23:00:00Z");
         assert_eq!(
             event.argv,
-            vec![String::from("build"), String::from("crates/rapport")]
+            vec![
+                String::from("integrate"),
+                String::from("--summary"),
+                String::from("done")
+            ]
         );
-        assert_eq!(event.command, "build");
+        assert_eq!(event.command, "integrate");
         assert_eq!(event.outcome, CommandEventOutcome::Failure);
         assert_eq!(event.exit_code, 2);
     }
@@ -708,6 +772,129 @@ text = "Keep lib.rs small."
     }
 
     #[test]
+    fn build_runs_for_all_work_paths_and_updates_state() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(
+            &mut fs,
+            &["crates/rapport/src/lib.rs", "crates/rapport/src/work.rs"],
+        );
+        let runner = FakeRunner::successful("checked\n");
+
+        let (code, out, err) = run_with_runner(&["build"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("status` — pass"));
+        assert!(out.contains("command` — just ci"));
+        assert!(out.contains("crates/rapport/src/lib.rs"));
+        assert!(out.contains("crates/rapport/src/work.rs"));
+        assert!(out.contains("checked"));
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![(CommandSpec::new("just", ["ci"]), Utf8PathBuf::from("/repo"))]
+        );
+        let state = load_state(&fs);
+        let build = state.build.unwrap();
+
+        assert_eq!(build.status, "pass");
+        assert_eq!(build.at.as_deref(), Some("2026-07-07T23:00:00Z"));
+        assert_eq!(
+            build.summary.as_deref(),
+            Some("`just ci` for crates/rapport/src/lib.rs, crates/rapport/src/work.rs")
+        );
+        let events = events(&fs);
+
+        assert_eq!(events[0].command, "build start");
+        assert_eq!(events[0].outcome, CommandEventOutcome::Success);
+        assert_eq!(events[1].command, "build");
+        assert_eq!(events[1].outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn build_runs_for_targeted_paths_inside_current_work() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(
+            &mut fs,
+            &["crates/rapport/src/lib.rs", "crates/rapport/src/work.rs"],
+        );
+        let runner = FakeRunner::successful("checked targeted path\n");
+
+        let (code, out, err) =
+            run_with_runner(&["build", "crates/rapport/src/work.rs"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("crates/rapport/src/work.rs"));
+        assert!(!out.contains("crates/rapport/src/lib.rs"));
+        assert_eq!(err, "");
+        let build = load_state(&fs).build.unwrap();
+
+        assert_eq!(
+            build.summary.as_deref(),
+            Some("`just ci` for crates/rapport/src/work.rs")
+        );
+    }
+
+    #[test]
+    fn build_rejects_paths_outside_current_work() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::successful("must not run");
+
+        let (code, out, err) =
+            run_with_runner(&["build", "crates/rapport/src/work.rs"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("not part of the current work"));
+        assert!(err.contains("rapport work add path crates/rapport/src/work.rs"));
+        assert!(load_state(&fs).build.is_none());
+        assert!(runner.calls().is_empty());
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "build");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn build_records_command_failure() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::failing("tests failed\n");
+
+        let (code, out, err) = run_with_runner(&["build"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("status` — fail"));
+        assert!(err.contains("tests failed"));
+        let build = load_state(&fs).build.unwrap();
+
+        assert_eq!(build.status, "fail");
+        assert_eq!(
+            build.summary.as_deref(),
+            Some("`just ci` for crates/rapport/src/lib.rs")
+        );
+        let events = events(&fs);
+
+        assert_eq!(events[0].command, "build start");
+        assert_eq!(events[1].command, "build");
+        assert_eq!(events[1].outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn build_requires_active_work() {
+        let mut fs = InMemoryFileSystem::default();
+        let runner = FakeRunner::successful("must not run");
+
+        let (code, out, err) = run_with_runner(&["build"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("No active work state found"));
+        assert!(runner.calls().is_empty());
+    }
+
+    #[test]
     fn help_does_not_write_telemetry() {
         let mut fs = InMemoryFileSystem::default();
         let (code, _out, _err) = run_with_fs(&["work", "--help"], &mut fs);
@@ -717,8 +904,15 @@ text = "Keep lib.rs small."
     }
 
     fn first_event(fs: &InMemoryFileSystem) -> CommandEvent {
+        events(fs).into_iter().next().unwrap()
+    }
+
+    fn events(fs: &InMemoryFileSystem) -> Vec<CommandEvent> {
         let events = fs.read_to_string("/repo/.rapport/events.jsonl").unwrap();
-        serde_json::from_str(events.lines().next().unwrap()).unwrap()
+        events
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
     }
 
     fn load_state(fs: &InMemoryFileSystem) -> WorkState {
