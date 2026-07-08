@@ -1,10 +1,13 @@
-use crate::cli::WorkStartArgs;
+use crate::cli::{WorkAddCommand, WorkStartArgs};
 use crate::context::{Clock, CommandContext};
+use crate::rules::{PathRules, RuleResolver, RulesError};
 use crate::state::{WorkFact, WorkState, WorkStateError, WorkStateStore};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
-use rapport_files::FileSystem;
+use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
+use std::error::Error;
+use std::fmt;
 use std::io::Write;
 use std::process::ExitCode;
 
@@ -85,6 +88,87 @@ where
     }
 }
 
+pub fn add<F, C, O, E>(
+    add_command: &WorkAddCommand,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    match add_command {
+        WorkAddCommand::Path { path } => add_path(path, arguments, context),
+    }
+}
+
+fn add_path<F, C, O, E>(
+    path: &Utf8Path,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = WorkStateStore::new(context.paths.clone());
+    let result = match store.load(context.fs) {
+        Ok(Some(mut state)) => {
+            match resolve_existing_work_path(context.fs, &context.repo_root, &context.cwd, path) {
+                Ok(path) if state.paths.iter().any(|existing| existing == path.as_str()) => {
+                    let _ = writeln!(context.err, "{}", render_duplicate_path(&path, &state));
+                    CommandResult::failure()
+                }
+                Ok(path) => {
+                    let resolver = RuleResolver::new(context.paths.clone());
+                    match resolver.resolve_path(context.fs, &path) {
+                        Ok(path_rules) => {
+                            state.paths.push(path.to_string());
+                            state.updated_at = context.clock.now_rfc3339();
+                            match store.save(context.fs, &state) {
+                                Ok(()) => {
+                                    let _ = writeln!(
+                                        context.out,
+                                        "{}",
+                                        render_added_path(&resolver, &path, &state, &path_rules)
+                                    );
+                                    CommandResult::success()
+                                }
+                                Err(error) => {
+                                    let _ =
+                                        writeln!(context.err, "{}", render_add_state_error(&error));
+                                    CommandResult::failure()
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            let _ = writeln!(context.err, "{}", render_add_rules_error(&error));
+                            CommandResult::failure()
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = writeln!(context.err, "{}", render_path_error(&error));
+                    CommandResult::failure()
+                }
+            }
+        }
+        Ok(None) => {
+            let _ = writeln!(context.err, "{}", render_missing_work_for_add());
+            CommandResult::failure()
+        }
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_add_state_error(&error));
+            CommandResult::failure()
+        }
+    };
+    finish("work add path", arguments, context, result)
+}
+
 fn finish<F, C, O, E>(
     command: &'static str,
     arguments: Vec<String>,
@@ -113,6 +197,25 @@ where
     }
 }
 
+#[derive(Debug)]
+enum AddPathError {
+    OutsideRepository { path: Utf8PathBuf },
+    Missing { path: Utf8PathBuf },
+}
+
+impl fmt::Display for AddPathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OutsideRepository { path } => {
+                write!(f, "`{path}` is outside the repository.")
+            }
+            Self::Missing { path } => write!(f, "`{path}` does not exist."),
+        }
+    }
+}
+
+impl Error for AddPathError {}
+
 #[derive(Debug, Clone, Copy)]
 struct CommandResult {
     outcome: CommandEventOutcome,
@@ -132,6 +235,35 @@ impl CommandResult {
             outcome: CommandEventOutcome::Failure,
             exit_code: FAILURE,
         }
+    }
+}
+
+fn resolve_existing_work_path(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    cwd: &Utf8Path,
+    path: &Utf8Path,
+) -> Result<Utf8PathBuf, AddPathError> {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let relative_path =
+        absolute_path
+            .strip_prefix(repo_root)
+            .map_err(|_| AddPathError::OutsideRepository {
+                path: absolute_path.clone(),
+            })?;
+    if !fs.exists(&absolute_path) {
+        return Err(AddPathError::Missing {
+            path: absolute_path,
+        });
+    }
+    if relative_path.as_str().is_empty() {
+        Ok(Utf8PathBuf::from("."))
+    } else {
+        Ok(relative_path.to_path_buf())
     }
 }
 
@@ -185,6 +317,53 @@ pub fn render_active_work(state: &WorkState) -> String {
         .build()
 }
 
+fn render_added_path(
+    resolver: &RuleResolver,
+    path: &Utf8Path,
+    state: &WorkState,
+    path_rules: &PathRules,
+) -> String {
+    ViewBuilder::new()
+        .title("rapport work add path")
+        .section("Path", |b| {
+            b.entries([
+                ("status", String::from("added")),
+                ("path", path.to_string()),
+            ])
+        })
+        .section("Current Work Paths", |b| b.items(state.paths.clone()))
+        .section("Rules", |b| {
+            b.items(render_path_rules(resolver, path_rules))
+        })
+        .next_actions(nonempty![RunHint::new("rapport work rules list")])
+        .build()
+}
+
+fn render_path_rules(resolver: &RuleResolver, path_rules: &PathRules) -> Vec<String> {
+    match (&path_rules.owner, path_rules.unresolved) {
+        (Some(owner), None) => {
+            let mut lines = vec![format!("owner `{}`", resolver.display_path(owner))];
+            lines.extend(path_rules.rules.iter().map(|rule| {
+                format!(
+                    "`{}` -- {} ({})",
+                    rule.id,
+                    rule.text,
+                    resolver.display_path(&rule.source)
+                )
+            }));
+            lines
+        }
+        (None, Some(reason)) => vec![format!(
+            "`{}` -- unresolved: {reason}",
+            path_rules.requested_path
+        )],
+        _ => vec![format!(
+            "`{}` -- unresolved: invalid rule resolution",
+            path_rules.requested_path
+        )],
+    }
+}
+
 fn recent_facts(state: &WorkState) -> Vec<(&'static str, String)> {
     [
         ("build", state.build.as_ref()),
@@ -225,6 +404,53 @@ fn render_existing_work(state: &WorkState) -> String {
         .title("rapport work start")
         .paragraph(format!("Active work already exists: `{}`.", state.title))
         .paragraph("Rapport will not overwrite `.rapport/work.toml`.")
+        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .build()
+}
+
+fn render_duplicate_path(path: &Utf8Path, state: &WorkState) -> String {
+    ViewBuilder::new()
+        .title("rapport work add path")
+        .paragraph(format!("Path `{path}` is already present in active work."))
+        .section("Current Work Paths", |b| b.items(state.paths.clone()))
+        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .build()
+}
+
+fn render_missing_work_for_add() -> String {
+    ViewBuilder::new()
+        .title("rapport work add path")
+        .paragraph("No active work state found.")
+        .paragraph("Start work before adding paths.")
+        .next_actions(nonempty![RunHint::new(
+            "rapport work start --title \"...\" --path <path>"
+        )])
+        .build()
+}
+
+fn render_path_error(error: &AddPathError) -> String {
+    ViewBuilder::new()
+        .title("rapport work add path")
+        .paragraph("Could not add path to active work.")
+        .paragraph(error)
+        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .build()
+}
+
+fn render_add_rules_error(error: &RulesError) -> String {
+    ViewBuilder::new()
+        .title("rapport work add path")
+        .paragraph("Could not resolve repository rules for the added path.")
+        .paragraph(error)
+        .next_actions(nonempty![RunHint::new("rapport work rules list <path>")])
+        .build()
+}
+
+fn render_add_state_error(error: &WorkStateError) -> String {
+    ViewBuilder::new()
+        .title("rapport work add path")
+        .paragraph("Could not update active work state.")
+        .paragraph(error)
         .next_actions(nonempty![RunHint::new("rapport work status")])
         .build()
 }
