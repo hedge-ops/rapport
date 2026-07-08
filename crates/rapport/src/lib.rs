@@ -113,9 +113,7 @@ where
                 WorkRulesCommand::List { path } => rules::list(path.as_ref(), argv, context),
                 WorkRulesCommand::Show { id } => rules::show(id, argv, context),
             },
-            WorkCommand::Add(_) => {
-                execute_pending_command(cli.command_path(), cli.pending_issue(), argv, context)
-            }
+            WorkCommand::Add(add_args) => work::add(&add_args.command, argv, context),
         },
         Command::Build(_) | Command::Integrate(_) => {
             execute_pending_command(cli.command_path(), cli.pending_issue(), argv, context)
@@ -571,6 +569,142 @@ text = "Keep lib.rs small."
 
         assert_eq!(event.command, "work rules show");
         assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn work_add_path_updates_state_and_reports_rules() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.add_file("/repo/crates/rapport/src/work.rs");
+        add_rule_owner(
+            &mut fs,
+            r#"
+includes = ["/rules/rust.toml"]
+"#,
+        );
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+[[rules]]
+id = "RUST-ORG-003"
+text = "Keep lib.rs small."
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(
+            &["work", "add", "path", "crates/rapport/src/work.rs"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("status` — added"));
+        assert!(out.contains("crates/rapport/src/lib.rs"));
+        assert!(out.contains("crates/rapport/src/work.rs"));
+        assert!(out.contains("owner `rules.toml`"));
+        assert!(out.contains("RUST-ORG-003"));
+        assert_eq!(err, "");
+        let state = load_state(&fs);
+
+        assert_eq!(
+            state.paths,
+            vec!["crates/rapport/src/lib.rs", "crates/rapport/src/work.rs"]
+        );
+        assert_eq!(state.updated_at, "2026-07-07T23:00:00Z");
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work add path");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn work_add_path_rejects_duplicate_paths_without_mutating_state() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.add_file("/repo/crates/rapport/src/lib.rs");
+
+        let (code, out, err) = run_with_fs(
+            &["work", "add", "path", "crates/rapport/src/lib.rs"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("already present"));
+        assert_eq!(load_state(&fs).paths, vec!["crates/rapport/src/lib.rs"]);
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work add path");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn work_add_path_requires_active_work() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_file("/repo/crates/rapport/src/lib.rs");
+
+        let (code, out, err) = run_with_fs(
+            &["work", "add", "path", "crates/rapport/src/lib.rs"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("No active work state found"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work add path");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn work_add_path_rejects_missing_paths_without_mutating_state() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+
+        let (code, out, err) = run_with_fs(
+            &["work", "add", "path", "crates/rapport/src/missing.rs"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("does not exist"));
+        assert_eq!(load_state(&fs).paths, vec!["crates/rapport/src/lib.rs"]);
+    }
+
+    #[test]
+    fn work_add_path_rejects_outside_repo_paths() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.add_file("/outside/work.rs");
+
+        let (code, out, err) = run_with_fs(&["work", "add", "path", "/outside/work.rs"], &mut fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("outside the repository"));
+        assert_eq!(load_state(&fs).paths, vec!["crates/rapport/src/lib.rs"]);
+    }
+
+    #[test]
+    fn work_add_path_reports_unresolved_rules_for_paths_without_owner() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.add_file("/repo/crates/rapport/src/work.rs");
+
+        let (code, out, err) = run_with_fs(
+            &["work", "add", "path", "crates/rapport/src/work.rs"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("unresolved: no rules owner found"));
+        assert_eq!(err, "");
+        assert_eq!(
+            load_state(&fs).paths,
+            vec!["crates/rapport/src/lib.rs", "crates/rapport/src/work.rs"]
+        );
     }
 
     #[test]
