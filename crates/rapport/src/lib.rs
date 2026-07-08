@@ -1,6 +1,7 @@
 mod build;
 mod cli;
 mod context;
+mod integrate;
 mod paths;
 mod rules;
 mod runner;
@@ -23,7 +24,6 @@ pub use view::{Outcome, RunHint, View, ViewBuilder};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use cli::{Cli, Command, WorkCommand, WorkRulesCommand};
-use nonempty::nonempty;
 use rapport_files::{FileSystem, RealFileSystem, Utf8PathBuf};
 use std::io::Write;
 use std::process::ExitCode;
@@ -117,56 +117,8 @@ where
             WorkCommand::Add(add_args) => work::add(&add_args.command, argv, context),
         },
         Command::Build(build_args) => build::run(build_args, argv, context),
-        Command::Integrate(_) => {
-            execute_pending_command(cli.command_path(), cli.pending_issue(), argv, context)
-        }
+        Command::Integrate(integrate_args) => integrate::run(integrate_args, argv, context),
     }
-}
-
-fn execute_pending_command<F, C, O, E>(
-    command: &'static str,
-    pending_issue: &'static str,
-    argv: Vec<String>,
-    context: &mut CommandContext<'_, F, C, O, E>,
-) -> ExitCode
-where
-    F: FileSystem,
-    C: Clock,
-    O: Write,
-    E: Write,
-{
-    let exit_code = 2;
-    let _ = writeln!(
-        context.err,
-        "{}",
-        render_pending_command(command, pending_issue)
-    );
-    let event = CommandEvent::new(
-        context.clock.now_rfc3339(),
-        argv,
-        command,
-        CommandEventOutcome::Failure,
-        exit_code,
-    );
-    match TelemetryWriter::new(context.paths.clone()).append(context.fs, &event) {
-        Ok(()) => ExitCode::from(exit_code),
-        Err(error) => {
-            let _ = writeln!(context.err, "{error}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn render_pending_command(command: &str, pending_issue: &str) -> String {
-    ViewBuilder::new()
-        .paragraph(format!(
-            "`rapport {command}` is defined, but its workflow behavior lands in {pending_issue}."
-        ))
-        .paragraph(
-            "This foundation only establishes parsing, local paths, state plumbing, and telemetry.",
-        )
-        .next_actions(nonempty![RunHint::new("rapport --help")])
-        .build()
 }
 
 #[cfg(test)]
@@ -334,29 +286,30 @@ mod tests {
     }
 
     #[test]
-    fn valid_pending_command_writes_failure_event() {
+    fn integrate_requires_active_work() {
         let mut fs = InMemoryFileSystem::default();
-        let (code, out, err) = run_with_fs(&["integrate", "--summary", "done"], &mut fs);
+        let runner = FakeRunner::successful("must not run");
+
+        let (code, out, err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "PW-356: Do the thing",
+                "--message",
+                "Do the thing",
+            ],
+            &mut fs,
+            &runner,
+        );
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains("workflow behavior lands in #57"));
-        assert!(err.contains("rapport --help"));
-        let events = fs.read_to_string("/repo/.rapport/events.jsonl").unwrap();
-        let event: CommandEvent = serde_json::from_str(events.lines().next().unwrap()).unwrap();
+        assert!(err.contains("No active work state found"));
+        assert!(runner.calls().is_empty());
+        let event = first_event(&fs);
 
-        assert_eq!(event.timestamp, "2026-07-07T23:00:00Z");
-        assert_eq!(
-            event.argv,
-            vec![
-                String::from("integrate"),
-                String::from("--summary"),
-                String::from("done")
-            ]
-        );
         assert_eq!(event.command, "integrate");
         assert_eq!(event.outcome, CommandEventOutcome::Failure);
-        assert_eq!(event.exit_code, 2);
     }
 
     #[test]
@@ -895,6 +848,217 @@ text = "Keep lib.rs small."
     }
 
     #[test]
+    fn integrate_requires_passing_build_context() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::successful("must not run");
+
+        let (code, out, err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "PW-356: Do the thing",
+                "--message",
+                "Do the thing",
+            ],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("has not passed build validation"));
+        assert!(runner.calls().is_empty());
+    }
+
+    #[test]
+    fn integrate_rejects_no_active_work_diff() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::with_outcomes([Ok(CommandOutcome {
+            success: true,
+            stdout: String::from(" M .rapport/work.toml\n"),
+            stderr: String::new(),
+        })]);
+
+        let (code, out, err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "PW-356: Do the thing",
+                "--message",
+                "Do the thing",
+            ],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("No active-work changes found"));
+        assert!(err.contains(".rapport/work.toml"));
+        assert_eq!(
+            runner.calls(),
+            vec![(
+                CommandSpec::new("git", ["status", "--porcelain=v1"]),
+                Utf8PathBuf::from("/repo")
+            )]
+        );
+    }
+
+    #[test]
+    fn integrate_commits_creates_pr_and_reports_signoffs() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.write_string(
+            "/repo/signoffs.toml",
+            r#"
+[[signoffs]]
+id = "local-check"
+description = "Local check"
+command = ["just", "check"]
+
+[[signoffs]]
+id = "review"
+description = "Human review"
+"#,
+        )
+        .unwrap();
+        let runner = successful_integrate_runner();
+
+        let (code, out, err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "PW-356: Do the thing",
+                "--message",
+                "Do the thing",
+            ],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("pr_created"));
+        assert!(out.contains("https://github.com/hedge-ops/rapport/pull/70"));
+        assert!(out.contains("pending `review: Human review`"));
+        assert_eq!(runner.calls(), successful_integrate_calls());
+        let state = load_state(&fs);
+        let integrate = state.integrate.unwrap();
+        let signoff = state.signoff.unwrap();
+
+        assert_eq!(integrate.status, "pr_created");
+        assert_eq!(integrate.branch.as_deref(), Some("work/issue-57-integrate"));
+        assert_eq!(integrate.commit.as_deref(), Some("abc123"));
+        assert_eq!(
+            integrate.pr_url.as_deref(),
+            Some("https://github.com/hedge-ops/rapport/pull/70")
+        );
+        assert_eq!(signoff.status, "pending");
+        assert_eq!(signoff.passed, vec![String::from("local-check")]);
+        assert_eq!(signoff.pending, vec![String::from("review: Human review")]);
+        let events = events(&fs);
+        let commands = events
+            .iter()
+            .map(|event| event.command.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            commands,
+            vec![
+                "integrate start",
+                "integrate inspect",
+                "integrate commit",
+                "integrate pr",
+                "integrate signoff",
+                "integrate",
+            ]
+        );
+    }
+
+    #[test]
+    fn integrate_records_failed_local_signoff() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.write_string(
+            "/repo/signoffs.toml",
+            r#"
+[[signoffs]]
+id = "local-check"
+description = "Local check"
+command = ["just", "check"]
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::with_outcomes([
+            Ok(CommandOutcome {
+                success: true,
+                stdout: String::from(" M crates/rapport/src/lib.rs\n"),
+                stderr: String::new(),
+            }),
+            Ok(CommandOutcome {
+                success: true,
+                stdout: String::from("work/issue-57-integrate\n"),
+                stderr: String::new(),
+            }),
+            Ok(CommandOutcome {
+                success: true,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            Ok(CommandOutcome {
+                success: true,
+                stdout: String::from("[work/issue-57-integrate abc123] PW-356\n"),
+                stderr: String::new(),
+            }),
+            Ok(CommandOutcome {
+                success: true,
+                stdout: String::from("abc123\n"),
+                stderr: String::new(),
+            }),
+            Ok(CommandOutcome {
+                success: true,
+                stdout: String::from("https://github.com/hedge-ops/rapport/pull/70\n"),
+                stderr: String::new(),
+            }),
+            Ok(CommandOutcome {
+                success: false,
+                stdout: String::new(),
+                stderr: String::from("clippy failed\n"),
+            }),
+        ]);
+
+        let (code, out, err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "PW-356: Do the thing",
+                "--message",
+                "Do the thing",
+            ],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("failed `local-check"));
+        assert!(err.contains("clippy failed"));
+        let signoff = load_state(&fs).signoff.unwrap();
+
+        assert_eq!(signoff.status, "fail");
+        assert_eq!(signoff.failed.len(), 1);
+        assert!(signoff.failed[0].contains("local-check"));
+        let events = events(&fs);
+
+        assert_eq!(events[4].command, "integrate signoff");
+        assert_eq!(events[4].outcome, CommandEventOutcome::Failure);
+        assert_eq!(events[5].command, "integrate");
+        assert_eq!(events[5].outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
     fn help_does_not_write_telemetry() {
         let mut fs = InMemoryFileSystem::default();
         let (code, _out, _err) = run_with_fs(&["work", "--help"], &mut fs);
@@ -947,5 +1111,105 @@ updated_at = "2026-07-07T23:00:00Z"
             ),
         )
         .unwrap();
+    }
+
+    fn add_built_active_work_with_paths(fs: &mut InMemoryFileSystem, paths: &[&str]) {
+        let rendered_paths = paths
+            .iter()
+            .map(|path| format!("\"{path}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        fs.write_string(
+            "/repo/.rapport/work.toml",
+            format!(
+                r#"
+schema_version = 1
+title = "Do the thing"
+paths = [{rendered_paths}]
+stage = "development"
+status = "active"
+created_at = "2026-07-07T23:00:00Z"
+updated_at = "2026-07-07T23:00:00Z"
+
+[build]
+status = "pass"
+at = "2026-07-07T23:00:00Z"
+summary = "`just ci` for crates/rapport/src/lib.rs"
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn successful_integrate_runner() -> FakeRunner {
+        FakeRunner::with_outcomes([
+            Ok(successful_outcome(
+                " M crates/rapport/src/lib.rs\n M .rapport/work.toml\n",
+            )),
+            Ok(successful_outcome("work/issue-57-integrate\n")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome(
+                "[work/issue-57-integrate abc123] PW-356\n",
+            )),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome(
+                "https://github.com/hedge-ops/rapport/pull/70\n",
+            )),
+            Ok(successful_outcome("checked\n")),
+        ])
+    }
+
+    fn successful_outcome(stdout: &str) -> CommandOutcome {
+        CommandOutcome {
+            success: true,
+            stdout: stdout.to_string(),
+            stderr: String::new(),
+        }
+    }
+
+    fn successful_integrate_calls() -> Vec<(CommandSpec, Utf8PathBuf)> {
+        vec![
+            (
+                CommandSpec::new("git", ["status", "--porcelain=v1"]),
+                Utf8PathBuf::from("/repo"),
+            ),
+            (
+                CommandSpec::new("git", ["branch", "--show-current"]),
+                Utf8PathBuf::from("/repo"),
+            ),
+            (
+                CommandSpec::new("git", ["add", "--", "crates/rapport/src/lib.rs"]),
+                Utf8PathBuf::from("/repo"),
+            ),
+            (
+                CommandSpec::new(
+                    "git",
+                    ["commit", "-m", "PW-356: Do the thing", "-m", "Do the thing"],
+                ),
+                Utf8PathBuf::from("/repo"),
+            ),
+            (
+                CommandSpec::new("git", ["rev-parse", "HEAD"]),
+                Utf8PathBuf::from("/repo"),
+            ),
+            (
+                CommandSpec::new(
+                    "gh",
+                    [
+                        "pr",
+                        "create",
+                        "--title",
+                        "PW-356: Do the thing",
+                        "--body",
+                        "Do the thing\n\n## Rapport\n- Work: Do the thing\n- Paths: crates/rapport/src/lib.rs\n- Build: pass\n- Commit: abc123",
+                    ],
+                ),
+                Utf8PathBuf::from("/repo"),
+            ),
+            (
+                CommandSpec::new("just", ["check"]),
+                Utf8PathBuf::from("/repo"),
+            ),
+        ]
     }
 }

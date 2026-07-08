@@ -484,11 +484,11 @@ mod tests {
         state.paths = vec![String::from("app/api")];
         state.stage = WorkStage::Development;
         state.status = WorkStatus::Active;
-        state.build = Some(WorkFact {
-            status: String::from("pass"),
-            at: Some(String::from("2026-07-07T23:05:00Z")),
-            summary: Some(String::from("just ci")),
-        });
+        state.build = Some(
+            WorkFact::new("pass")
+                .at("2026-07-07T23:05:00Z")
+                .summary("just ci"),
+        );
 
         let view = render_active_work(&state);
 
