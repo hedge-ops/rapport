@@ -29,6 +29,8 @@ pub struct WorkState {
     pub integrate: Option<WorkFact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signoff: Option<WorkFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complete: Option<WorkFact>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,12 +51,14 @@ impl fmt::Display for WorkStage {
 #[serde(rename_all = "snake_case")]
 pub enum WorkStatus {
     Active,
+    Complete,
 }
 
 impl fmt::Display for WorkStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Active => f.write_str("active"),
+            Self::Complete => f.write_str("complete"),
         }
     }
 }
@@ -130,6 +134,7 @@ impl WorkState {
             build: None,
             integrate: None,
             signoff: None,
+            complete: None,
         }
     }
 
@@ -196,6 +201,35 @@ impl WorkStateStore {
         fs.write_string(self.paths.work_state_file(), contents)?;
         Ok(())
     }
+
+    /// Archive a work state under `.rapport/history`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkStateError`] when the history directory cannot be
+    /// created, the state cannot be encoded, or the archive file cannot be
+    /// written.
+    pub fn archive(
+        &self,
+        fs: &mut impl FileSystem,
+        filename: &str,
+        state: &WorkState,
+    ) -> Result<(), WorkStateError> {
+        fs.create_dir_all(self.paths.history_dir())?;
+        let contents = toml::to_string_pretty(state)?;
+        fs.write_string(self.paths.history_file(filename), contents)?;
+        Ok(())
+    }
+
+    /// Remove the active work state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkStateError`] when `.rapport/work.toml` cannot be removed.
+    pub fn clear(&self, fs: &mut impl FileSystem) -> Result<(), WorkStateError> {
+        fs.remove_file(self.paths.work_state_file())?;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -259,6 +293,22 @@ mod tests {
 
         assert_eq!(store.load(&fs).unwrap(), Some(state));
         assert!(fs.is_dir("/repo/.rapport"));
+    }
+
+    #[test]
+    fn work_state_archives_and_clears_active_state() {
+        let mut fs = InMemoryFileSystem::default();
+        let store = WorkStateStore::new(RapportPaths::new("/repo"));
+        let state = WorkState::new("Do the thing", "2026-07-07T23:00:00Z");
+
+        store.save(&mut fs, &state).unwrap();
+        store
+            .archive(&mut fs, "2026-07-07T23-00-00Z-do-the-thing.toml", &state)
+            .unwrap();
+        store.clear(&mut fs).unwrap();
+
+        assert_eq!(store.load(&fs).unwrap(), None);
+        assert!(fs.is_file("/repo/.rapport/history/2026-07-07T23-00-00Z-do-the-thing.toml"));
     }
 
     #[test]

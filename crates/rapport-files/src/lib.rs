@@ -48,6 +48,13 @@ pub trait FileSystem {
     /// Returns the underlying filesystem error when the path cannot be appended.
     fn append_line(&mut self, path: impl AsRef<Utf8Path>, line: impl AsRef<str>) -> io::Result<()>;
 
+    /// Remove a file from the filesystem.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the file cannot be removed.
+    fn remove_file(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()>;
+
     fn exists(&self, path: impl AsRef<Utf8Path>) -> bool {
         self.is_dir(path.as_ref()) || self.is_file(path)
     }
@@ -109,6 +116,10 @@ impl FileSystem for RealFileSystem {
             .append(true)
             .open(path.as_ref())?;
         writeln!(file, "{}", line.as_ref())
+    }
+
+    fn remove_file(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()> {
+        std::fs::remove_file(path.as_ref())
     }
 }
 
@@ -216,6 +227,18 @@ impl FileSystem for InMemoryFileSystem {
         entry.push_str(line.as_ref());
         entry.push('\n');
         Ok(())
+    }
+
+    fn remove_file(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()> {
+        self.files.remove(path.as_ref()).map_or_else(
+            || {
+                Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{} not found", path.as_ref()),
+                ))
+            },
+            |_| Ok(()),
+        )
     }
 }
 
@@ -329,5 +352,15 @@ mod tests {
             assert_ok!(fs.read_to_string("/work/.rapport/events.jsonl")),
             "{\"one\":1}\n{\"two\":2}\n"
         );
+    }
+
+    #[test]
+    fn in_memory_file_system_removes_files() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_file("/work/.rapport/work.toml");
+
+        assert_ok!(fs.remove_file("/work/.rapport/work.toml"));
+
+        assert!(!fs.is_file("/work/.rapport/work.toml"));
     }
 }

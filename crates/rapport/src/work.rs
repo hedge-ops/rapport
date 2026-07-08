@@ -1,7 +1,7 @@
-use crate::cli::{WorkAddCommand, WorkStartArgs};
+use crate::cli::{WorkAddCommand, WorkCompleteArgs, WorkStartArgs};
 use crate::context::{Clock, CommandContext};
 use crate::rules::{PathRules, RuleResolver, RulesError};
-use crate::state::{WorkFact, WorkState, WorkStateError, WorkStateStore};
+use crate::state::{WorkFact, WorkState, WorkStateError, WorkStateStore, WorkStatus};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
@@ -84,6 +84,90 @@ where
         Err(error) => {
             let _ = writeln!(context.err, "{}", render_state_error(&error));
             finish("work start", arguments, context, CommandResult::failure())
+        }
+    }
+}
+
+pub fn complete<F, C, O, E>(
+    complete_args: &WorkCompleteArgs,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = WorkStateStore::new(context.paths.clone());
+    let result = match store.load(context.fs) {
+        Ok(Some(mut state)) => complete_active_work(complete_args, context, &store, &mut state),
+        Ok(None) => {
+            let _ = writeln!(context.err, "{}", render_missing_work_for_complete());
+            CommandResult::failure()
+        }
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_complete_state_error(&error));
+            CommandResult::failure()
+        }
+    };
+    finish("work complete", arguments, context, result)
+}
+
+fn complete_active_work<F, C, O, E>(
+    complete_args: &WorkCompleteArgs,
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let summary = complete_args.summary.trim();
+    if summary.is_empty() {
+        let _ = writeln!(context.err, "{}", render_missing_summary_for_complete());
+        return CommandResult::failure();
+    }
+
+    if !has_successful_integration(state) && !complete_args.without_integrate {
+        let _ = writeln!(
+            context.err,
+            "{}",
+            render_unintegrated_work_for_complete(state)
+        );
+        return CommandResult::failure();
+    }
+
+    let now = context.clock.now_rfc3339();
+    state.status = WorkStatus::Complete;
+    state.updated_at.clone_from(&now);
+    state.complete = Some(WorkFact::new("complete").at(&now).summary(summary));
+
+    let filename = archive_filename(state, &now);
+    let archive_path = context.paths.history_file(&filename);
+    let archive_display = display_repo_path(context.paths.repo_root(), &archive_path);
+
+    match store.archive(context.fs, &filename, state) {
+        Ok(()) => match store.clear(context.fs) {
+            Ok(()) => {
+                let _ = writeln!(
+                    context.out,
+                    "{}",
+                    render_completed_work(state, summary, &archive_display)
+                );
+                CommandResult::success()
+            }
+            Err(error) => {
+                let _ = writeln!(context.err, "{}", render_complete_state_error(&error));
+                CommandResult::failure()
+            }
+        },
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_complete_state_error(&error));
+            CommandResult::failure()
         }
     }
 }
@@ -267,6 +351,49 @@ fn resolve_existing_work_path(
     }
 }
 
+fn has_successful_integration(state: &WorkState) -> bool {
+    state
+        .integrate
+        .as_ref()
+        .is_some_and(|fact| fact.status == "pr_created")
+}
+
+fn archive_filename(state: &WorkState, timestamp: &str) -> String {
+    format!(
+        "{}-{}.toml",
+        timestamp.replace(':', "-"),
+        safe_filename_part(&state.title)
+    )
+}
+
+fn safe_filename_part(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_separator = true;
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+            last_was_separator = false;
+        } else if !last_was_separator {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+
+    let trimmed = slug.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        String::from("work")
+    } else {
+        trimmed
+    }
+}
+
+fn display_repo_path(repo_root: &Utf8Path, path: &Utf8Path) -> String {
+    path.strip_prefix(repo_root)
+        .unwrap_or(path)
+        .to_string()
+        .replace('\\', "/")
+}
+
 fn render_no_work(state_file: &str) -> String {
     ViewBuilder::new()
         .title("rapport work status")
@@ -369,6 +496,7 @@ fn recent_facts(state: &WorkState) -> Vec<(&'static str, String)> {
         ("build", state.build.as_ref()),
         ("integrate", state.integrate.as_ref()),
         ("signoff", state.signoff.as_ref()),
+        ("complete", state.complete.as_ref()),
     ]
     .into_iter()
     .filter_map(|(name, fact)| fact.map(|fact| (name, render_fact(fact))))
@@ -428,6 +556,69 @@ fn render_missing_work_for_add() -> String {
         .build()
 }
 
+fn render_missing_work_for_complete() -> String {
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph("No active work state found.")
+        .paragraph("Start work before completing it.")
+        .next_actions(nonempty![RunHint::new(
+            "rapport work start --title \"...\" --path <path>"
+        )])
+        .build()
+}
+
+fn render_missing_summary_for_complete() -> String {
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph("Completion summary cannot be empty.")
+        .next_actions(nonempty![RunHint::new(
+            "rapport work complete --summary \"...\""
+        )])
+        .build()
+}
+
+fn render_unintegrated_work_for_complete(state: &WorkState) -> String {
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph(format!(
+            "Active work `{}` has not recorded a successful integration.",
+            state.title
+        ))
+        .paragraph("Use the local-only flag only when this work should close without a PR.")
+        .next_actions(nonempty![
+            RunHint::new("rapport integrate"),
+            RunHint::new("rapport work complete --summary \"...\" --without-integrate")
+        ])
+        .build()
+}
+
+fn render_completed_work(state: &WorkState, summary: &str, archive_path: &str) -> String {
+    let mut work = vec![("title", state.title.clone())];
+    if let Some(ticket) = &state.ticket {
+        work.push(("ticket", ticket.clone()));
+    }
+    if let Some(integrate) = &state.integrate
+        && let Some(pr_url) = &integrate.pr_url
+    {
+        work.push(("pr", pr_url.clone()));
+    }
+
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .section("Completion", |b| {
+            b.entries([
+                ("status", state.status.to_string()),
+                ("summary", summary.to_string()),
+                ("archive", archive_path.to_string()),
+            ])
+        })
+        .section("Work", |b| b.entries(work))
+        .next_actions(nonempty![RunHint::new(
+            "rapport work start --title \"...\" --path <path>"
+        )])
+        .build()
+}
+
 fn render_path_error(error: &AddPathError) -> String {
     ViewBuilder::new()
         .title("rapport work add path")
@@ -450,6 +641,15 @@ fn render_add_state_error(error: &WorkStateError) -> String {
     ViewBuilder::new()
         .title("rapport work add path")
         .paragraph("Could not update active work state.")
+        .paragraph(error)
+        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .build()
+}
+
+fn render_complete_state_error(error: &WorkStateError) -> String {
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph("Could not complete active work state.")
         .paragraph(error)
         .next_actions(nonempty![RunHint::new("rapport work status")])
         .build()

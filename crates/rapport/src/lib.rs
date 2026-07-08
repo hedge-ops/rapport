@@ -112,6 +112,7 @@ where
         Command::Work(work_args) => match &work_args.command {
             WorkCommand::Status => work::status(argv, context),
             WorkCommand::Start(start_args) => work::start(start_args, argv, context),
+            WorkCommand::Complete(complete_args) => work::complete(complete_args, argv, context),
             WorkCommand::Rules(rules_args) => match &rules_args.command {
                 WorkRulesCommand::List { path } => rules::list(path.as_ref(), argv, context),
                 WorkRulesCommand::Show { id } => rules::show(id, argv, context),
@@ -264,6 +265,18 @@ mod tests {
         assert!(out.contains("Manage active local work state"));
         assert!(out.contains("start"));
         assert!(out.contains("status"));
+        assert!(out.contains("complete"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn work_complete_help_exists() {
+        let (code, out, err) = run_with(&["work", "complete", "--help"]);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Archive and clear completed local work"));
+        assert!(out.contains("--summary"));
+        assert!(out.contains("--without-integrate"));
         assert_eq!(err, "");
     }
 
@@ -524,6 +537,113 @@ updated_at = "2026-07-07T23:00:00Z"
 
         assert_eq!(event.command, "work start");
         assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn work_complete_requires_active_work() {
+        let mut fs = InMemoryFileSystem::default();
+
+        let (code, out, err) = run_with_fs(
+            &["work", "complete", "--summary", "Merged pull request"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("No active work state found"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work complete");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn work_complete_rejects_non_integrated_work_without_flag() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+
+        let (code, out, err) =
+            run_with_fs(&["work", "complete", "--summary", "Done locally"], &mut fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("has not recorded a successful integration"));
+        assert!(err.contains("--without-integrate"));
+        assert_eq!(load_state(&fs).status, WorkStatus::Active);
+        assert!(!fs.is_file("/repo/.rapport/history/2026-07-07T23-00-00Z-do-the-thing.toml"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work complete");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn work_complete_archives_integrated_work_and_clears_active_state() {
+        let mut fs = InMemoryFileSystem::default();
+        add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+
+        let (code, out, err) =
+            run_with_fs(&["work", "complete", "--summary", "Merged PR #70"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("status` — complete"));
+        assert!(out.contains("Merged PR #70"));
+        assert!(out.contains(".rapport/history/2026-07-07T23-00-00Z-do-the-thing.toml"));
+        assert_eq!(err, "");
+        assert_eq!(
+            WorkStateStore::new(RapportPaths::new("/repo"))
+                .load(&fs)
+                .unwrap(),
+            None
+        );
+        let archived = archived_state(&fs, "2026-07-07T23-00-00Z-do-the-thing.toml");
+
+        assert_eq!(archived.status, WorkStatus::Complete);
+        assert_eq!(archived.updated_at, "2026-07-07T23:00:00Z");
+        assert_eq!(
+            archived.complete.unwrap().summary.as_deref(),
+            Some("Merged PR #70")
+        );
+        assert_eq!(archived.integrate.unwrap().status, "pr_created");
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "work complete");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn work_complete_allows_local_only_with_without_integrate() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+
+        let (code, out, err) = run_with_fs(
+            &[
+                "work",
+                "complete",
+                "--summary",
+                "Closed local experiment",
+                "--without-integrate",
+            ],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Closed local experiment"));
+        assert_eq!(err, "");
+        assert_eq!(
+            WorkStateStore::new(RapportPaths::new("/repo"))
+                .load(&fs)
+                .unwrap(),
+            None
+        );
+        let archived = archived_state(&fs, "2026-07-07T23-00-00Z-do-the-thing.toml");
+
+        assert_eq!(archived.status, WorkStatus::Complete);
+        assert!(archived.integrate.is_none());
+        assert_eq!(
+            archived.complete.unwrap().summary.as_deref(),
+            Some("Closed local experiment")
+        );
     }
 
     #[test]
@@ -1146,6 +1266,12 @@ command = ["just", "check"]
             .unwrap()
     }
 
+    fn archived_state(fs: &InMemoryFileSystem, filename: &str) -> WorkState {
+        let path = Utf8PathBuf::from(format!("/repo/.rapport/history/{filename}"));
+        let contents = fs.read_to_string(path).unwrap();
+        toml::from_str(&contents).unwrap()
+    }
+
     fn add_rule_owner(fs: &mut InMemoryFileSystem, contents: &str) {
         fs.write_string("/repo/rules.toml", contents).unwrap();
     }
@@ -1195,6 +1321,42 @@ updated_at = "2026-07-07T23:00:00Z"
 status = "pass"
 at = "2026-07-07T23:00:00Z"
 summary = "`just ci` for crates/rapport/src/lib.rs"
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn add_integrated_active_work_with_paths(fs: &mut InMemoryFileSystem, paths: &[&str]) {
+        let rendered_paths = paths
+            .iter()
+            .map(|path| format!("\"{path}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        fs.write_string(
+            "/repo/.rapport/work.toml",
+            format!(
+                r#"
+schema_version = 1
+title = "Do the thing"
+paths = [{rendered_paths}]
+stage = "development"
+status = "active"
+created_at = "2026-07-07T23:00:00Z"
+updated_at = "2026-07-07T23:00:00Z"
+
+[build]
+status = "pass"
+at = "2026-07-07T23:00:00Z"
+summary = "`just ci` for crates/rapport/src/lib.rs"
+
+[integrate]
+status = "pr_created"
+at = "2026-07-07T23:00:00Z"
+summary = "Issue #70"
+commit = "abc123"
+branch = "work/issue-70-complete"
+pr_url = "https://github.com/hedge-ops/rapport/pull/70"
 "#
             ),
         )
