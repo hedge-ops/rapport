@@ -6,8 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-09
+
 ### Added
 
+- Added the `work`, `build`, `integrate`, `complete`, `init`, `prime`,
+  `doctor`, and `context` workflow surface.
+- Added GitHub Release archives for supported platforms so
+  `cargo binstall rapport` can install prebuilt binaries.
 - Added git-root-bounded project discovery for Cargo projects via `Cargo.toml`.
 
 ## [0.1.0] - 2026-05-02
@@ -34,6 +40,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.1.0...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.2.0...HEAD
+[0.2.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.1.0...rapport-v0.2.0
 [0.1.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.0.1...rapport-v0.1.0
 [0.0.1]: https://github.com/hedge-ops/rapport/releases/tag/rapport-v0.0.1
