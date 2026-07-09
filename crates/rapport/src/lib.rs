@@ -1,6 +1,7 @@
 mod build;
 mod cli;
 mod context;
+mod doctor;
 mod init;
 mod integrate;
 mod paths;
@@ -110,6 +111,7 @@ where
 {
     match &cli.command {
         Command::Prime => prime::run(argv, context),
+        Command::Doctor => doctor::run(argv, context),
         Command::Init => init::run(argv, context),
         Command::Work(work_args) => match &work_args.command {
             WorkCommand::Status => work::status(argv, context),
@@ -244,8 +246,9 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("repository rapport for human-directed agent work"));
-        assert!(out.contains("prime -> work -> build -> integrate -> work complete"));
+        assert!(out.contains("prime -> doctor -> work -> build -> integrate -> work complete"));
         assert!(out.contains("prime"));
+        assert!(out.contains("doctor"));
         assert!(out.contains("work"));
         assert_eq!(err, "");
     }
@@ -256,7 +259,7 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("Rapport keeps human-directed agent work grounded"));
-        assert!(out.contains("prime -> work -> build -> integrate -> work complete"));
+        assert!(out.contains("prime -> doctor -> work -> build -> integrate -> work complete"));
         assert_eq!(err, "");
     }
 
@@ -280,6 +283,7 @@ mod tests {
         assert!(out.contains("planning, coding, testing, building, reviewing"));
         assert!(out.contains("rapport work start"));
         assert!(out.contains("rapport work rules list"));
+        assert!(out.contains("rapport doctor"));
         assert!(out.contains("rapport build"));
         assert!(out.contains("rapport integrate"));
         assert!(out.contains("rapport work complete"));
@@ -288,6 +292,77 @@ mod tests {
 
         assert_eq!(event.command, "prime");
         assert_eq!(event.outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn doctor_help_exists() {
+        let (code, out, err) = run_with(&["doctor", "--help"]);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Check repository prerequisites"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn doctor_reports_github_origin_success() {
+        let mut fs = InMemoryFileSystem::default();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("git repository"));
+        assert!(out.contains("origin remote"));
+        assert!(out.contains("GitHub origin"));
+        assert!(out.contains("rapport integrate"));
+        assert_eq!(err, "");
+        assert_eq!(
+            runner.calls(),
+            vec![(
+                CommandSpec::new("git", ["remote", "get-url", "origin"]),
+                Utf8PathBuf::from("/repo")
+            )]
+        );
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "doctor");
+        assert_eq!(event.outcome, CommandEventOutcome::Success);
+    }
+
+    #[test]
+    fn doctor_rejects_missing_origin() {
+        let mut fs = InMemoryFileSystem::default();
+        let runner = FakeRunner::failing("error: No such remote 'origin'\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("origin remote"));
+        assert!(err.contains("No such remote"));
+        assert!(err.contains("configure GitHub origin"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "doctor");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn doctor_rejects_non_github_origin() {
+        let mut fs = InMemoryFileSystem::default();
+        let runner = FakeRunner::successful("https://gitlab.com/hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("GitHub origin"));
+        assert!(err.contains("does not point at GitHub"));
+        assert!(err.contains("https://gitlab.com/hedge-ops/rapport.git"));
+        let event = first_event(&fs);
+
+        assert_eq!(event.command, "doctor");
+        assert_eq!(event.outcome, CommandEventOutcome::Failure);
     }
 
     #[test]

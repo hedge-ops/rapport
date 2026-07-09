@@ -79,6 +79,7 @@ fn render_prime() -> String {
                 "`rapport work start --title \"...\" --ticket <ticket> --objective \"...\" --path <path>` - create active work state",
                 "`rapport work status` - inspect current work, paths, and recent facts",
                 "`rapport work rules list` - read repository rules for active work paths",
+                "`rapport doctor` - verify Git and GitHub prerequisites before integration",
                 "`rapport build` - run repository validation for active work",
                 "`rapport integrate --summary \"...\" --message \"...\"` - commit active changes and open a PR",
                 "`rapport work complete --summary \"...\"` - archive completed work and clear local state",
@@ -115,6 +116,7 @@ mod tests {
         assert!(view.contains("planning, coding, testing, building, reviewing"));
         assert!(view.contains("rapport work start"));
         assert!(view.contains("rapport work rules list"));
+        assert!(view.contains("rapport doctor"));
         assert!(view.contains("rapport build"));
         assert!(view.contains("rapport integrate"));
         assert!(view.contains("rapport work complete"));

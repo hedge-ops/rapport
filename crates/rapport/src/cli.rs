@@ -7,7 +7,7 @@ Rapport keeps human-directed agent work grounded in repository-owned rules, \
 build conventions, Git/GitHub integration, and local state.";
 const ROOT_AFTER_HELP: &str = "\
 First loop:
-  prime -> work -> build -> integrate -> work complete
+  prime -> doctor -> work -> build -> integrate -> work complete
 
 Rapport coordinates repository workflow; it does not replace Just or implement release/deploy behavior.";
 
@@ -29,6 +29,8 @@ pub struct Cli {
 pub enum Command {
     /// Show how agents should use Rapport in this project.
     Prime,
+    /// Check repository prerequisites for Rapport workflow.
+    Doctor,
     /// Record Rapport usage in repository agent instructions.
     Init,
     /// Manage active local work state.
