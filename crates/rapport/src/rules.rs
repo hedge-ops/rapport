@@ -14,6 +14,7 @@ use std::process::ExitCode;
 
 const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
+const RULE_SCHEMA_VERSION: u16 = 1;
 
 pub fn list<F, C, O, E>(
     path: Option<&Utf8PathBuf>,
@@ -269,10 +270,18 @@ impl RuleResolver {
             path: path.to_path_buf(),
             source,
         })?;
-        toml::from_str(&contents).map_err(|source| RulesError::Decode {
-            path: path.to_path_buf(),
-            source,
-        })
+        let document =
+            toml::from_str::<RuleDocument>(&contents).map_err(|source| RulesError::Decode {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        if document.version != RULE_SCHEMA_VERSION {
+            return Err(RulesError::UnsupportedSchemaVersion {
+                path: path.to_path_buf(),
+                version: document.version,
+            });
+        }
+        Ok(document)
     }
 
     fn resolve_include(&self, source: &Utf8Path, include: &str) -> Result<Utf8PathBuf, RulesError> {
@@ -383,6 +392,10 @@ pub enum RulesError {
         include: String,
         source: Utf8PathBuf,
     },
+    UnsupportedSchemaVersion {
+        path: Utf8PathBuf,
+        version: u16,
+    },
 }
 
 impl fmt::Display for RulesError {
@@ -406,6 +419,10 @@ impl fmt::Display for RulesError {
                 f,
                 "include `{include}` from `{source}` resolves outside the repository"
             ),
+            Self::UnsupportedSchemaVersion { path, version } => write!(
+                f,
+                "unsupported rules schema version `{version}` at `{path}`; supported version is `{RULE_SCHEMA_VERSION}`"
+            ),
         }
     }
 }
@@ -415,7 +432,9 @@ impl Error for RulesError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Decode { source, .. } => Some(source),
-            Self::DuplicateRuleId { .. } | Self::IncludeOutsideRepository { .. } => None,
+            Self::DuplicateRuleId { .. }
+            | Self::IncludeOutsideRepository { .. }
+            | Self::UnsupportedSchemaVersion { .. } => None,
         }
     }
 }
@@ -423,6 +442,7 @@ impl Error for RulesError {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuleDocument {
+    version: u16,
     #[serde(default)]
     includes: Vec<String>,
     #[serde(default)]
@@ -641,6 +661,8 @@ mod tests {
         fs.write_string(
             "/repo/rules/rust.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "RUST-ORG-003"
 text = "Keep lib.rs small."
@@ -650,6 +672,8 @@ text = "Keep lib.rs small."
         fs.write_string(
             "/repo/crates/rapport/rules.toml",
             r#"
+version = 1
+
 includes = ["/rules/rust.toml"]
 
 [[rules]]
@@ -681,6 +705,8 @@ text = "Keep the CLI boring."
         fs.write_string(
             "/repo/rules.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "ROOT-001"
 text = "Root rule."
@@ -690,6 +716,8 @@ text = "Root rule."
         fs.write_string(
             "/repo/crates/rapport/rules.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "LOCAL-001"
 text = "Local rule."
@@ -711,6 +739,8 @@ text = "Local rule."
         fs.write_string(
             "/repo/rules/rust.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "RUST-001"
 text = "Rust rule."
@@ -720,6 +750,8 @@ text = "Rust rule."
         fs.write_string(
             "/repo/rules.toml",
             r#"
+version = 1
+
 includes = ["/rules/rust.toml", "/rules/rust.toml"]
 "#,
         )
@@ -739,6 +771,8 @@ includes = ["/rules/rust.toml", "/rules/rust.toml"]
         fs.write_string(
             "/repo/rules/a.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "DUP-001"
 text = "First rule."
@@ -748,6 +782,8 @@ text = "First rule."
         fs.write_string(
             "/repo/rules/b.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "DUP-001"
 text = "Second rule."
@@ -757,6 +793,8 @@ text = "Second rule."
         fs.write_string(
             "/repo/rules.toml",
             r#"
+version = 1
+
 includes = ["/rules/a.toml", "/rules/b.toml"]
 "#,
         )
@@ -789,6 +827,8 @@ includes = ["/rules/a.toml", "/rules/b.toml"]
         fs.write_string(
             "/repo/crates/one/rules.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "LOCAL-001"
 text = "One."
@@ -798,6 +838,8 @@ text = "One."
         fs.write_string(
             "/repo/crates/two/rules.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "LOCAL-001"
 text = "Two."

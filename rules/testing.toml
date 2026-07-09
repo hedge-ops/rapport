@@ -1,3 +1,5 @@
+version = 1
+
 [[rules]]
 id = "TEST-SEM-001"
 text = "Treat these standards as reviewable expectations. A rule that says \"prefer\" describes the default shape; deviations are acceptable only when local ownership, compatibility, or a documented tradeoff makes the alternative stronger."

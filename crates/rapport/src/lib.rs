@@ -6,6 +6,7 @@ mod init;
 mod integrate;
 mod paths;
 mod prime;
+mod project_context;
 mod rules;
 mod runner;
 mod state;
@@ -123,6 +124,9 @@ where
             },
             WorkCommand::Add(add_args) => work::add(&add_args.command, argv, context),
         },
+        Command::Context(context_args) => {
+            project_context::run(&context_args.command, argv, context)
+        }
         Command::Build(build_args) => build::run(build_args, argv, context),
         Command::Integrate(integrate_args) => integrate::run(integrate_args, argv, context),
     }
@@ -246,7 +250,11 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("repository rapport for human-directed agent work"));
-        assert!(out.contains("prime -> doctor -> work -> build -> integrate -> work complete"));
+        assert!(
+            out.contains(
+                "prime -> doctor -> work -> context -> build -> integrate -> work complete"
+            )
+        );
         assert!(out.contains("prime"));
         assert!(out.contains("doctor"));
         assert!(out.contains("work"));
@@ -259,7 +267,11 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("Rapport keeps human-directed agent work grounded"));
-        assert!(out.contains("prime -> doctor -> work -> build -> integrate -> work complete"));
+        assert!(
+            out.contains(
+                "prime -> doctor -> work -> context -> build -> integrate -> work complete"
+            )
+        );
         assert_eq!(err, "");
     }
 
@@ -282,6 +294,7 @@ mod tests {
         assert!(out.contains("rapport prime"));
         assert!(out.contains("planning, coding, testing, building, reviewing"));
         assert!(out.contains("rapport work start"));
+        assert!(out.contains("rapport context show"));
         assert!(out.contains("rapport work rules list"));
         assert!(out.contains("rapport doctor"));
         assert!(out.contains("rapport build"));
@@ -375,6 +388,219 @@ mod tests {
         assert!(out.contains("status"));
         assert!(out.contains("complete"));
         assert_eq!(err, "");
+    }
+
+    #[test]
+    fn context_help_explains_project_context_intent() {
+        let (code, out, err) = run_with(&["context", "--help"]);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("what a project area is about"));
+        assert!(out.contains("Ownership records what belongs"));
+        assert!(out.contains("numbered, reviewable benchmarks"));
+        assert!(out.contains("context.toml"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn context_init_creates_context_toml() {
+        let mut fs = InMemoryFileSystem::default();
+
+        let (code, out, err) = run_with_fs(
+            &[
+                "context",
+                "init",
+                "app/core/domain",
+                "--purpose",
+                "Owns workspace business rules.",
+            ],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("status` — created"));
+        assert!(out.contains("app/core/domain/context.toml"));
+        assert_eq!(err, "");
+        let context = fs
+            .read_to_string("/repo/app/core/domain/context.toml")
+            .unwrap();
+
+        assert!(context.contains("version = 1"));
+        assert!(context.contains("purpose = \"Owns workspace business rules.\""));
+    }
+
+    #[test]
+    fn context_editing_commands_update_context_toml() {
+        let mut fs = InMemoryFileSystem::default();
+        add_editable_context(&mut fs);
+
+        let (purpose_code, _, purpose_err) = run_with_fs(
+            &[
+                "context",
+                "purpose",
+                "set",
+                "app/core/domain",
+                "Owns workspace business rules.",
+            ],
+            &mut fs,
+        );
+        let (owns_code, _, owns_err) = run_with_fs(
+            &[
+                "context",
+                "ownership",
+                "owns",
+                "add",
+                "app/core/domain",
+                "Workspace invariants",
+            ],
+            &mut fs,
+        );
+        let (boundary_code, _, boundary_err) = run_with_fs(
+            &[
+                "context",
+                "ownership",
+                "boundary",
+                "add",
+                "app/core/domain",
+                "Persistence document shape belongs in app/shared/documents.",
+            ],
+            &mut fs,
+        );
+        let (include_code, _, include_err) = run_with_fs(
+            &[
+                "context",
+                "rule",
+                "include",
+                "add",
+                "app/core/domain",
+                "/rules/rust.toml",
+            ],
+            &mut fs,
+        );
+        let (rule_code, _, rule_err) = run_with_fs(
+            &[
+                "context",
+                "rule",
+                "add",
+                "app/core/domain",
+                "--id",
+                "DOMAIN-WORKSPACE-001",
+                "--text",
+                "Treat documents::WorkspaceDocument as the persistence aggregate.",
+                "--rationale",
+                "The domain owns relationship and work invariants.",
+                "--reference",
+                "https://github.com/hedge-ops/rapport/issues/78",
+            ],
+            &mut fs,
+        );
+
+        assert_eq!(purpose_code, ExitCode::SUCCESS);
+        assert_eq!(owns_code, ExitCode::SUCCESS);
+        assert_eq!(boundary_code, ExitCode::SUCCESS);
+        assert_eq!(include_code, ExitCode::SUCCESS);
+        assert_eq!(rule_code, ExitCode::SUCCESS);
+        assert_eq!(purpose_err, "");
+        assert_eq!(owns_err, "");
+        assert_eq!(boundary_err, "");
+        assert_eq!(include_err, "");
+        assert_eq!(rule_err, "");
+        let context = fs
+            .read_to_string("/repo/app/core/domain/context.toml")
+            .unwrap();
+
+        assert!(context.contains("purpose = \"Owns workspace business rules.\""));
+        assert!(context.contains("\"Workspace invariants\""));
+        assert!(
+            context.contains("\"Persistence document shape belongs in app/shared/documents.\"")
+        );
+        assert!(context.contains("\"/rules/rust.toml\""));
+        assert!(context.contains("id = \"DOMAIN-WORKSPACE-001\""));
+        assert!(
+            context.contains("rationale = \"The domain owns relationship and work invariants.\"")
+        );
+        assert!(context.contains("\"https://github.com/hedge-ops/rapport/issues/78\""));
+    }
+
+    #[test]
+    fn context_show_prints_effective_context_and_benchmarks() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+version = 1
+
+[[rules]]
+id = "RUST-001"
+text = "Use rustfmt."
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/context.toml",
+            r#"
+version = 1
+purpose = "Root purpose"
+rule_includes = ["/rules/rust.toml"]
+
+[ownership]
+owns = ["Root ownership"]
+boundaries = []
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/app/core/context.toml",
+            r#"
+version = 1
+purpose = "Core purpose"
+rule_includes = []
+
+[ownership]
+owns = ["Core ownership"]
+boundaries = ["Persistence lives elsewhere."]
+
+[[rules]]
+id = "CORE-001"
+text = "Keep core boring."
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(&["context", "show", "app/core/domain"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Core purpose"));
+        assert!(out.contains("Root ownership"));
+        assert!(out.contains("Persistence lives elsewhere."));
+        assert!(out.contains("RUST-001"));
+        assert!(out.contains("CORE-001"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn context_doctor_reports_missing_includes() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/context.toml",
+            r#"
+version = 1
+purpose = "Root purpose"
+rule_includes = ["/rules/missing.toml"]
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(&["context", "doctor", "."], &mut fs);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Context validation failed"));
+        assert!(err.contains("/rules/missing.toml"));
     }
 
     #[test]
@@ -761,12 +987,16 @@ updated_at = "2026-07-07T23:00:00Z"
         add_rule_owner(
             &mut fs,
             r#"
+version = 1
+
 includes = ["/rules/rust.toml"]
 "#,
         );
         fs.write_string(
             "/repo/rules/rust.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "RUST-ORG-003"
 text = "Keep lib.rs small."
@@ -797,12 +1027,16 @@ text = "Keep lib.rs small."
         add_rule_owner(
             &mut fs,
             r#"
+version = 1
+
 includes = ["/rules/testing.toml"]
 "#,
         );
         fs.write_string(
             "/repo/rules/testing.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "TEST-CORE-001"
 text = "Treat tests as specifications."
@@ -839,12 +1073,16 @@ text = "Treat tests as specifications."
         add_rule_owner(
             &mut fs,
             r#"
+version = 1
+
 includes = ["/rules/rust.toml"]
 "#,
         );
         fs.write_string(
             "/repo/rules/rust.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "RUST-ORG-003"
 text = "Keep lib.rs small."
@@ -864,7 +1102,7 @@ text = "Keep lib.rs small."
     fn work_rules_show_requires_applicable_rule() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
-        add_rule_owner(&mut fs, "");
+        add_rule_owner(&mut fs, "version = 1\n");
 
         let (code, out, err) = run_with_fs(&["work", "rules", "show", "RUST-ORG-404"], &mut fs);
 
@@ -885,12 +1123,16 @@ text = "Keep lib.rs small."
         add_rule_owner(
             &mut fs,
             r#"
+version = 1
+
 includes = ["/rules/rust.toml"]
 "#,
         );
         fs.write_string(
             "/repo/rules/rust.toml",
             r#"
+version = 1
+
 [[rules]]
 id = "RUST-ORG-003"
 text = "Keep lib.rs small."
@@ -1383,6 +1625,33 @@ command = ["just", "check"]
 
     fn add_rule_owner(fs: &mut InMemoryFileSystem, contents: &str) {
         fs.write_string("/repo/rules.toml", contents).unwrap();
+    }
+
+    fn add_editable_context(fs: &mut InMemoryFileSystem) {
+        fs.write_string(
+            "/repo/app/core/domain/context.toml",
+            r#"
+version = 1
+purpose = "Old purpose"
+rule_includes = []
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+version = 1
+
+[[rules]]
+id = "RUST-001"
+text = "Use rustfmt."
+"#,
+        )
+        .unwrap();
     }
 
     fn add_active_work_with_paths(fs: &mut InMemoryFileSystem, paths: &[&str]) {
