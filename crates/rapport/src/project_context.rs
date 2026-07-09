@@ -3,6 +3,7 @@ use crate::cli::{
     ContextPurposeCommand, ContextRuleAddArgs, ContextRuleCommand, ContextRuleUpdateArgs,
 };
 use crate::context::{Clock, CommandContext};
+use crate::repository_files::find_named_files;
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
@@ -80,6 +81,70 @@ where
         ContextCommand::Doctor { path } => ("context doctor", doctor(path.as_ref(), context)),
     };
     finish(command_name, arguments, context, result)
+}
+
+pub(crate) fn validate_repository(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+) -> ProjectContextRepositoryValidation {
+    let context_files = match find_named_files(fs, repo_root, CONTEXT_FILE) {
+        Ok(context_files) => context_files,
+        Err(source) => {
+            return ProjectContextRepositoryValidation {
+                context_files: Vec::new(),
+                problems: vec![ProjectContextValidationProblem {
+                    detail: format!(
+                        "could not scan repository for `{CONTEXT_FILE}` files at `{repo_root}`: {source}"
+                    ),
+                }],
+            };
+        }
+    };
+
+    let store = ProjectContextStore::new(repo_root.to_path_buf());
+    let resolver = ProjectContextResolver::new(store);
+    let mut seen_problems = BTreeSet::new();
+    let mut problems = Vec::new();
+
+    for context_file in &context_files {
+        let context_directory = context_file.parent().unwrap_or(repo_root);
+        if let Err(error) = resolver.resolve(fs, context_directory) {
+            let detail = normalize_problem_detail(&error.to_string());
+            if seen_problems.insert(detail.clone()) {
+                problems.push(ProjectContextValidationProblem { detail });
+            }
+        }
+    }
+
+    ProjectContextRepositoryValidation {
+        context_files,
+        problems,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectContextRepositoryValidation {
+    context_files: Vec<Utf8PathBuf>,
+    problems: Vec<ProjectContextValidationProblem>,
+}
+
+impl ProjectContextRepositoryValidation {
+    pub(crate) fn context_file_count(&self) -> usize {
+        self.context_files.len()
+    }
+
+    pub(crate) fn problem_details(&self) -> impl Iterator<Item = &str> {
+        self.problems.iter().map(|problem| problem.detail.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProjectContextValidationProblem {
+    detail: String,
+}
+
+fn normalize_problem_detail(detail: &str) -> String {
+    detail.replace('\\', "/")
 }
 
 fn show<F, C, O, E>(
@@ -825,7 +890,7 @@ impl ProjectContextResolver {
                 source,
             })?;
         let document = toml::from_str::<RuleLibraryDocument>(&contents).map_err(|source| {
-            ProjectContextError::Decode {
+            ProjectContextError::RuleDecode {
                 path: path.clone(),
                 source,
             }
@@ -1055,6 +1120,10 @@ enum ProjectContextError {
         path: Utf8PathBuf,
         source: toml::de::Error,
     },
+    RuleDecode {
+        path: Utf8PathBuf,
+        source: toml::de::Error,
+    },
     UnsupportedSchemaVersion {
         path: Utf8PathBuf,
         version: u16,
@@ -1105,6 +1174,9 @@ impl fmt::Display for ProjectContextError {
             }
             Self::Decode { path, source } => {
                 write!(f, "context parse error at `{path}`: {source}")
+            }
+            Self::RuleDecode { path, source } => {
+                write!(f, "rules parse error at `{path}`: {source}")
             }
             Self::UnsupportedSchemaVersion { path, version } => write!(
                 f,
@@ -1160,7 +1232,7 @@ impl Error for ProjectContextError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::Decode { source, .. } => Some(source),
+            Self::Decode { source, .. } | Self::RuleDecode { source, .. } => Some(source),
             Self::UnsupportedSchemaVersion { .. }
             | Self::UnsupportedRuleSchemaVersion { .. }
             | Self::ContextAlreadyExists { .. }

@@ -7,6 +7,7 @@ mod integrate;
 mod paths;
 mod prime;
 mod project_context;
+mod repository_files;
 mod rules;
 mod runner;
 mod state;
@@ -376,6 +377,287 @@ mod tests {
 
         assert_eq!(event.command, "doctor");
         assert_eq!(event.outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn doctor_reports_project_context_success() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/rules.toml",
+            r#"
+version = 1
+
+includes = ["/rules/rust.toml"]
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+version = 1
+
+[[rules]]
+id = "RUST-001"
+text = "Use rustfmt."
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/app/context.toml",
+            r#"
+version = 1
+purpose = "App purpose"
+rule_includes = ["/rules/rust.toml"]
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Project Context"));
+        assert!(out.contains("validated 1 context.toml file and 1 rules.toml file"));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn doctor_rejects_malformed_context_toml() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string("/repo/app/context.toml", "version =")
+            .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Project Context"));
+        assert!(err.contains("context parse error"));
+        assert!(err.contains("/repo/app/context.toml"));
+    }
+
+    #[test]
+    fn doctor_rejects_unsupported_context_version() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/app/context.toml",
+            r#"
+version = 2
+purpose = "App purpose"
+rule_includes = []
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("unsupported context schema version `2`"));
+        assert!(err.contains("supported version is `1`"));
+        assert!(err.contains("/repo/app/context.toml"));
+    }
+
+    #[test]
+    fn doctor_rejects_missing_context_rule_include() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/app/context.toml",
+            r#"
+version = 1
+purpose = "App purpose"
+rule_includes = ["/rules/missing.toml"]
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("rule include `/rules/missing.toml`"));
+        assert!(err.contains("does not exist"));
+        assert!(err.contains("/repo/app/context.toml"));
+    }
+
+    #[test]
+    fn doctor_rejects_unsupported_included_rule_library_version() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/app/context.toml",
+            r#"
+version = 1
+purpose = "App purpose"
+rule_includes = ["/rules/rust.toml"]
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+version = 2
+
+[[rules]]
+id = "RUST-001"
+text = "Use rustfmt."
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("unsupported rules schema version `2`"));
+        assert!(err.contains("supported version is `1`"));
+        assert!(err.contains("/repo/rules/rust.toml"));
+    }
+
+    #[test]
+    fn doctor_rejects_malformed_included_rule_library() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/app/context.toml",
+            r#"
+version = 1
+purpose = "App purpose"
+rule_includes = ["/rules/rust.toml"]
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        fs.write_string("/repo/rules/rust.toml", "version =")
+            .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("rules parse error"));
+        assert!(err.contains("/repo/rules/rust.toml"));
+    }
+
+    #[test]
+    fn doctor_rejects_missing_nested_rule_include() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/app/context.toml",
+            r#"
+version = 1
+purpose = "App purpose"
+rule_includes = ["/rules/rust.toml"]
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+version = 1
+includes = ["testing.toml"]
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("rule include `testing.toml`"));
+        assert!(err.contains("does not exist"));
+        assert!(err.contains("/repo/rules/rust.toml"));
+    }
+
+    #[test]
+    fn doctor_rejects_duplicate_effective_context_rule_ids() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/app/context.toml",
+            r#"
+version = 1
+purpose = "App purpose"
+rule_includes = ["/rules/rust.toml", "/rules/testing.toml"]
+
+[ownership]
+owns = []
+boundaries = []
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+version = 1
+
+[[rules]]
+id = "DUP-001"
+text = "First rule."
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/rules/testing.toml",
+            r#"
+version = 1
+
+[[rules]]
+id = "DUP-001"
+text = "Second rule."
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("duplicate rule id `DUP-001`"));
+        assert!(err.contains("/repo/rules/rust.toml"));
+        assert!(err.contains("/repo/rules/testing.toml"));
+    }
+
+    #[test]
+    fn doctor_rejects_unsupported_rules_toml_version() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string("/repo/rules.toml", "version = 2\n")
+            .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("unsupported rules schema version `2`"));
+        assert!(err.contains("/repo/rules.toml"));
     }
 
     #[test]

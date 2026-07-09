@@ -1,5 +1,6 @@
 use crate::context::{Clock, CommandContext};
 use crate::paths::RapportPaths;
+use crate::repository_files::find_named_files;
 use crate::state::{WorkStateError, WorkStateStore};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
@@ -112,6 +113,91 @@ where
         }
     };
     finish("work rules show", arguments, context, result)
+}
+
+pub(crate) fn validate_repository(
+    fs: &impl FileSystem,
+    paths: &RapportPaths,
+) -> RuleRepositoryValidation {
+    let rule_files = match find_named_files(fs, paths.repo_root(), "rules.toml") {
+        Ok(rule_files) => rule_files,
+        Err(source) => {
+            return RuleRepositoryValidation {
+                rule_files: Vec::new(),
+                problems: vec![RuleValidationProblem {
+                    detail: format!(
+                        "could not scan repository for `rules.toml` files at `{}`: {source}",
+                        paths.repo_root()
+                    ),
+                }],
+            };
+        }
+    };
+
+    let resolver = RuleResolver::new(paths.clone());
+    let mut seen_problems = BTreeSet::new();
+    let mut problems = Vec::new();
+    for rule_file in &rule_files {
+        let validation_path = rule_file.parent().unwrap_or_else(|| paths.repo_root());
+        match resolver.resolve_path(fs, validation_path) {
+            Ok(path_rules) if path_rules.owner.as_deref() == Some(rule_file.as_path()) => {}
+            Ok(path_rules) => {
+                let detail = match path_rules.unresolved {
+                    Some(reason) => format!(
+                        "rules owner `{}` is unresolved: {reason}",
+                        resolver.display_path(rule_file)
+                    ),
+                    None => format!(
+                        "rules owner `{}` resolved to `{}` instead",
+                        resolver.display_path(rule_file),
+                        path_rules.owner.as_ref().map_or_else(
+                            || String::from("<none>"),
+                            |owner| resolver.display_path(owner),
+                        )
+                    ),
+                };
+                if seen_problems.insert(detail.clone()) {
+                    problems.push(RuleValidationProblem { detail });
+                }
+            }
+            Err(error) => {
+                let detail = normalize_problem_detail(&error.to_string());
+                if seen_problems.insert(detail.clone()) {
+                    problems.push(RuleValidationProblem { detail });
+                }
+            }
+        }
+    }
+
+    RuleRepositoryValidation {
+        rule_files,
+        problems,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuleRepositoryValidation {
+    rule_files: Vec<Utf8PathBuf>,
+    problems: Vec<RuleValidationProblem>,
+}
+
+impl RuleRepositoryValidation {
+    pub(crate) fn rule_file_count(&self) -> usize {
+        self.rule_files.len()
+    }
+
+    pub(crate) fn problem_details(&self) -> impl Iterator<Item = &str> {
+        self.problems.iter().map(|problem| problem.detail.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuleValidationProblem {
+    detail: String,
+}
+
+fn normalize_problem_detail(detail: &str) -> String {
+    detail.replace('\\', "/")
 }
 
 #[derive(Debug, Clone)]
