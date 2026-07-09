@@ -282,10 +282,9 @@ fn parse_duration(input: &str) -> Option<ParsedDuration> {
 
     let (direction, middle) = if let Some(rest) = input.strip_prefix("in ") {
         (Direction::Forward, rest.trim())
-    } else if let Some(rest) = input.strip_suffix(" ago") {
-        (Direction::Backward, rest.trim())
     } else {
-        return None;
+        let rest = input.strip_suffix(" ago")?;
+        (Direction::Backward, rest.trim())
     };
 
     let (count, unit) = parse_count_and_unit(middle)?;
