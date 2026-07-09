@@ -17,6 +17,14 @@ durable tools and conventions a repository already owns: checked-in rules,
 conventional Just targets, Git/GitHub, local `.rapport` work state, and command
 telemetry.
 
+## Install
+
+Install the latest released binary with:
+
+```bash
+cargo binstall rapport
+```
+
 ## Inner Loop
 
 Rapport's first responsibility is the inner development loop:

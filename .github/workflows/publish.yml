@@ -2,12 +2,11 @@ name: Publish
 
 # Triggered manually after a version bump is committed and merged to main.
 # Each invocation publishes one crate, then creates a matching GitHub release.
-# Pick the crate from the dropdown. Version is read from that crate's
-# Cargo.toml — bump it before triggering.
+# Rapport's release also includes the prebuilt archives that cargo binstall
+# discovers from GitHub Releases.
 #
-# When publishing a release that bumps both rapport-cli and rapport, run this
-# workflow for rapport-cli first. Then run it for rapport after rapport-cli is
-# available on crates.io.
+# Publish rapport-files before rapport when its version changes. rapport-prose
+# and rapport-temporal can be published independently.
 
 on:
   workflow_dispatch:
@@ -18,7 +17,7 @@ on:
         required: true
         options:
           - rapport
-          - rapport-cli
+          - rapport-files
           - rapport-prose
           - rapport-temporal
 
@@ -32,6 +31,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.crate.outputs.tag }}
+      version: ${{ steps.crate.outputs.version }}
 
     steps:
       - name: Checkout code
@@ -80,5 +82,50 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "${{ github.event.inputs.crate }} v${{ steps.crate.outputs.version }}" \
             --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  release-archives:
+    if: github.event.inputs.crate == 'rapport'
+    needs: publish
+    name: Release archive (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_extension: tgz
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            archive_extension: tgz
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_extension: zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rapport
+        run: cargo build --release --locked -p rapport
+
+      - name: Package archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -C target/release -czf "rapport-${{ matrix.target }}-v${{ needs.publish.outputs.version }}.tgz" rapport
+
+      - name: Package archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path target/release/rapport.exe -DestinationPath "rapport-${{ matrix.target }}-v${{ needs.publish.outputs.version }}.zip"
+
+      - name: Upload archive to GitHub release
+        shell: bash
+        run: gh release upload "${{ needs.publish.outputs.tag }}" "rapport-${{ matrix.target }}-v${{ needs.publish.outputs.version }}.${{ matrix.archive_extension }}" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
