@@ -5,10 +5,19 @@ use std::io;
 ///
 /// Paired with [`CommandOutcome`] across the [`CommandRunner`] trait: spec
 /// describes what to run, outcome describes what happened.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
+}
+
+impl std::fmt::Debug for CommandSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandSpec")
+            .field("program", &self.program)
+            .field("argument_count", &self.args.len())
+            .finish()
+    }
 }
 
 impl CommandSpec {
@@ -78,7 +87,18 @@ impl CommandRunner for RealCommandRunner {
 
 #[cfg(test)]
 mod tests {
-    use super::CommandOutcome;
+    use super::{CommandOutcome, CommandSpec};
+
+    #[test]
+    fn command_spec_debug_redacts_arguments() {
+        let spec = CommandSpec::new("gh", ["pr", "create", "PRIVATE PR BODY"]);
+
+        let debug = format!("{spec:?}");
+
+        assert!(!debug.contains("PRIVATE"));
+        assert!(debug.contains("program: \"gh\""));
+        assert!(debug.contains("argument_count: 3"));
+    }
 
     #[test]
     fn command_outcome_debug_summarizes_captured_output() {

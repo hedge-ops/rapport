@@ -68,7 +68,7 @@ them:
 - inherited `signoffs` in folder `context.toml` files, fulfilled by matching
   GitHub Actions workflows;
 - ignored local state in `.rapport/work.toml`;
-- append-only local telemetry in `.rapport/events.jsonl`.
+- local command telemetry in `.rapport/events.jsonl`.
 
 Just remains the right home for installs, local servers, generated assets,
 bespoke checks, deploys, release tasks, and ecosystem-specific details. Rapport
@@ -99,8 +99,9 @@ rapport context signoff repair app/apple build ci
 ```
 
 Signoff-owning folder components use ASCII letters, digits, dots, underscores,
-or hyphens so their generated YAML path filters remain unambiguous. Generated
-identities use `[folder-path|root]-[build-[target]|review]`: for example,
+or hyphens and each component must contain at least one letter or digit, so
+their generated YAML path filters and readable identities remain unambiguous.
+Generated identities use `[folder-path|root]-[build-[target]|review]`: for example,
 `app-apple-build-ci`, `app-apple-review`, and `root-review`. Reviews are one
 comprehensive, adversarial check per declaring folder; security and other
 concerns come from the resolved rules and instructions rather than review
@@ -108,6 +109,16 @@ profiles. Because readable folder slugs are intentionally lossy, Rapport rejects
 collisions such as `app/apple` versus `app-apple`, as well as identities over
 GitHub's 140-byte status-context limit and duplicate identities within one
 context, before mutating either the context or generated workflows.
+
+Local telemetry records the stable Rapport command, argument count, outcome,
+and exit code. It never persists raw command arguments, which may contain issue
+text, review summaries, commit messages, or pull-request bodies. External
+command diagnostics likewise report the program and argument count without
+rendering argument values.
+Before appending a schema-v2 event, Rapport rewrites legacy event lines once to
+remove persisted argv values and derive their argument count. Malformed legacy
+lines are discarded rather than retaining potentially sensitive text; the
+sanitized schema-v2 log is append-only afterward.
 
 Adding the build above to `app/apple/context.toml` generates the exact
 Rapport-owned `.github/workflows/rapport-app-apple-build-ci.yml` request

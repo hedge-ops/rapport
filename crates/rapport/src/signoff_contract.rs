@@ -368,6 +368,7 @@ fn valid_folder_path(folder: &str) -> bool {
         !component.is_empty()
             && component != "."
             && component != ".."
+            && component.bytes().any(|byte| byte.is_ascii_alphanumeric())
             && component
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
@@ -446,7 +447,7 @@ impl fmt::Display for SignoffContractError {
             ),
             Self::InvalidFolder { path } => write!(
                 f,
-                "invalid signoff folder ({} bytes); use ASCII letters, digits, dots, underscores, and hyphens in each path component",
+                "invalid signoff folder ({} bytes); each path component must contain an ASCII letter or digit and may also use dots, underscores, and hyphens",
                 path.as_str().len()
             ),
             Self::OutsideRepository { path } => write!(
@@ -514,7 +515,7 @@ mod tests {
 
     #[test]
     fn request_rejects_folder_names_that_are_unsafe_in_yaml_globs() {
-        for folder in ["app/\"legacy\"", "!app", "日本語"] {
+        for folder in ["app/\"legacy\"", "!app", "日本語", "---", "app/___/api"] {
             let result = SignoffRequest::new(
                 Utf8Path::new("/repo"),
                 &Utf8Path::new("/repo").join(folder),

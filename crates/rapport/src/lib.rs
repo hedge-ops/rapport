@@ -1329,6 +1329,30 @@ minimum_grade = "A-"
     }
 
     #[test]
+    fn doctor_rejects_signoff_folders_whose_readable_component_collapses() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string(
+            "/repo/---/context.toml",
+            r#"version = 1
+purpose = "Collapsed owner"
+
+[[signoffs]]
+kind = "review"
+minimum_grade = "A-"
+"#,
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("must contain an ASCII letter or digit"));
+        assert!(!fs.is_dir("/repo/.github"));
+    }
+
+    #[test]
     fn context_show_prints_effective_context_and_benchmarks() {
         let mut fs = InMemoryFileSystem::default();
         fs.write_string(

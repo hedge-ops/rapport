@@ -42,7 +42,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Changed signoff workflows and commit statuses to use
   `[folder-path|root]-[build-[target]|review]`, such as
   `signoff: root-build-ci` and `signoff: root-review`; ambiguous readable folder
-  slugs are rejected before mutation and reported by doctor.
+  slugs are rejected before mutation and reported by doctor. Folder components
+  made only of separators are invalid because they disappear from the readable
+  identity.
 - Made each declared review a comprehensive adversarial review with no target or
   profile; resolved context rules and instructions supply concerns such as
   security.
@@ -64,6 +66,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   prose, evidence, paths, SHAs, and checksums do not leak through Debug or error
   displays. Work state/facts, completion identity errors, and user-visible
   captured operation output use the same redacted summaries.
+- Changed command telemetry to schema v2, replacing raw argv with argument
+  count while retaining legacy-line deserialization, sanitizing durable v1
+  logs before the next append, and discarding malformed legacy lines that may
+  contain private text. Changed `CommandSpec` Debug output to report only the
+  program and argument count.
 - Changed work status and completion to recapture build inputs, mark old proof
   stale, and reject missing, stale, or failing required builds.
 - Changed work status to refresh the displayed head SHA when exact review proof

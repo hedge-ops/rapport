@@ -774,12 +774,7 @@ fn render_active_work_with_signoffs(
         builder = builder.section("Review Signoffs", |b| b.items(review_lines.to_vec()));
     }
 
-    let open_task = state
-        .reviews
-        .values()
-        .flat_map(|review| &review.actions)
-        .find(|action| action.status == ReviewActionStatus::Open)
-        .map(|action| action.id.clone());
+    let open_task = first_open_review_task(review_lines);
     let next = if let Some(task_id) = open_task {
         format!("rapport work task address {task_id} --summary \"what changed\"")
     } else if !review_lines.is_empty()
@@ -800,6 +795,14 @@ fn render_active_work_with_signoffs(
         String::from("rapport integrate")
     };
     builder.next_actions(nonempty![RunHint::new(next)]).build()
+}
+
+fn first_open_review_task(review_lines: &[String]) -> Option<String> {
+    review_lines.iter().find_map(|line| {
+        line.strip_prefix("task `")
+            .and_then(|remaining| remaining.split_once("` open;"))
+            .map(|(id, _)| id.to_string())
+    })
 }
 
 fn render_build_gate(problems: &[String]) -> String {
@@ -1103,6 +1106,26 @@ mod tests {
         assert!(view.contains("Do the thing"));
         assert!(view.contains("app/api"));
         assert!(view.contains("just ci"));
+    }
+
+    #[test]
+    fn next_action_uses_only_open_tasks_from_current_review_lines() {
+        let state = WorkState::new("Do the thing", "2026-07-07T23:00:00Z");
+        let current_pass = vec![String::from(
+            "`root-review` current pass; grade A (minimum A-)",
+        )];
+
+        let view = render_active_work_with_signoffs(&state, &[], &current_pass);
+
+        assert!(view.contains("rapport integrate"));
+        assert!(!view.contains("rapport work task address"));
+
+        let current_open = vec![
+            String::from("`root-review` current fail; grade B (minimum A-)"),
+            String::from("task `REV-123` open; fix the current review"),
+        ];
+        let view = render_active_work_with_signoffs(&state, &[], &current_open);
+        assert!(view.contains("rapport work task address REV-123 --summary \"what changed\""));
     }
 
     #[test]
