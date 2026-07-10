@@ -1720,20 +1720,15 @@ text = "Keep lib.rs small."
     }
 
     #[test]
-    fn integrate_commits_creates_pr_and_reports_signoffs() {
+    fn integrate_commits_creates_pr_and_reports_context_signoffs() {
         let mut fs = InMemoryFileSystem::default();
         add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
         fs.write_string(
-            "/repo/signoffs.toml",
+            "/repo/context.toml",
             r#"
-[[signoffs]]
-id = "local-check"
-description = "Local check"
-command = ["just", "check"]
-
-[[signoffs]]
-id = "review"
-description = "Human review"
+version = 1
+purpose = "Repository"
+signoffs = ["shared", "review"]
 "#,
         )
         .unwrap();
@@ -1755,7 +1750,8 @@ description = "Human review"
         assert_eq!(err, "");
         assert!(out.contains("pr_created"));
         assert!(out.contains("https://github.com/hedge-ops/rapport/pull/70"));
-        assert!(out.contains("pending `review: Human review`"));
+        assert!(out.contains("pending `shared`"));
+        assert!(out.contains("pending `review`"));
         assert_eq!(runner.calls(), successful_integrate_calls());
         let state = load_state(&fs);
         let integrate = state.integrate.unwrap();
@@ -1769,8 +1765,8 @@ description = "Human review"
             Some("https://github.com/hedge-ops/rapport/pull/70")
         );
         assert_eq!(signoff.status, "pending");
-        assert_eq!(signoff.passed, vec![String::from("local-check")]);
-        assert_eq!(signoff.pending, vec![String::from("review: Human review")]);
+        assert_eq!(signoff.required, vec!["shared", "review"]);
+        assert_eq!(signoff.pending, vec!["shared", "review"]);
         let events = events(&fs);
         let commands = events
             .iter()
@@ -1791,56 +1787,11 @@ description = "Human review"
     }
 
     #[test]
-    fn integrate_records_failed_local_signoff() {
+    fn integrate_records_context_signoff_resolution_failure() {
         let mut fs = InMemoryFileSystem::default();
         add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
-        fs.write_string(
-            "/repo/signoffs.toml",
-            r#"
-[[signoffs]]
-id = "local-check"
-description = "Local check"
-command = ["just", "check"]
-"#,
-        )
-        .unwrap();
-        let runner = FakeRunner::with_outcomes([
-            Ok(CommandOutcome {
-                success: true,
-                stdout: String::from(" M crates/rapport/src/lib.rs\n"),
-                stderr: String::new(),
-            }),
-            Ok(CommandOutcome {
-                success: true,
-                stdout: String::from("work/issue-57-integrate\n"),
-                stderr: String::new(),
-            }),
-            Ok(CommandOutcome {
-                success: true,
-                stdout: String::new(),
-                stderr: String::new(),
-            }),
-            Ok(CommandOutcome {
-                success: true,
-                stdout: String::from("[work/issue-57-integrate abc123] PW-356\n"),
-                stderr: String::new(),
-            }),
-            Ok(CommandOutcome {
-                success: true,
-                stdout: String::from("abc123\n"),
-                stderr: String::new(),
-            }),
-            Ok(CommandOutcome {
-                success: true,
-                stdout: String::from("https://github.com/hedge-ops/rapport/pull/70\n"),
-                stderr: String::new(),
-            }),
-            Ok(CommandOutcome {
-                success: false,
-                stdout: String::new(),
-                stderr: String::from("clippy failed\n"),
-            }),
-        ]);
+        fs.write_string("/repo/context.toml", "version =").unwrap();
+        let runner = successful_integrate_runner();
 
         let (code, out, err) = run_with_runner(
             &[
@@ -1856,13 +1807,9 @@ command = ["just", "check"]
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains("failed `local-check"));
-        assert!(err.contains("clippy failed"));
-        let signoff = load_state(&fs).signoff.unwrap();
-
-        assert_eq!(signoff.status, "fail");
-        assert_eq!(signoff.failed.len(), 1);
-        assert!(signoff.failed[0].contains("local-check"));
+        assert!(err.contains("Could not evaluate signoff requirements"));
+        assert!(err.contains("context parse error"));
+        assert!(load_state(&fs).signoff.is_none());
         let events = events(&fs);
 
         assert_eq!(events[4].command, "integrate signoff");
@@ -2037,7 +1984,6 @@ pr_url = "https://github.com/hedge-ops/rapport/pull/70"
             Ok(successful_outcome(
                 "https://github.com/hedge-ops/rapport/pull/70\n",
             )),
-            Ok(successful_outcome("checked\n")),
         ])
     }
 
@@ -2086,10 +2032,6 @@ pr_url = "https://github.com/hedge-ops/rapport/pull/70"
                         "Do the thing\n\n## Rapport\n- Work: Do the thing\n- Paths: crates/rapport/src/lib.rs\n- Build: pass\n- Commit: abc123",
                     ],
                 ),
-                Utf8PathBuf::from("/repo"),
-            ),
-            (
-                CommandSpec::new("just", ["check"]),
                 Utf8PathBuf::from("/repo"),
             ),
         ]
