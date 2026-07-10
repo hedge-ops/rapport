@@ -122,6 +122,27 @@ pub(crate) fn validate_repository(
     }
 }
 
+pub(crate) fn required_signoffs_for_paths(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    paths: &[String],
+) -> Result<Vec<String>, ProjectContextError> {
+    let resolver = ProjectContextResolver::new(ProjectContextStore::new(repo_root.to_path_buf()));
+    let mut required = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for path in paths {
+        let effective = resolver.resolve(fs, &repo_root.join(path))?;
+        for signoff in effective.signoffs {
+            if seen.insert(signoff.value.clone()) {
+                required.push(signoff.value);
+            }
+        }
+    }
+
+    Ok(required)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectContextRepositoryValidation {
     context_files: Vec<Utf8PathBuf>,
@@ -836,6 +857,12 @@ impl ProjectContextResolver {
                     .into_iter()
                     .map(|value| ContextEntry::new(value, context_file.clone())),
             );
+            effective.signoffs.extend(
+                document
+                    .signoffs
+                    .into_iter()
+                    .map(|value| ContextEntry::new(value, context_file.clone())),
+            );
 
             for include in document.rule_includes {
                 effective
@@ -929,6 +956,7 @@ struct EffectiveProjectContext {
     purpose: Option<ContextEntry>,
     owns: Vec<ContextEntry>,
     boundaries: Vec<ContextEntry>,
+    signoffs: Vec<ContextEntry>,
     rule_includes: Vec<ContextEntry>,
     rules: Vec<ApplicableRule>,
 }
@@ -941,6 +969,7 @@ impl EffectiveProjectContext {
             purpose: None,
             owns: Vec::new(),
             boundaries: Vec::new(),
+            signoffs: Vec::new(),
             rule_includes: Vec::new(),
             rules: Vec::new(),
         }
@@ -1054,6 +1083,8 @@ struct ProjectContextFile {
     version: u16,
     purpose: String,
     #[serde(default)]
+    signoffs: Vec<String>,
+    #[serde(default)]
     rule_includes: Vec<String>,
     #[serde(default)]
     ownership: ContextOwnership,
@@ -1066,6 +1097,7 @@ impl ProjectContextFile {
         Self {
             version: CONTEXT_SCHEMA_VERSION,
             purpose: purpose.to_string(),
+            signoffs: Vec::new(),
             rule_includes: Vec::new(),
             ownership: ContextOwnership::default(),
             rules: Vec::new(),
@@ -1111,7 +1143,7 @@ struct RuleLibraryDocument {
 }
 
 #[derive(Debug)]
-enum ProjectContextError {
+pub(crate) enum ProjectContextError {
     Io {
         path: Utf8PathBuf,
         source: io::Error,
@@ -1387,6 +1419,13 @@ fn render_context_show(
                 "No boundary statements.",
             ))
         })
+        .section("Signoffs", |b| {
+            b.items(render_entries(
+                store,
+                &effective.signoffs,
+                "No signoffs required.",
+            ))
+        })
         .section("Rule Includes", |b| {
             b.items(render_entries(
                 store,
@@ -1416,6 +1455,7 @@ fn render_context_doctor(
                 ("status", String::from("pass")),
                 ("path", store.display_path(&effective.target_directory)),
                 ("contexts", effective.context_files.len().to_string()),
+                ("signoffs", effective.signoffs.len().to_string()),
                 ("benchmarks", effective.rules.len().to_string()),
             ])
         })
@@ -1535,6 +1575,8 @@ fn render_context_file(document: &ProjectContextFile) -> String {
     let _ = writeln!(&mut output);
     let _ = writeln!(&mut output, "purpose = {}", toml_string(&document.purpose));
     let _ = writeln!(&mut output);
+    push_string_array(&mut output, "signoffs", &document.signoffs);
+    let _ = writeln!(&mut output);
     push_string_array(&mut output, "rule_includes", &document.rule_includes);
     let _ = writeln!(&mut output);
     let _ = writeln!(&mut output, "[ownership]");
@@ -1609,7 +1651,7 @@ mod tests {
         assert_eq!(
             fs.read_to_string("/repo/app/core/domain/context.toml")
                 .unwrap(),
-            "version = 1\n\npurpose = \"Owns workspace rules.\"\n\nrule_includes = []\n\n[ownership]\nowns = []\nboundaries = []\n"
+            "version = 1\n\npurpose = \"Owns workspace rules.\"\n\nsignoffs = []\n\nrule_includes = []\n\n[ownership]\nowns = []\nboundaries = []\n"
         );
     }
 
@@ -1632,6 +1674,7 @@ text = "Use rustfmt."
             r#"
 version = 1
 purpose = "Root purpose"
+signoffs = ["shared"]
 rule_includes = ["/rules/rust.toml"]
 
 [ownership]
@@ -1645,6 +1688,7 @@ boundaries = []
             r#"
 version = 1
 purpose = "Core purpose"
+signoffs = ["apple"]
 rule_includes = []
 
 [ownership]
@@ -1673,12 +1717,51 @@ text = "Keep core boring."
         assert_eq!(effective.boundaries.len(), 1);
         assert_eq!(
             effective
+                .signoffs
+                .iter()
+                .map(|signoff| signoff.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["shared", "apple"]
+        );
+        assert_eq!(
+            effective
                 .rules
                 .iter()
                 .map(|rule| rule.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["RUST-001", "CORE-001"]
         );
+    }
+
+    #[test]
+    fn required_signoffs_unions_contexts_for_active_paths() {
+        let mut fs = repo_fs();
+        fs.add_file("/repo/apple/app.rs");
+        fs.add_file("/repo/windows/app.rs");
+        fs.write_string(
+            "/repo/context.toml",
+            "version = 1\npurpose = \"Shared\"\nsignoffs = [\"shared\"]\n",
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/apple/context.toml",
+            "version = 1\npurpose = \"Apple\"\nsignoffs = [\"apple\", \"shared\"]\n",
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/windows/context.toml",
+            "version = 1\npurpose = \"Windows\"\nsignoffs = [\"windows\"]\n",
+        )
+        .unwrap();
+
+        let required = required_signoffs_for_paths(
+            &fs,
+            Utf8Path::new("/repo"),
+            &[String::from("apple/app.rs"), String::from("windows/app.rs")],
+        )
+        .unwrap();
+
+        assert_eq!(required, vec!["shared", "apple", "windows"]);
     }
 
     #[test]

@@ -1,12 +1,12 @@
 use crate::cli::IntegrateArgs;
 use crate::context::{Clock, CommandContext};
+use crate::project_context;
 use crate::runner::{CommandOutcome, CommandSpec};
 use crate::state::{WorkFact, WorkState, WorkStateError, WorkStateStore};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
-use rapport_files::{FileSystem, Utf8Path};
-use serde::Deserialize;
+use rapport_files::FileSystem;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
@@ -16,7 +16,6 @@ use std::process::ExitCode;
 
 const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
-const SIGNOFF_FILE: &str = "signoffs.toml";
 
 pub fn run<F, C, O, E>(
     integrate_args: &IntegrateArgs,
@@ -394,7 +393,7 @@ where
     O: Write,
     E: Write,
 {
-    match run_signoffs(context) {
+    match run_signoffs(context, &state.paths) {
         Ok(report) => Ok(report),
         Err(error) => {
             record_best_effort(
@@ -530,6 +529,7 @@ where
 
 fn run_signoffs<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
+    work_paths: &[String],
 ) -> Result<SignoffReport, SignoffError>
 where
     F: FileSystem,
@@ -537,28 +537,13 @@ where
     O: Write,
     E: Write,
 {
-    let plan = SignoffPlan::load(context.fs, context.paths.repo_root())?;
-    let mut report = SignoffReport::from_plan(&plan);
-    for signoff in plan.local_signoffs() {
-        let Some((program, args)) = signoff.command_parts() else {
-            report.failed.push(format!("{}: empty command", signoff.id));
-            continue;
-        };
-        let outcome = run_step(context, &CommandSpec::new(program, args)).map_err(|source| {
-            SignoffError::Run {
-                id: signoff.id.clone(),
-                source,
-            }
-        })?;
-        if outcome.success {
-            report.passed.push(signoff.id.clone());
-        } else {
-            report
-                .failed
-                .push(format!("{}: {}", signoff.id, captured_output(&outcome)));
-        }
-    }
-    Ok(report)
+    let required = project_context::required_signoffs_for_paths(
+        context.fs,
+        context.paths.repo_root(),
+        work_paths,
+    )
+    .map_err(SignoffError::Context)?;
+    Ok(SignoffReport::from_required(required))
 }
 
 fn run_success<F, C, O, E>(
@@ -769,110 +754,25 @@ impl Error for IntegrationStepError {}
 
 #[derive(Debug)]
 enum SignoffError {
-    Io {
-        path: String,
-        source: io::Error,
-    },
-    Decode {
-        path: String,
-        source: toml::de::Error,
-    },
-    EmptyCommand {
-        id: String,
-    },
-    Run {
-        id: String,
-        source: io::Error,
-    },
+    Context(project_context::ProjectContextError),
 }
 
 impl fmt::Display for SignoffError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => {
-                write!(f, "signoff filesystem error at `{path}`: {source}")
-            }
-            Self::Decode { path, source } => write!(f, "signoff parse error at `{path}`: {source}"),
-            Self::EmptyCommand { id } => write!(f, "signoff `{id}` has an empty command"),
-            Self::Run { id, source } => write!(f, "could not run signoff `{id}`: {source}"),
+            Self::Context(source) => write!(
+                f,
+                "could not resolve signoffs from project context: {source}"
+            ),
         }
     }
 }
 
-impl Error for SignoffError {}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SignoffDocument {
-    #[serde(default)]
-    signoffs: Vec<SignoffDefinition>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SignoffDefinition {
-    id: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default = "default_required")]
-    required: bool,
-    #[serde(default)]
-    command: Option<Vec<String>>,
-}
-
-impl SignoffDefinition {
-    fn label(&self) -> String {
-        match &self.description {
-            Some(description) => format!("{}: {description}", self.id),
-            None => self.id.clone(),
+impl Error for SignoffError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Context(source) => Some(source),
         }
-    }
-
-    fn command_parts(&self) -> Option<(String, Vec<String>)> {
-        let command = self.command.as_ref()?;
-        let (program, args) = command.split_first()?;
-        Some((program.clone(), args.to_vec()))
-    }
-}
-
-#[derive(Debug, Default)]
-struct SignoffPlan {
-    signoffs: Vec<SignoffDefinition>,
-}
-
-impl SignoffPlan {
-    fn load(fs: &impl FileSystem, repo_root: &Utf8Path) -> Result<Self, SignoffError> {
-        let path = repo_root.join(SIGNOFF_FILE);
-        if !fs.is_file(&path) {
-            return Ok(Self::default());
-        }
-        let contents = fs
-            .read_to_string(&path)
-            .map_err(|source| SignoffError::Io {
-                path: path.to_string(),
-                source,
-            })?;
-        let document: SignoffDocument =
-            toml::from_str(&contents).map_err(|source| SignoffError::Decode {
-                path: path.to_string(),
-                source,
-            })?;
-        for signoff in &document.signoffs {
-            if signoff.command.as_ref().is_some_and(Vec::is_empty) {
-                return Err(SignoffError::EmptyCommand {
-                    id: signoff.id.clone(),
-                });
-            }
-        }
-        Ok(Self {
-            signoffs: document.signoffs,
-        })
-    }
-
-    fn local_signoffs(&self) -> impl Iterator<Item = &SignoffDefinition> {
-        self.signoffs
-            .iter()
-            .filter(|signoff| signoff.required && signoff.command.is_some())
     }
 }
 
@@ -885,23 +785,12 @@ struct SignoffReport {
 }
 
 impl SignoffReport {
-    fn from_plan(plan: &SignoffPlan) -> Self {
-        let mut report = Self {
-            required: plan
-                .signoffs
-                .iter()
-                .filter(|signoff| signoff.required)
-                .map(SignoffDefinition::label)
-                .collect(),
+    fn from_required(required: Vec<String>) -> Self {
+        Self {
+            pending: required.clone(),
+            required,
             ..Self::default()
-        };
-        report.pending = plan
-            .signoffs
-            .iter()
-            .filter(|signoff| signoff.required && signoff.command.is_none())
-            .map(SignoffDefinition::label)
-            .collect();
-        report
+        }
     }
 
     fn status(&self) -> &'static str {
@@ -957,10 +846,6 @@ impl CommandResult {
             exit_code: FAILURE,
         }
     }
-}
-
-fn default_required() -> bool {
-    true
 }
 
 fn path_is_in_work(path: &str, work_paths: &[String]) -> bool {
@@ -1272,7 +1157,7 @@ fn render_signoff_error(error: &SignoffError) -> String {
         .paragraph("Could not evaluate signoff requirements.")
         .paragraph(error)
         .next_actions(nonempty![RunHint::new(
-            "fix signoffs.toml, then run rapport integrate"
+            "fix signoffs in the applicable context.toml, then run rapport integrate"
         )])
         .build()
 }

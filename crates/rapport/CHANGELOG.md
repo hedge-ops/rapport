@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-10
+
+### Added
+
+- Added inherited `signoffs` to folder-owned `context.toml` files.
+- Added active-work path resolution that unions applicable signoffs and records
+  them as pending integration facts for matching GitHub Actions checks.
+
+### Changed
+
+- Replaced repository-wide `signoffs.toml` command and manual signoffs with
+  folder-owned signoff needs. GitHub Actions now own host-specific execution.
+
 ## [0.2.0] - 2026-07-09
 
 ### Added
@@ -40,7 +53,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.2.0...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.3.0...HEAD
+[0.3.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.2.0...rapport-v0.3.0
 [0.2.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.1.0...rapport-v0.2.0
 [0.1.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.0.1...rapport-v0.1.0
 [0.0.1]: https://github.com/hedge-ops/rapport/releases/tag/rapport-v0.0.1

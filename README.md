@@ -57,13 +57,27 @@ them:
 - folder-collocated owner rules in `**/rules.toml`;
 - conventional Just targets for project-specific validation;
 - Git and GitHub for commits, pull requests, and status checks;
-- optional `signoffs.toml` entries for local command checks and manual signoffs;
+- inherited `signoffs` in folder `context.toml` files, fulfilled by matching
+  GitHub Actions workflows;
 - ignored local state in `.rapport/work.toml`;
 - append-only local telemetry in `.rapport/events.jsonl`.
 
 Just remains the right home for installs, local servers, generated assets,
 bespoke checks, deploys, release tasks, and ecosystem-specific details. Rapport
 uses those conventions to keep agents oriented inside the current work.
+
+Folder contexts declare integration needs close to the code they govern:
+
+```toml
+version = 1
+purpose = "Owns the Apple application."
+signoffs = ["apple"]
+```
+
+Rapport unions inherited signoffs for every active work path and records them as
+pending during integration. A repository-owned GitHub Actions workflow matching
+each signoff name runs the actual validation on the appropriate host. This keeps
+path ownership in `context.toml` and platform execution in GitHub Actions.
 
 ## Later Phases
 
