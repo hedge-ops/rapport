@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-10
+
 ### Added
 
 - Added typed build and review signoff declarations with inherited, folder-owned
@@ -161,7 +163,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.3.0...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.0...HEAD
+[0.4.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.3.0...rapport-v0.4.0
 [0.3.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.2.0...rapport-v0.3.0
 [0.2.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.1.0...rapport-v0.2.0
 [0.1.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.0.1...rapport-v0.1.0

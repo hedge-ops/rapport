@@ -2407,6 +2407,44 @@ minimum_grade = "A-"
     }
 
     #[test]
+    fn review_start_uses_head_when_origin_default_is_not_fetched() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["app/file.rs"]);
+        fs.add_file_with_contents("/repo/app/file.rs", "fn changed() {}\n");
+        add_review_context(&mut fs);
+        let runner = FakeRunner::with_outcomes([
+            successful_result("head123\n"),
+            Ok(CommandOutcome {
+                success: false,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            successful_result("diff-v1"),
+            successful_result(""),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["review", "start", "--json"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS, "{err}");
+        assert_eq!(err, "");
+        let request: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(request[0]["snapshot"]["base_sha"], "head123");
+        assert!(runner.calls().iter().any(|(spec, _)| {
+            spec.program == "git"
+                && spec.args
+                    == [
+                        "symbolic-ref",
+                        "--quiet",
+                        "--short",
+                        "refs/remotes/origin/HEAD",
+                    ]
+        }));
+        assert!(!runner.calls().iter().any(|(spec, _)| {
+            spec.program == "git" && spec.args.first().is_some_and(|arg| arg == "merge-base")
+        }));
+    }
+
+    #[test]
     fn review_start_markdown_defines_one_array_for_multiple_requirements() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);

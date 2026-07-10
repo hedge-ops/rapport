@@ -171,9 +171,7 @@ fn discover_base(
     repo_root: &Utf8Path,
     head_sha: &str,
 ) -> Result<String, SnapshotError> {
-    let remote_default = stdout(
-        runner,
-        repo_root,
+    let remote_default = match runner.run(
         &CommandSpec::new(
             "git",
             [
@@ -183,8 +181,20 @@ fn discover_base(
                 "refs/remotes/origin/HEAD",
             ],
         ),
-        "git symbolic-ref origin HEAD",
-    )?;
+        repo_root,
+    ) {
+        Ok(outcome) if outcome.success => outcome.stdout.trim().to_string(),
+        Ok(_) => return Ok(head_sha.to_string()),
+        Err(source) => {
+            return Err(SnapshotError::Invoke {
+                command: "git symbolic-ref origin HEAD",
+                source,
+            });
+        }
+    };
+    if remote_default.is_empty() {
+        return Ok(head_sha.to_string());
+    }
     stdout(
         runner,
         repo_root,
