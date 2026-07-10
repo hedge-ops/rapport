@@ -33,9 +33,9 @@ Rapport's first responsibility is the inner development loop:
   objective, paths, stage, and applicable rules.
 - `build` runs applicable typed build declarations through existing repository
   Just conventions and records their exact inputs.
-- `review` emits product-neutral JSON packets for an independent adversarial
-  reviewer and records structured JSON results against the exact reviewed
-  inputs.
+- `review start` emits a product-neutral Markdown prompt for an independent
+  adversarial reviewer, while `review complete` records its structured JSON
+  result against the exact reviewed inputs.
 - `integrate` turns local work into durable Git/GitHub state: commit, PR,
   signoff status, and remaining action.
 
@@ -47,9 +47,11 @@ rapport work status
 rapport work add path <path>
 rapport work rules list
 rapport work rules show <id>
+rapport work task address REV-001 --summary "what changed"
 rapport build [path...]
-rapport review [path...]
-rapport review --result <result.json>
+rapport review start [path...]
+rapport review start --json [path...] # optional machine-readable request
+rapport review complete --result /tmp/review-result.json
 rapport integrate --summary "..." --message "..."
 rapport integrate # retry signoff for the recorded PR
 ```
@@ -126,35 +128,56 @@ the corresponding legacy workflow. That is the explicit migration path; review
 declarations have no string shorthand. Cleanup preserves any legacy-named path
 that is also owned by a distinct current typed declaration.
 
-`rapport review` resolves each applicable review declaration, active paths, and
-context benchmarks. It emits a JSON request containing adversarial instructions,
-resolved rules, base/head SHAs, and deterministic content, rule, instruction,
-and aggregate input checksums. Reviewers must form current findings first; the
-packet then supplies a separate prior-action reconciliation ledger so a fresh
-reviewer can preserve stable IDs without anchoring the adversarial pass. A
-capable host can hand the packet to any independent reviewer and write its JSON
-result to a file for `rapport review --result <file>`. Every new input checksum
-remains pending until a matching result is accepted; a prior grade is history,
-not proof for the new request. Supplying explicit paths scopes each shared
-review requirement, its resolved rules, and its checksum to those paths instead
-of retaining unrelated active-work paths. Explicit build and review scopes must
-be descendants of an active-work path; parent traversal and ancestor widening
-are rejected.
+`rapport review start` resolves each applicable review declaration, active
+paths, and context benchmarks. By default it emits a Markdown request containing
+the host-neutral JSON contract, adversarial instructions, resolved rules,
+base/head SHAs, and deterministic content, rule, instruction, and aggregate
+input checksums. `--json` emits only the request packets for hosts that prefer
+machine-readable orchestration. Reviewers must form current findings first; the
+request then supplies a separate prior-task reconciliation ledger. The prompt
+includes the grading rubric but deliberately withholds Rapport's passing
+threshold so the reviewer grades the evidence instead of targeting policy.
 
-Results carry `pass` or `fail`, an A-F grade with optional `+` or `-`, a
-description, and current actions with stable IDs, cited rule IDs, and concrete
-evidence. Rapport verifies the checksum and derives the outcome from the
-declaration. The default passing threshold is A- and any outstanding action
-fails the review. Local reviews include uncommitted changes in their content
-checksum, so `HEAD` is never treated as sufficient proof.
+A capable host hands that request to a fresh independent reviewer and writes
+the returned JSON outside the reviewed content—for example under `/tmp`—before
+running `rapport review complete --result <file>`. Rapport rejects a result file
+inside any reviewed path because the protocol file would change the snapshot it
+is meant to attest. The reviewer returns an A-F grade
+with optional `+` or `-`, a description, and current actions with cited rule IDs
+and concrete evidence. It sets `prior_task_id` only when a finding matches an
+outstanding task from the reconciliation ledger; new actions have no ID.
+Rapport validates the checksum, assigns work-global `REV-###` IDs, reconciles
+prior tasks, applies the declared threshold, derives pass or fail, and emits a
+Markdown result with exactly one next command. Recording a valid failing review
+is a successful command; integration and completion enforce the failure as a
+gate. The default passing threshold is A- and any outstanding action fails the
+review.
+
+New findings are `open`. After implementing a correction, the working agent
+runs `rapport work task address REV-### --summary "..."`; the task becomes
+`addressed`, not resolved. A later independent review reopens it by returning
+the same `prior_task_id`, or resolves it by omitting it. Resolved tasks and all
+attempts remain in work history. Every new input checksum remains pending until
+a matching result is accepted; a prior grade is history, not proof for the new
+request. Supplying explicit paths scopes each shared review requirement, its
+resolved rules, and its checksum to those paths instead of retaining unrelated
+active-work paths. Explicit build and review scopes must be descendants of an
+active-work path; parent traversal and ancestor widening are rejected. Local
+reviews include uncommitted changes in their content checksum, so `HEAD` is
+never treated as sufficient proof.
+
+When multiple folder reviews apply, the Markdown request contains the complete
+request array and requires one JSON result array in the same order. A single
+review continues to use one request object and one result object.
 
 `rapport work status` recomputes current build and review inputs. It shows each
 required build and review as missing, pending, stale, passing, or failing, with
-its SHA/checksum; reviews also include grade and active actions. Editing signed
-content makes the prior result stale while retaining review actions. A later
-review replaces the current action set and records resolved IDs and all prior
-attempts in work history. When an exact review input remains reusable across a
-commit, status refreshes the displayed head SHA to the current commit. Once all
+its SHA/checksum; reviews also include grade and outstanding tasks with their
+`open` or `addressed` state. Editing signed content makes the prior result stale
+while retaining review tasks. A later review reconciles the current task ledger
+and records resolved IDs and all prior attempts in work history. When an exact
+review input remains reusable across a commit, status refreshes the displayed
+head SHA to the current commit. Once all
 typed requirements pass—including review-only or no-signoff work—the next step
 is integration rather than an inapplicable build command.
 

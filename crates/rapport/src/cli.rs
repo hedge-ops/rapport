@@ -290,6 +290,8 @@ pub enum WorkCommand {
     Add(WorkAddArgs),
     /// Inspect repository-owned rules for active work.
     Rules(WorkRulesArgs),
+    /// Manage review actions attached to active work.
+    Task(WorkTaskArgs),
 }
 
 #[derive(Debug, Args)]
@@ -359,6 +361,28 @@ pub enum WorkRulesCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct WorkTaskArgs {
+    #[command(subcommand)]
+    pub command: WorkTaskCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkTaskCommand {
+    /// Mark an open review task addressed and ready for independent rereview.
+    Address(WorkTaskAddressArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WorkTaskAddressArgs {
+    /// Rapport-assigned review task id, such as REV-001.
+    pub id: String,
+    /// What changed to address the review action.
+    #[arg(long)]
+    pub summary: String,
+}
+
+#[derive(Debug, Args)]
 pub struct BuildArgs {
     /// Optional paths to validate instead of the active work paths.
     #[arg(value_name = "PATH")]
@@ -366,13 +390,35 @@ pub struct BuildArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
 pub struct ReviewArgs {
+    #[command(subcommand)]
+    pub command: ReviewCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReviewCommand {
+    /// Start an independent review and emit its host-neutral request.
+    Start(ReviewStartArgs),
+    /// Validate and record a reviewer's structured result.
+    Complete(ReviewCompleteArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewStartArgs {
+    /// Optional paths to review instead of all active work paths.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<Utf8PathBuf>,
+    /// Emit the request packet as JSON instead of the default Markdown prompt.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewCompleteArgs {
     /// Structured JSON review result to validate and record.
     #[arg(long, value_name = "FILE")]
-    pub result: Option<Utf8PathBuf>,
-    /// Optional paths to review instead of all active work paths.
-    #[arg(value_name = "PATH", conflicts_with = "result")]
-    pub paths: Vec<Utf8PathBuf>,
+    pub result: Utf8PathBuf,
 }
 
 #[derive(Debug, Args)]

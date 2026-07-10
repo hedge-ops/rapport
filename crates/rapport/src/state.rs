@@ -1,13 +1,13 @@
 use crate::paths::RapportPaths;
 use rapport_files::FileSystem;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::io;
 use std::str::FromStr;
 
-pub const WORK_STATE_SCHEMA_VERSION: u16 = 2;
+pub const WORK_STATE_SCHEMA_VERSION: u16 = 3;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkState {
@@ -206,20 +206,58 @@ impl fmt::Debug for ReviewAttempt {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewAction {
     pub id: String,
+    #[serde(default)]
+    pub status: ReviewActionStatus,
     pub title: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_ids: Vec<String>,
     pub evidence: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressed_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
 }
 
 impl fmt::Debug for ReviewAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReviewAction")
             .field("id", &RedactedText(&self.id))
+            .field("status", &self.status)
             .field("title", &RedactedText(&self.title))
             .field("rule_id_count", &self.rule_ids.len())
             .field("evidence", &RedactedText(&self.evidence))
+            .field("has_addressed_at", &self.addressed_at.is_some())
+            .field("has_addressed_summary", &self.addressed_summary.is_some())
+            .field("has_resolved_at", &self.resolved_at.is_some())
             .finish()
+    }
+}
+
+impl ReviewAction {
+    #[must_use]
+    pub fn is_outstanding(&self) -> bool {
+        self.status != ReviewActionStatus::Resolved
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewActionStatus {
+    #[default]
+    Open,
+    Addressed,
+    Resolved,
+}
+
+impl fmt::Display for ReviewActionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Open => f.write_str("open"),
+            Self::Addressed => f.write_str("addressed"),
+            Self::Resolved => f.write_str("resolved"),
+        }
     }
 }
 
@@ -522,12 +560,13 @@ impl WorkStateStore {
             return Ok(None);
         }
         let contents = fs.read_to_string(&path)?;
-        let state: WorkState = toml::from_str(&contents)?;
+        let mut state: WorkState = toml::from_str(&contents)?;
         if state.schema_version > WORK_STATE_SCHEMA_VERSION {
             return Err(WorkStateError::UnsupportedSchemaVersion {
                 version: state.schema_version,
             });
         }
+        migrate_review_action_ids(&mut state);
         Ok(Some(state))
     }
 
@@ -575,6 +614,80 @@ impl WorkStateStore {
     pub fn clear(&self, fs: &mut impl FileSystem) -> Result<(), WorkStateError> {
         fs.remove_file(self.paths.work_state_file())?;
         Ok(())
+    }
+}
+
+fn migrate_review_action_ids(state: &mut WorkState) {
+    if state.schema_version >= 3 {
+        return;
+    }
+    let mut next_number = state
+        .reviews
+        .values()
+        .flat_map(review_action_ids)
+        .filter_map(|id| id.strip_prefix("REV-")?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .unwrap_or(1);
+    let mut used = BTreeSet::new();
+    for review in state.reviews.values_mut() {
+        let mut replacements = BTreeMap::new();
+        for old_id in review_action_ids(review) {
+            if replacements.contains_key(old_id) {
+                continue;
+            }
+            let replacement = if used.insert(old_id.to_string()) {
+                old_id.to_string()
+            } else {
+                loop {
+                    let candidate = format!("REV-{next_number:03}");
+                    next_number = next_number.checked_add(1).unwrap_or(1);
+                    if used.insert(candidate.clone()) {
+                        break candidate;
+                    }
+                }
+            };
+            replacements.insert(old_id.to_string(), replacement);
+        }
+        for action in &mut review.actions {
+            replace_action_id(action, &replacements);
+        }
+        for attempt in &mut review.attempts {
+            for action in &mut attempt.actions {
+                replace_action_id(action, &replacements);
+            }
+            for id in &mut attempt.resolved_action_ids {
+                if let Some(replacement) = replacements.get(id) {
+                    id.clone_from(replacement);
+                }
+            }
+        }
+    }
+}
+
+fn review_action_ids(review: &ReviewState) -> impl Iterator<Item = &str> {
+    review
+        .actions
+        .iter()
+        .map(|action| action.id.as_str())
+        .chain(
+            review
+                .attempts
+                .iter()
+                .flat_map(|attempt| attempt.actions.iter().map(|action| action.id.as_str())),
+        )
+        .chain(
+            review
+                .attempts
+                .iter()
+                .flat_map(|attempt| attempt.resolved_action_ids.iter().map(String::as_str)),
+        )
+}
+
+fn replace_action_id(action: &mut ReviewAction, replacements: &BTreeMap<String, String>) {
+    if let Some(replacement) = replacements.get(&action.id) {
+        action.id.clone_from(replacement);
     }
 }
 
@@ -700,7 +813,73 @@ updated_at = "2026-07-07T23:00:00Z"
         store.save(&mut fs, &state).unwrap();
 
         let contents = fs.read_to_string("/repo/.rapport/work.toml").unwrap();
-        assert!(contents.contains("schema_version = 2"));
+        assert!(contents.contains("schema_version = 3"));
+    }
+
+    #[test]
+    fn work_state_load_should_make_legacy_review_action_ids_work_global() {
+        let mut fs = InMemoryFileSystem::default();
+        let store = WorkStateStore::new(RapportPaths::new("/repo"));
+        let action = ReviewAction {
+            id: String::from("REV-001"),
+            status: ReviewActionStatus::Open,
+            title: String::from("Legacy action"),
+            rule_ids: vec![String::from("RULE-001")],
+            evidence: String::from("src/lib.rs:1"),
+            addressed_at: None,
+            addressed_summary: None,
+            resolved_at: None,
+        };
+        let attempt = ReviewAttempt {
+            status: OperationStatus::Fail,
+            at: String::from("2026-07-10T18:00:00Z"),
+            input_checksum: String::from("checksum"),
+            grade: "B+".parse().unwrap(),
+            description: String::from("Legacy attempt"),
+            actions: vec![action.clone()],
+            resolved_action_ids: vec![action.id.clone()],
+        };
+        let review = ReviewState {
+            status: OperationStatus::Fail,
+            minimum_grade: ReviewGrade::DEFAULT_MINIMUM,
+            declaring_context: String::from("."),
+            reviewed_paths: vec![String::from(".")],
+            at: String::from("2026-07-10T18:00:00Z"),
+            base_sha: None,
+            head_sha: None,
+            content_checksum: String::from("content"),
+            rules_checksum: String::from("rules"),
+            instructions_checksum: String::from("instructions"),
+            input_checksum: String::from("input"),
+            grade: Some("B+".parse().unwrap()),
+            description: String::from("Legacy review"),
+            actions: vec![action],
+            attempts: vec![attempt],
+        };
+        let mut state = WorkState::new("Legacy", "2026-07-10T18:00:00Z");
+        state.schema_version = 2;
+        state
+            .reviews
+            .insert(String::from("a-review"), review.clone());
+        state.reviews.insert(String::from("b-review"), review);
+        fs.write_string(
+            "/repo/.rapport/work.toml",
+            toml::to_string_pretty(&state).unwrap(),
+        )
+        .unwrap();
+
+        let migrated = store.load(&fs).unwrap().unwrap();
+
+        assert_eq!(migrated.reviews["a-review"].actions[0].id, "REV-001");
+        assert_eq!(migrated.reviews["b-review"].actions[0].id, "REV-002");
+        assert_eq!(
+            migrated.reviews["b-review"].attempts[0].actions[0].id,
+            "REV-002"
+        );
+        assert_eq!(
+            migrated.reviews["b-review"].attempts[0].resolved_action_ids,
+            vec!["REV-002"]
+        );
     }
 
     #[test]
@@ -762,9 +941,13 @@ updated_at = "2026-07-07T23:00:00Z"
         };
         let action = ReviewAction {
             id: String::from("PRIVATE-ACTION-ID"),
+            status: ReviewActionStatus::Addressed,
             title: String::from("private action title"),
             rule_ids: vec![String::from("PRIVATE-RULE-ID")],
             evidence: String::from("private/file.rs:7 contains sensitive evidence"),
+            addressed_at: Some(String::from("PRIVATE-ADDRESSED-TIME")),
+            addressed_summary: Some(String::from("PRIVATE-ADDRESSED-SUMMARY")),
+            resolved_at: Some(String::from("PRIVATE-RESOLVED-TIME")),
         };
         let attempt = ReviewAttempt {
             status: OperationStatus::Fail,
@@ -827,6 +1010,9 @@ updated_at = "2026-07-07T23:00:00Z"
             "private build command",
             "private captured build output",
             "PRIVATE-ACTION-ID",
+            "PRIVATE-ADDRESSED-TIME",
+            "PRIVATE-ADDRESSED-SUMMARY",
+            "PRIVATE-RESOLVED-TIME",
             "private action title",
             "PRIVATE-RULE-ID",
             "sensitive evidence",

@@ -82,7 +82,7 @@ fn render_prime() -> String {
                 "`rapport work rules list` - read repository rules for active work paths",
                 "`rapport doctor` - verify Git and GitHub prerequisites before integration",
                 "`rapport build` - run applicable typed build operations for active work",
-                "`rapport review` - emit host-neutral adversarial review requests; use `--result <file>` to record structured results",
+                "`rapport review start` - emit a host-neutral Markdown adversarial-review request; use `rapport review complete --result <file>` to record the structured result",
                 "`rapport integrate --summary \"...\" --message \"...\"` - commit active changes and open a PR",
                 "`rapport work complete --summary \"...\"` - archive completed work and clear local state",
             ])

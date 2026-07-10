@@ -615,7 +615,7 @@ fn render_build_results(status: &str, lines: Vec<String>, has_reviews: bool) -> 
             b.items(std::iter::once(format!("status `{status}`")).chain(lines))
         })
         .next_actions(if status == "pass" && has_reviews {
-            nonempty![RunHint::new("rapport review")]
+            nonempty![RunHint::new("rapport review start")]
         } else if status == "pass" {
             nonempty![RunHint::new("rapport integrate")]
         } else {

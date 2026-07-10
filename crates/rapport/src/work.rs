@@ -1,11 +1,12 @@
 use crate::build;
-use crate::cli::{WorkAddCommand, WorkCompleteArgs, WorkStartArgs};
+use crate::cli::{WorkAddCommand, WorkCompleteArgs, WorkStartArgs, WorkTaskCommand};
 use crate::context::{Clock, CommandContext};
 use crate::review;
 use crate::rules::{PathRules, RuleResolver, RulesError};
 use crate::runner::CommandSpec;
 use crate::state::{
-    OperationStatus, WorkFact, WorkState, WorkStateError, WorkStateStore, WorkStatus,
+    OperationStatus, ReviewActionStatus, WorkFact, WorkState, WorkStateError, WorkStateStore,
+    WorkStatus,
 };
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
@@ -243,6 +244,165 @@ where
     match add_command {
         WorkAddCommand::Path { path } => add_path(path, arguments, context),
     }
+}
+
+pub fn task<F, C, O, E>(
+    task_command: &WorkTaskCommand,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    match task_command {
+        WorkTaskCommand::Address(args) => {
+            address_review_task(&args.id, &args.summary, arguments, context)
+        }
+    }
+}
+
+fn address_review_task<F, C, O, E>(
+    id: &str,
+    summary: &str,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = WorkStateStore::new(context.paths.clone());
+    let result = match store.load(context.fs) {
+        Ok(Some(mut state)) => {
+            address_review_task_in_state(id, summary, context, &store, &mut state)
+        }
+        Ok(None) => {
+            let _ = writeln!(context.err, "{}", render_missing_work_for_add());
+            CommandResult::failure()
+        }
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_state_error(&error));
+            CommandResult::failure()
+        }
+    };
+    finish("work task address", arguments, context, result)
+}
+
+fn address_review_task_in_state<F, C, O, E>(
+    id: &str,
+    summary: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    if summary.trim().is_empty() {
+        let rendered = ViewBuilder::new()
+            .title("rapport work task address")
+            .paragraph("An addressing summary is required.")
+            .next_actions(nonempty![RunHint::new(format!(
+                "rapport work task address {id} --summary \"what changed\""
+            ))])
+            .build();
+        let _ = writeln!(context.err, "{rendered}");
+        return CommandResult::failure();
+    }
+
+    let matches = state
+        .reviews
+        .values()
+        .flat_map(|review| &review.actions)
+        .filter(|action| action.id == id)
+        .count();
+    if matches == 1 {
+        return update_review_task(id, summary, context, store, state);
+    }
+
+    let message = if matches == 0 {
+        format!("Review task `{id}` does not exist in active work.")
+    } else {
+        format!("Review task `{id}` is ambiguous in active work.")
+    };
+    let rendered = ViewBuilder::new()
+        .title("rapport work task address")
+        .paragraph(message)
+        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .build();
+    let _ = writeln!(context.err, "{rendered}");
+    CommandResult::failure()
+}
+
+fn update_review_task<F, C, O, E>(
+    id: &str,
+    summary: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let now = context.clock.now_rfc3339();
+    let mut prior_status = None;
+    for review in state.reviews.values_mut() {
+        let Some(action) = review.actions.iter_mut().find(|action| action.id == id) else {
+            continue;
+        };
+        if action.status == ReviewActionStatus::Open {
+            action.status = ReviewActionStatus::Addressed;
+            action.addressed_at = Some(now.clone());
+            action.addressed_summary = Some(summary.trim().to_string());
+            if review.status == OperationStatus::Pending {
+                review.status = OperationStatus::Stale;
+            }
+        } else {
+            prior_status = Some(action.status);
+        }
+        break;
+    }
+    if let Some(status) = prior_status {
+        let rendered = ViewBuilder::new()
+            .title("rapport work task address")
+            .paragraph(format!(
+                "Review task `{id}` is already {status}; only open tasks can be addressed."
+            ))
+            .next_actions(nonempty![RunHint::new("rapport work status")])
+            .build();
+        let _ = writeln!(context.err, "{rendered}");
+        return CommandResult::failure();
+    }
+
+    state.updated_at = now;
+    if let Err(error) = store.save(context.fs, state) {
+        let _ = writeln!(context.err, "{}", render_state_error(&error));
+        return CommandResult::failure();
+    }
+    let rendered = ViewBuilder::new()
+        .title("rapport work task address")
+        .section("Task", |b| {
+            b.entries(vec![
+                ("id", id.to_string()),
+                ("status", String::from("addressed")),
+                ("summary", summary.trim().to_string()),
+            ])
+        })
+        .next_actions(nonempty![RunHint::new("rapport review start")])
+        .build();
+    let _ = writeln!(context.out, "{rendered}");
+    CommandResult::success()
 }
 
 fn add_path<F, C, O, E>(
@@ -614,21 +774,30 @@ fn render_active_work_with_signoffs(
         builder = builder.section("Review Signoffs", |b| b.items(review_lines.to_vec()));
     }
 
-    let next = if !review_lines.is_empty()
+    let open_task = state
+        .reviews
+        .values()
+        .flat_map(|review| &review.actions)
+        .find(|action| action.status == ReviewActionStatus::Open)
+        .map(|action| action.id.clone());
+    let next = if let Some(task_id) = open_task {
+        format!("rapport work task address {task_id} --summary \"what changed\"")
+    } else if !review_lines.is_empty()
         && review_lines.iter().any(|line| {
             [" missing", " pending", " stale", " fail"]
                 .iter()
                 .any(|status| line.contains(status))
-        }) {
-        "rapport review"
+        })
+    {
+        String::from("rapport review start")
     } else if build_lines.iter().any(|line| {
         [" missing", " stale", " fail"]
             .iter()
             .any(|status| line.contains(status))
     }) {
-        "rapport build"
+        String::from("rapport build")
     } else {
-        "rapport integrate"
+        String::from("rapport integrate")
     };
     builder.next_actions(nonempty![RunHint::new(next)]).build()
 }
@@ -647,7 +816,7 @@ fn render_review_gate(problems: &[String]) -> String {
         .title("rapport work complete")
         .paragraph("Required reviews are not complete.")
         .section("Reviews", |b| b.items(problems.to_vec()))
-        .next_actions(nonempty![RunHint::new("rapport review")])
+        .next_actions(nonempty![RunHint::new("rapport review start")])
         .build()
 }
 

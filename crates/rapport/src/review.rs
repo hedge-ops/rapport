@@ -1,4 +1,4 @@
-use crate::cli::ReviewArgs;
+use crate::cli::{ReviewCompleteArgs, ReviewStartArgs};
 use crate::context::{Clock, CommandContext};
 use crate::project_context::{
     ResolvedContextRule, SignoffRequirement, required_signoff_requirements_for_paths,
@@ -7,8 +7,8 @@ use crate::project_context::{
 use crate::signoff_contract::SignoffKind;
 use crate::snapshot::{self, OperationSnapshot, SnapshotError};
 use crate::state::{
-    OperationStatus, ReviewAction, ReviewAttempt, ReviewGrade, ReviewState, WorkState,
-    WorkStateError, WorkStateStore,
+    OperationStatus, ReviewAction, ReviewActionStatus, ReviewAttempt, ReviewGrade, ReviewState,
+    WorkState, WorkStateError, WorkStateStore,
 };
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
@@ -23,11 +23,11 @@ use std::process::ExitCode;
 
 const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
-const REVIEW_PROTOCOL_VERSION: u16 = 1;
-const REVIEW_INSTRUCTIONS: &str = r"Work adversarially and independently. Review the whole change for correctness, safety and security, reliability, maintainability, tests, documentation, operability, and compatibility; do not narrow scope to a named specialty. Inspect the relevant source, tests, manifests, build files, and documentation. Resolve and apply every supplied repository rule. Cite applicable rule IDs and concrete file/line evidence for every action. Do not edit the work. Form and grade the current findings before consulting the prior-action reconciliation ledger. Then reconcile identities: reuse a prior stable ID for the same substantive action even if order or wording changed, allocate a new ID only for a genuinely new action, and omit actions that the independent rereview no longer finds. Grade from concrete findings and residual risk, not an average. Return only the structured result contract, including the unchanged requirement_id and input_checksum, an overall A-F grade with optional +/- modifier, a concise description, and all currently outstanding actions. An action needs a stable ID, title, cited rule IDs, and concrete evidence.";
+const REVIEW_PROTOCOL_VERSION: u16 = 2;
+const REVIEW_INSTRUCTIONS: &str = r"Work adversarially and independently. Review the whole change for correctness, safety and security, reliability, maintainability, tests, documentation, operability, and compatibility; do not narrow scope to a named specialty. Inspect the relevant source, tests, manifests, build files, and documentation. Resolve and apply every supplied repository rule. Cite applicable rule IDs and concrete file/line evidence for every action. Do not edit the work. Form and grade the current findings before consulting the prior-task reconciliation ledger. Then reconcile identities: set prior_task_id to the Rapport task ID for the same substantive action even if order or wording changed, leave prior_task_id null for a genuinely new action, and omit actions that the independent rereview no longer finds. Grade from concrete findings and residual risk, not an average. Do not try to infer or target Rapport's passing threshold. Return only the structured result contract, including the unchanged requirement_id and input_checksum, an overall A-F grade with optional +/- modifier, a concise description, and all currently outstanding actions. An action needs a title, cited rule IDs, and concrete evidence; Rapport assigns IDs to new tasks.";
 
-pub fn run<F, C, O, E>(
-    review_args: &ReviewArgs,
+pub fn start<F, C, O, E>(
+    start_args: &ReviewStartArgs,
     arguments: Vec<String>,
     context: &mut CommandContext<'_, F, C, O, E>,
 ) -> ExitCode
@@ -39,10 +39,7 @@ where
 {
     let store = WorkStateStore::new(context.paths.clone());
     let result = match store.load(context.fs) {
-        Ok(Some(mut state)) => match &review_args.result {
-            Some(path) => record_results(path, context, &store, &mut state),
-            None => request_reviews(review_args, context, &store, &mut state),
-        },
+        Ok(Some(mut state)) => request_reviews(start_args, context, &store, &mut state),
         Ok(None) => {
             let _ = writeln!(context.err, "{}", render_missing_work());
             CommandResult::failure()
@@ -52,11 +49,37 @@ where
             CommandResult::failure()
         }
     };
-    finish("review", arguments, context, result)
+    finish("review start", arguments, context, result)
+}
+
+pub fn complete<F, C, O, E>(
+    complete_args: &ReviewCompleteArgs,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = WorkStateStore::new(context.paths.clone());
+    let result = match store.load(context.fs) {
+        Ok(Some(mut state)) => record_results(&complete_args.result, context, &store, &mut state),
+        Ok(None) => {
+            let _ = writeln!(context.err, "{}", render_missing_work());
+            CommandResult::failure()
+        }
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_state_error(&error));
+            CommandResult::failure()
+        }
+    };
+    finish("review complete", arguments, context, result)
 }
 
 fn request_reviews<F, C, O, E>(
-    args: &ReviewArgs,
+    args: &ReviewStartArgs,
     context: &mut CommandContext<'_, F, C, O, E>,
     store: &WorkStateStore,
     state: &mut WorkState,
@@ -101,13 +124,18 @@ where
         let _ = writeln!(context.err, "{}", render_state_error(&error));
         return CommandResult::failure();
     }
-    match serde_json::to_string_pretty(&packets) {
-        Ok(json) => {
-            let _ = writeln!(context.out, "{json}");
+    let rendered = if args.json {
+        serde_json::to_string_pretty(&packets).map_err(ReviewError::Encode)
+    } else {
+        render_review_requests(&packets)
+    };
+    match rendered {
+        Ok(rendered) => {
+            let _ = writeln!(context.out, "{rendered}");
             CommandResult::success()
         }
         Err(error) => {
-            let _ = writeln!(context.err, "{}", render_error(&ReviewError::Encode(error)));
+            let _ = writeln!(context.err, "{}", render_error(&error));
             CommandResult::failure()
         }
     }
@@ -173,6 +201,14 @@ where
         );
         return CommandResult::failure();
     }
+    if result_path_is_reviewed(&result_path, &context.repo_root, &submissions, state) {
+        let _ = writeln!(
+            context.err,
+            "{}",
+            render_error(&ReviewError::ResultInsideReviewedContent)
+        );
+        return CommandResult::failure();
+    }
 
     let mut seen_requirements = BTreeSet::new();
     let mut requirements = Vec::new();
@@ -227,9 +263,9 @@ where
     // becomes durable unless every unique submission validates against its
     // exact pending checksum, current rules, and derived status.
     let mut candidate = state.clone();
-    let mut any_failed = false;
-    let mut recorded = Vec::new();
+    let mut processed_ids = Vec::new();
     for submission in submissions {
+        let requirement_id = submission.requirement_id.clone();
         let Some(requirement) = requirements.iter().find(|requirement| {
             requirement.request.qualified_target() == submission.requirement_id
         }) else {
@@ -244,13 +280,7 @@ where
             return CommandResult::failure();
         };
         match apply_result(context, &mut candidate, requirement, submission) {
-            Ok(status) => {
-                any_failed |= status != OperationStatus::Pass;
-                recorded.push(format!(
-                    "{}: {status}",
-                    requirement.request.qualified_target()
-                ));
-            }
+            Ok(_) => processed_ids.push(requirement_id),
             Err(error) => {
                 let _ = writeln!(context.err, "{}", render_error(&error));
                 return CommandResult::failure();
@@ -263,24 +293,71 @@ where
         return CommandResult::failure();
     }
     *state = candidate;
-    let rendered = ViewBuilder::new()
-        .title("rapport review")
-        .section("Results", |b| b.items(recorded))
-        .next_actions(if any_failed {
-            nonempty![RunHint::new(
-                "address review actions, then run rapport review"
-            )]
-        } else {
-            nonempty![RunHint::new("rapport integrate")]
-        })
-        .build();
-    if any_failed {
-        let _ = writeln!(context.err, "{rendered}");
-        CommandResult::failure()
-    } else {
-        let _ = writeln!(context.out, "{rendered}");
-        CommandResult::success()
+    let mut results = Vec::new();
+    let mut tasks = Vec::new();
+    let mut resolved = Vec::new();
+    let mut any_failed = false;
+    let mut first_open_task = None;
+    for id in processed_ids {
+        let Some(review) = state.reviews.get(&id) else {
+            continue;
+        };
+        any_failed |= review.status != OperationStatus::Pass;
+        let grade = review
+            .grade
+            .map_or_else(|| String::from("ungraded"), |grade| grade.to_string());
+        results.push(format!(
+            "`{id}`: {}; grade {grade} (minimum {})",
+            review.status, review.minimum_grade
+        ));
+        for action in review
+            .actions
+            .iter()
+            .filter(|action| action.is_outstanding())
+        {
+            if first_open_task.is_none() && action.status == ReviewActionStatus::Open {
+                first_open_task = Some(action.id.clone());
+            }
+            tasks.push(format!(
+                "`{}` {} — {}; rules [{}]; evidence: {}",
+                action.id,
+                action.status,
+                action.title,
+                action.rule_ids.join(", "),
+                action.evidence
+            ));
+        }
+        if let Some(attempt) = review.attempts.last() {
+            resolved.extend(
+                attempt
+                    .resolved_action_ids
+                    .iter()
+                    .map(|task_id| format!("`{task_id}` resolved by independent rereview")),
+            );
+        }
     }
+    let mut builder = ViewBuilder::new()
+        .title("rapport review complete")
+        .section("Results", |b| b.items(results));
+    if !tasks.is_empty() {
+        builder = builder.section("Review Tasks", |b| b.items(tasks));
+    }
+    if !resolved.is_empty() {
+        builder = builder.section("Resolved Tasks", |b| b.items(resolved));
+    }
+    let next = first_open_task.map_or_else(
+        || {
+            if any_failed {
+                String::from("rapport review start")
+            } else {
+                String::from("rapport integrate")
+            }
+        },
+        |task_id| format!("rapport work task address {task_id} --summary \"what changed\""),
+    );
+    let rendered = builder.next_actions(nonempty![RunHint::new(next)]).build();
+    let _ = writeln!(context.out, "{rendered}");
+    CommandResult::success()
 }
 
 pub(crate) fn prepare_requirement<F, C, O, E>(
@@ -324,7 +401,14 @@ where
     let id = requirement.request.qualified_target().to_string();
     let now = context.clock.now_rfc3339();
     let previous = state.reviews.get(&id);
-    let prior_actions = previous.map_or_else(Vec::new, |review| review.actions.clone());
+    let prior_actions = previous.map_or_else(Vec::new, |review| {
+        review
+            .actions
+            .iter()
+            .filter(|action| action.is_outstanding())
+            .cloned()
+            .collect()
+    });
     let review_state = ReviewState {
         status: OperationStatus::Pending,
         minimum_grade,
@@ -350,7 +434,6 @@ where
         requirement: ReviewRequirementPacket {
             requirement_id: id.clone(),
             kind: String::from("review"),
-            minimum_grade,
             declaring_context: requirement.request.declaring_context().to_string(),
             reviewed_paths: requirement.paths.clone(),
         },
@@ -359,7 +442,7 @@ where
         rules,
         reconciliation: ReviewReconciliationPacket {
             instruction: String::from(
-                "Consult only after forming current findings. Reuse an ID for the same substantive action and omit actions no longer present.",
+                "Consult only after forming current findings. Set prior_task_id to the matching Rapport task ID for the same substantive action, leave it null for a new action, and omit actions no longer present.",
             ),
             prior_actions,
         },
@@ -367,11 +450,10 @@ where
             schema_version: REVIEW_PROTOCOL_VERSION,
             requirement_id: id,
             input_checksum: snapshot.input_checksum,
-            status: String::from("pass|fail"),
             grade: String::from("A through F with optional + or -"),
             description: String::from("why the grade fits"),
-            actions: vec![ReviewAction {
-                id: String::from("REV-001"),
+            actions: vec![ReviewActionContract {
+                prior_task_id: None,
                 title: String::from("short action title"),
                 rule_ids: vec![String::from("RULE-ID")],
                 evidence: String::from("path/to/file.rs:42: concrete evidence"),
@@ -515,15 +597,22 @@ where
             review.input_checksum,
             review.reviewed_paths.join(", ")
         ));
-        lines.extend(review.actions.iter().map(|action| {
-            format!(
-                "action `{}`: {}; rules [{}]; evidence: {}",
-                action.id,
-                action.title,
-                action.rule_ids.join(", "),
-                action.evidence
-            )
-        }));
+        lines.extend(
+            review
+                .actions
+                .iter()
+                .filter(|action| action.is_outstanding())
+                .map(|action| {
+                    format!(
+                        "task `{}` {}; {}; rules [{}]; evidence: {}",
+                        action.id,
+                        action.status,
+                        action.title,
+                        action.rule_ids.join(", "),
+                        action.evidence
+                    )
+                }),
+        );
     }
     Ok(lines)
 }
@@ -548,10 +637,15 @@ where
             Some(review) if review.status != OperationStatus::Pass => {
                 problems.push(format!("required review `{id}` is {}", review.status));
             }
-            Some(review) if !review.actions.is_empty() => problems.push(format!(
-                "required review `{id}` has {} outstanding action(s)",
-                review.actions.len()
-            )),
+            Some(review) if review.actions.iter().any(ReviewAction::is_outstanding) => problems
+                .push(format!(
+                    "required review `{id}` has {} outstanding action(s)",
+                    review
+                        .actions
+                        .iter()
+                        .filter(|action| action.is_outstanding())
+                        .count()
+                )),
             Some(_) => {}
         }
     }
@@ -574,9 +668,14 @@ where
     let id = requirement.request.qualified_target().to_string();
     let Some(existing) = state.reviews.get(&id) else {
         return Err(ReviewError::InvalidResult(format!(
-            "review `{id}` has no pending request; run `rapport review` first"
+            "review `{id}` has no pending request; run `rapport review start` first"
         )));
     };
+    if existing.status != OperationStatus::Pending {
+        return Err(ReviewError::InvalidResult(format!(
+            "review `{id}` has no current pending request; run `rapport review start` first"
+        )));
+    }
     if submission.input_checksum != existing.input_checksum {
         return Err(ReviewError::InvalidResult(format!(
             "review `{id}` result checksum does not match the pending request"
@@ -593,42 +692,23 @@ where
             "review `{id}` inputs changed after the request; the pending result is stale"
         )));
     }
-    validate_action_rules(&submission.actions, &rules)?;
-    let derived = current_status(Some(submission.grade), minimum_grade, &submission.actions);
-    if submission.status != derived {
-        return Err(ReviewError::InvalidResult(format!(
-            "review `{id}` reported status `{}`, but grade {} against minimum {} with {} action(s) derives `{derived}`",
-            submission.status,
-            submission.grade,
-            minimum_grade,
-            submission.actions.len()
-        )));
-    }
     let now = context.clock.now_rfc3339();
+    validate_action_rules(&submission.actions, &rules)?;
+    let reconciled = reconcile_actions(state, &id, &submission.actions, &now)?;
+    let derived = current_status(Some(submission.grade), minimum_grade, &reconciled.current);
     let Some(previous) = state.reviews.get(&id) else {
         return Err(ReviewError::InvalidResult(format!(
             "review `{id}` disappeared before its result could be recorded"
         )));
     };
-    let current_ids = submission
-        .actions
-        .iter()
-        .map(|action| action.id.as_str())
-        .collect::<BTreeSet<_>>();
-    let resolved_action_ids = previous
-        .actions
-        .iter()
-        .filter(|action| !current_ids.contains(action.id.as_str()))
-        .map(|action| action.id.clone())
-        .collect::<Vec<_>>();
     let attempt = ReviewAttempt {
         status: derived,
         at: now.clone(),
         input_checksum: snapshot.input_checksum.clone(),
         grade: submission.grade,
         description: submission.description.clone(),
-        actions: submission.actions.clone(),
-        resolved_action_ids,
+        actions: reconciled.current,
+        resolved_action_ids: reconciled.resolved_ids,
     };
     let mut attempts = previous.attempts.clone();
     attempts.push(attempt);
@@ -648,11 +728,116 @@ where
             input_checksum: snapshot.input_checksum,
             grade: Some(submission.grade),
             description: submission.description,
-            actions: submission.actions,
+            actions: reconciled.ledger,
             attempts,
         },
     );
     Ok(derived)
+}
+
+struct ReconciledActions {
+    ledger: Vec<ReviewAction>,
+    current: Vec<ReviewAction>,
+    resolved_ids: Vec<String>,
+}
+
+fn reconcile_actions(
+    state: &WorkState,
+    review_id: &str,
+    submitted: &[ReviewActionInput],
+    now: &str,
+) -> Result<ReconciledActions, ReviewError> {
+    let previous = state
+        .reviews
+        .get(review_id)
+        .map_or_else(Vec::new, |review| review.actions.clone());
+    let mut known_ids = all_review_task_ids(state);
+    let mut next_number = next_review_task_number(&known_ids);
+    let mut reused = BTreeSet::new();
+    let mut current = Vec::new();
+
+    for action in submitted {
+        let (id, addressed_at, addressed_summary) = if let Some(prior_task_id) =
+            &action.prior_task_id
+        {
+            if !reused.insert(prior_task_id.clone()) {
+                return Err(ReviewError::InvalidResult(format!(
+                    "review task `{prior_task_id}` was reconciled more than once"
+                )));
+            }
+            let Some(prior) = previous
+                .iter()
+                .find(|prior| prior.id == *prior_task_id && prior.is_outstanding())
+            else {
+                return Err(ReviewError::InvalidResult(format!(
+                    "prior_task_id `{prior_task_id}` is not an outstanding task for review `{review_id}`"
+                )));
+            };
+            (
+                prior.id.clone(),
+                prior.addressed_at.clone(),
+                prior.addressed_summary.clone(),
+            )
+        } else {
+            let id = loop {
+                let candidate = format!("REV-{next_number:03}");
+                next_number = next_number.checked_add(1).unwrap_or(1);
+                if known_ids.insert(candidate.clone()) {
+                    break candidate;
+                }
+            };
+            (id, None, None)
+        };
+        current.push(ReviewAction {
+            id,
+            status: ReviewActionStatus::Open,
+            title: action.title.clone(),
+            rule_ids: action.rule_ids.clone(),
+            evidence: action.evidence.clone(),
+            addressed_at,
+            addressed_summary,
+            resolved_at: None,
+        });
+    }
+
+    let mut resolved_ids = Vec::new();
+    let mut ledger = current.clone();
+    for mut prior in previous {
+        if prior.status == ReviewActionStatus::Resolved {
+            ledger.push(prior);
+        } else if !reused.contains(&prior.id) {
+            prior.status = ReviewActionStatus::Resolved;
+            prior.resolved_at = Some(now.to_string());
+            resolved_ids.push(prior.id.clone());
+            ledger.push(prior);
+        }
+    }
+    Ok(ReconciledActions {
+        ledger,
+        current,
+        resolved_ids,
+    })
+}
+
+fn all_review_task_ids(state: &WorkState) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for review in state.reviews.values() {
+        ids.extend(review.actions.iter().map(|action| action.id.clone()));
+        for attempt in &review.attempts {
+            ids.extend(attempt.actions.iter().map(|action| action.id.clone()));
+            ids.extend(attempt.resolved_action_ids.iter().cloned());
+        }
+    }
+    ids
+}
+
+fn next_review_task_number(ids: &BTreeSet<String>) -> u64 {
+    ids.iter()
+        .filter_map(|id| id.strip_prefix("REV-")?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .unwrap_or(1)
 }
 
 fn requirement_inputs<F, C, O, E>(
@@ -687,11 +872,10 @@ where
 
 fn review_instructions(requirement: &SignoffRequirement) -> String {
     format!(
-        "{REVIEW_INSTRUCTIONS}\n\nThis comprehensive review is `{}` declared by `{}` for paths [{}]. Its minimum passing grade is {} and any outstanding action makes it fail.",
+        "{REVIEW_INSTRUCTIONS}\n\nThis comprehensive review is `{}` declared by `{}` for paths [{}].",
         requirement.request.qualified_target(),
         requirement.request.declaring_context(),
         requirement.paths.join(", "),
-        requirement.request.minimum_grade().unwrap_or_default(),
     )
 }
 
@@ -715,7 +899,11 @@ fn current_status(
 ) -> OperationStatus {
     match grade {
         None => OperationStatus::Pending,
-        Some(grade) if grade.meets(minimum) && actions.is_empty() => OperationStatus::Pass,
+        Some(grade)
+            if grade.meets(minimum) && actions.iter().all(|action| !action.is_outstanding()) =>
+        {
+            OperationStatus::Pass
+        }
         Some(_) => OperationStatus::Fail,
     }
 }
@@ -735,26 +923,22 @@ fn validate_submission(result: &ReviewResultInput) -> Result<(), ReviewError> {
             "requirement_id, input_checksum, and description are required",
         )));
     }
-    if !matches!(result.status, OperationStatus::Pass | OperationStatus::Fail) {
-        return Err(ReviewError::InvalidResult(String::from(
-            "submitted review status must be pass or fail",
-        )));
-    }
-    let mut ids = BTreeSet::new();
     for action in &result.actions {
-        if action.id.trim().is_empty()
-            || action.title.trim().is_empty()
+        if action.title.trim().is_empty()
             || action.evidence.trim().is_empty()
             || action.rule_ids.is_empty()
         {
             return Err(ReviewError::InvalidResult(String::from(
-                "every review action requires a stable id, title, cited rule IDs, and concrete evidence",
+                "every review action requires a title, cited rule IDs, and concrete evidence",
             )));
         }
-        if !ids.insert(action.id.as_str()) {
-            return Err(ReviewError::InvalidResult(format!(
-                "duplicate review action id `{}`",
-                action.id
+        if action
+            .prior_task_id
+            .as_ref()
+            .is_some_and(|id| id.trim().is_empty())
+        {
+            return Err(ReviewError::InvalidResult(String::from(
+                "prior_task_id must be null or a non-empty Rapport task ID",
             )));
         }
     }
@@ -762,7 +946,7 @@ fn validate_submission(result: &ReviewResultInput) -> Result<(), ReviewError> {
 }
 
 fn validate_action_rules(
-    actions: &[ReviewAction],
+    actions: &[ReviewActionInput],
     rules: &[ResolvedContextRule],
 ) -> Result<(), ReviewError> {
     let known = rules
@@ -774,7 +958,7 @@ fn validate_action_rules(
             if !known.contains(rule_id.as_str()) {
                 return Err(ReviewError::InvalidResult(format!(
                     "review action `{}` cites unknown rule `{rule_id}`",
-                    action.id
+                    action.title
                 )));
             }
         }
@@ -834,6 +1018,58 @@ fn path_is_within(selected: &str, work_path: &str) -> bool {
             .is_some_and(|remaining| remaining.starts_with('/'))
 }
 
+fn result_path_is_reviewed(
+    result_path: &Utf8Path,
+    repo_root: &Utf8Path,
+    submissions: &[ReviewResultInput],
+    state: &WorkState,
+) -> bool {
+    let Ok(relative) = result_path.strip_prefix(repo_root) else {
+        return false;
+    };
+    let mut components = Vec::new();
+    let portable = relative.as_str().replace('\\', "/");
+    for component in portable.split('/') {
+        if component == ".." {
+            if components.pop().is_none() {
+                return false;
+            }
+        } else if !component.is_empty() && component != "." {
+            components.push(component);
+        }
+    }
+    let normalized = components.join("/");
+    submissions.iter().any(|submission| {
+        state
+            .reviews
+            .get(&submission.requirement_id)
+            .is_some_and(|review| {
+                review
+                    .reviewed_paths
+                    .iter()
+                    .any(|reviewed_path| path_is_within(&normalized, reviewed_path))
+            })
+    })
+}
+
+fn render_review_requests(packets: &[ReviewRequestPacket]) -> Result<String, ReviewError> {
+    if let [packet] = packets {
+        return render_review_request(packet);
+    }
+    let json = serde_json::to_string_pretty(packets).map_err(ReviewError::Encode)?;
+    Ok(format!(
+        "# Rapport adversarial review set\n\nPerform a fresh, independent review for each of the {} exact requests below. Inspect the current workspace as needed, follow every request's supplied instructions and rules, and do not edit the work. Return only one JSON array containing exactly one structured result object per request, in the same order. Do not return adjacent standalone objects or Markdown fences.\n\nDo not save this request or its result inside any reviewed path; keep protocol files outside the repository, such as under `/tmp`.\n\n```json\n{json}\n```",
+        packets.len()
+    ))
+}
+
+pub(crate) fn render_review_request(packet: &ReviewRequestPacket) -> Result<String, ReviewError> {
+    let json = serde_json::to_string_pretty(packet).map_err(ReviewError::Encode)?;
+    Ok(format!(
+        "# Rapport adversarial review\n\nPerform a fresh, independent review of the exact request below. Inspect the current workspace as needed, follow every supplied instruction and rule, and do not edit the work. Return only the structured JSON result described by `result_contract`.\n\nDo not save this request or its result inside any reviewed path; keep protocol files outside the repository, such as under `/tmp`.\n\n```json\n{json}\n```"
+    ))
+}
+
 #[derive(Serialize)]
 pub(crate) struct ReviewRequestPacket {
     schema_version: u16,
@@ -855,7 +1091,6 @@ struct ReviewReconciliationPacket {
 struct ReviewRequirementPacket {
     requirement_id: String,
     kind: String,
-    minimum_grade: ReviewGrade,
     declaring_context: String,
     reviewed_paths: Vec<String>,
 }
@@ -888,10 +1123,17 @@ struct ReviewResultContract {
     schema_version: u16,
     requirement_id: String,
     input_checksum: String,
-    status: String,
     grade: String,
     description: String,
-    actions: Vec<ReviewAction>,
+    actions: Vec<ReviewActionContract>,
+}
+
+#[derive(Serialize)]
+struct ReviewActionContract {
+    prior_task_id: Option<String>,
+    title: String,
+    rule_ids: Vec<String>,
+    evidence: String,
 }
 
 #[derive(Deserialize)]
@@ -907,11 +1149,20 @@ struct ReviewResultInput {
     schema_version: u16,
     requirement_id: String,
     input_checksum: String,
-    status: OperationStatus,
     grade: ReviewGrade,
     description: String,
     #[serde(default)]
-    actions: Vec<ReviewAction>,
+    actions: Vec<ReviewActionInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewActionInput {
+    #[serde(default)]
+    prior_task_id: Option<String>,
+    title: String,
+    rule_ids: Vec<String>,
+    evidence: String,
 }
 
 pub(crate) enum ReviewError {
@@ -926,6 +1177,7 @@ pub(crate) enum ReviewError {
         path: Utf8PathBuf,
         source: serde_json::Error,
     },
+    ResultInsideReviewedContent,
     InvalidResult(String),
     InvalidPath(Utf8PathBuf),
     OutsideWork(String),
@@ -939,6 +1191,7 @@ impl fmt::Debug for ReviewError {
             Self::Encode(_) => "encode",
             Self::ReadResult { .. } => "read_result",
             Self::DecodeResult { .. } => "decode_result",
+            Self::ResultInsideReviewedContent => "result_inside_reviewed_content",
             Self::InvalidResult(_) => "invalid_result",
             Self::InvalidPath(_) => "invalid_path",
             Self::OutsideWork(_) => "outside_work",
@@ -976,6 +1229,9 @@ impl fmt::Display for ReviewError {
                 path.as_str().len(),
                 source.line(),
                 source.column()
+            ),
+            Self::ResultInsideReviewedContent => f.write_str(
+                "review result files must be outside the reviewed content; write the result under /tmp and retry",
             ),
             Self::InvalidResult(detail) => write!(
                 f,
@@ -1118,9 +1374,13 @@ mod tests {
         let b_plus: ReviewGrade = "B+".parse().expect("valid fixture grade");
         let action = ReviewAction {
             id: String::from("REV-001"),
+            status: ReviewActionStatus::Open,
             title: String::from("Fix it"),
             rule_ids: vec![String::from("RULE-001")],
             evidence: String::from("src/lib.rs:1"),
+            addressed_at: None,
+            addressed_summary: None,
+            resolved_at: None,
         };
 
         assert_eq!(

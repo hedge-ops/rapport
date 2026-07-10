@@ -1312,12 +1312,12 @@ where
             status_state,
         )?;
         if let Some(packet) = review_packet {
-            let json = serde_json::to_string_pretty(&packet).map_err(|error| {
-                SignoffError::execution("could not encode review request", error.to_string())
+            let prompt = review::render_review_request(&packet).map_err(|error| {
+                SignoffError::execution("could not render review request", error.to_string())
             })?;
             let _ = writeln!(
                 context.err,
-                "Review `{qualified}` requires an independent structured result.\n{json}"
+                "Review `{qualified}` requires an independent structured result.\n{prompt}"
             );
         }
         if operation_status != OperationStatus::Pass {

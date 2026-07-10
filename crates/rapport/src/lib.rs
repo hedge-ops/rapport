@@ -22,9 +22,9 @@ pub use context::{Clock, CommandContext, SystemClock, find_repo_root};
 pub use paths::RapportPaths;
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 pub use state::{
-    BuildState, OperationStatus, ReviewAction, ReviewAttempt, ReviewGrade, ReviewGradeError,
-    ReviewState, WORK_STATE_SCHEMA_VERSION, WorkFact, WorkStage, WorkState, WorkStateError,
-    WorkStateStore, WorkStatus,
+    BuildState, OperationStatus, ReviewAction, ReviewActionStatus, ReviewAttempt, ReviewGrade,
+    ReviewGradeError, ReviewState, WORK_STATE_SCHEMA_VERSION, WorkFact, WorkStage, WorkState,
+    WorkStateError, WorkStateStore, WorkStatus,
 };
 pub use telemetry::{
     CommandEvent, CommandEventOutcome, EVENT_SCHEMA_VERSION, TelemetryError, TelemetryWriter,
@@ -32,7 +32,7 @@ pub use telemetry::{
 pub use view::{Outcome, RunHint, View, ViewBuilder};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use cli::{Cli, Command, WorkCommand, WorkRulesCommand};
+use cli::{Cli, Command, ReviewCommand, WorkCommand, WorkRulesCommand};
 use rapport_files::{FileSystem, RealFileSystem, Utf8PathBuf};
 use std::io::Write;
 use std::process::ExitCode;
@@ -128,12 +128,18 @@ where
                 WorkRulesCommand::Show { id } => rules::show(id, argv, context),
             },
             WorkCommand::Add(add_args) => work::add(&add_args.command, argv, context),
+            WorkCommand::Task(task_args) => work::task(&task_args.command, argv, context),
         },
         Command::Context(context_args) => {
             project_context::run(&context_args.command, argv, context)
         }
         Command::Build(build_args) => build::run(build_args, argv, context),
-        Command::Review(review_args) => review::run(review_args, argv, context),
+        Command::Review(review_args) => match &review_args.command {
+            ReviewCommand::Start(start_args) => review::start(start_args, argv, context),
+            ReviewCommand::Complete(complete_args) => {
+                review::complete(complete_args, argv, context)
+            }
+        },
         Command::Integrate(integrate_args) => integrate::run(integrate_args, argv, context),
     }
 }
@@ -2354,6 +2360,98 @@ minimum_grade = "A-"
     }
 
     #[test]
+    fn review_start_defaults_to_markdown_without_exposing_the_passing_threshold() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["app/file.rs"]);
+        fs.add_file_with_contents("/repo/app/file.rs", "fn changed() {}\n");
+        add_review_context(&mut fs);
+
+        let (code, out, err) = run_with_runner(
+            &["review", "start"],
+            &mut fs,
+            &review_request_runner("diff-v1"),
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.starts_with("# Rapport adversarial review"));
+        assert!(out.contains("```json"));
+        assert!(out.contains("\"grade\": \"A through F with optional + or -\""));
+        assert!(!out.contains("minimum_grade"));
+        assert!(!out.contains("minimum passing grade"));
+        assert!(!out.contains("\"status\": \"pass|fail\""));
+    }
+
+    #[test]
+    fn review_start_markdown_defines_one_array_for_multiple_requirements() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["app/file.rs"]);
+        fs.add_file_with_contents("/repo/app/file.rs", "fn changed() {}\n");
+        add_nested_review_contexts(&mut fs);
+
+        let (code, out, err) =
+            run_with_runner(&["review", "start"], &mut fs, &two_review_request_runner());
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.starts_with("# Rapport adversarial review set"));
+        assert!(out.contains("Return only one JSON array"));
+        let packet_json = out
+            .split("```json\n")
+            .nth(1)
+            .unwrap()
+            .split("\n```")
+            .next()
+            .unwrap();
+        let packets: serde_json::Value = serde_json::from_str(packet_json).unwrap();
+        assert_eq!(packets.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn review_complete_rejects_a_result_file_inside_reviewed_content() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["."]);
+        add_review_context(&mut fs);
+        let (request_code, request_json, request_err) = run_with_runner(
+            &["review", "start", "--json"],
+            &mut fs,
+            &review_request_runner("diff-v1"),
+        );
+        assert_eq!(request_code, ExitCode::SUCCESS);
+        assert_eq!(request_err, "");
+        let request: serde_json::Value = serde_json::from_str(&request_json).unwrap();
+        fs.write_string(
+            "/repo/review-result.json",
+            serde_json::json!({
+                "schema_version": 2,
+                "requirement_id": "root-review",
+                "input_checksum": request[0]["snapshot"]["input_checksum"],
+                "grade": "A",
+                "description": "No findings.",
+                "actions": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("must not run");
+
+        let (code, out, err) = run_with_runner(
+            &["review", "complete", "--result", "review-result.json"],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("must be outside the reviewed content"));
+        assert!(runner.calls().is_empty());
+        assert_eq!(
+            load_state(&fs).reviews["root-review"].status,
+            OperationStatus::Pending
+        );
+    }
+
+    #[test]
     #[expect(
         clippy::too_many_lines,
         reason = "the end-to-end scenario intentionally keeps request, stale result, action retention, rereview, resolution, and exact reuse in one behavioral specification"
@@ -2366,12 +2464,13 @@ minimum_grade = "A-"
 
         let first_request = review_request_runner("diff-v1");
         let (request_code, request_json, request_err) =
-            run_with_runner(&["review"], &mut fs, &first_request);
+            run_with_runner(&["review", "start", "--json"], &mut fs, &first_request);
 
         assert_eq!(request_code, ExitCode::SUCCESS);
         assert_eq!(request_err, "");
         let request: serde_json::Value = serde_json::from_str(&request_json).unwrap();
         assert!(request[0]["requirement"].get("target").is_none());
+        assert!(request[0]["requirement"].get("minimum_grade").is_none());
         assert_eq!(request[0]["requirement"]["requirement_id"], "root-review");
         assert!(
             request[0]["instructions"]
@@ -2379,6 +2478,13 @@ minimum_grade = "A-"
                 .unwrap()
                 .contains("safety and security")
         );
+        assert!(
+            !request[0]["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("minimum passing grade")
+        );
+        assert!(request[0]["result_contract"].get("status").is_none());
         assert_eq!(
             request[0]["reconciliation"]["prior_actions"],
             serde_json::json!([])
@@ -2390,14 +2496,13 @@ minimum_grade = "A-"
         fs.write_string(
             "/repo/review-result.json",
             serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "root-review",
                 "input_checksum": input_checksum,
-                "status": "fail",
                 "grade": "B+",
                 "description": "One substantive action remains.",
                 "actions": [{
-                    "id": "REV-001",
+                    "prior_task_id": null,
                     "title": "Preserve the invariant",
                     "rule_ids": ["APP-001"],
                     "evidence": "app/file.rs:1: changed() omits the invariant"
@@ -2409,13 +2514,13 @@ minimum_grade = "A-"
         let first_result = review_result_runner("diff-v1");
 
         let (result_code, _, result_err) = run_with_runner(
-            &["review", "--result", "review-result.json"],
+            &["review", "complete", "--result", "review-result.json"],
             &mut fs,
             &first_result,
         );
 
-        assert_eq!(result_code, ExitCode::from(2));
-        assert!(result_err.contains("root-review: fail"));
+        assert_eq!(result_code, ExitCode::SUCCESS);
+        assert_eq!(result_err, "");
         let failed = &load_state(&fs).reviews["root-review"];
         assert_eq!(failed.grade.unwrap().to_string(), "B+");
         assert_eq!(failed.actions[0].id, "REV-001");
@@ -2427,16 +2532,35 @@ minimum_grade = "A-"
         assert_eq!(status_code, ExitCode::SUCCESS);
         assert_eq!(status_err, "");
         assert!(status_out.contains("`root-review` stale"));
-        assert!(status_out.contains("action `REV-001`"));
+        assert!(status_out.contains("task `REV-001` open"));
+
+        let (address_code, address_out, address_err) = run_with_fs(
+            &[
+                "work",
+                "task",
+                "address",
+                "REV-001",
+                "--summary",
+                "Restored the invariant",
+            ],
+            &mut fs,
+        );
+        assert_eq!(address_code, ExitCode::SUCCESS);
+        assert_eq!(address_err, "");
+        assert!(address_out.contains("addressed"));
 
         let second_request = review_request_runner("diff-v2");
         let (request_code, request_json, _) =
-            run_with_runner(&["review"], &mut fs, &second_request);
+            run_with_runner(&["review", "start", "--json"], &mut fs, &second_request);
         assert_eq!(request_code, ExitCode::SUCCESS);
         let request: serde_json::Value = serde_json::from_str(&request_json).unwrap();
         assert_eq!(
             request[0]["reconciliation"]["prior_actions"][0]["id"],
             "REV-001"
+        );
+        assert_eq!(
+            request[0]["reconciliation"]["prior_actions"][0]["status"],
+            "addressed"
         );
         let input_checksum = request[0]["snapshot"]["input_checksum"]
             .as_str()
@@ -2445,13 +2569,17 @@ minimum_grade = "A-"
         fs.write_string(
             "/repo/review-result.json",
             serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "root-review",
                 "input_checksum": input_checksum,
-                "status": "pass",
-                "grade": "A-",
-                "description": "The prior action is resolved and no current findings remain.",
-                "actions": []
+                "grade": "B+",
+                "description": "The prior action still remains.",
+                "actions": [{
+                    "prior_task_id": "REV-001",
+                    "title": "Preserve the invariant",
+                    "rule_ids": ["APP-001"],
+                    "evidence": "app/file.rs:1: the attempted fix still omits the invariant"
+                }]
             })
             .to_string(),
         )
@@ -2459,20 +2587,70 @@ minimum_grade = "A-"
         let second_result = review_result_runner("diff-v2");
 
         let (result_code, result_out, result_err) = run_with_runner(
-            &["review", "--result", "review-result.json"],
+            &["review", "complete", "--result", "review-result.json"],
             &mut fs,
             &second_result,
         );
 
         assert_eq!(result_code, ExitCode::SUCCESS);
         assert_eq!(result_err, "");
-        assert!(result_out.contains("root-review: pass"));
+        assert!(result_out.contains("`root-review`: fail"));
+        assert!(result_out.contains("`REV-001` open"));
+        assert_eq!(
+            load_state(&fs).reviews["root-review"].actions[0].status,
+            ReviewActionStatus::Open
+        );
+
+        let (address_code, _, address_err) = run_with_fs(
+            &[
+                "work",
+                "task",
+                "address",
+                "REV-001",
+                "--summary",
+                "Corrected the remaining invariant gap",
+            ],
+            &mut fs,
+        );
+        assert_eq!(address_code, ExitCode::SUCCESS);
+        assert_eq!(address_err, "");
+
+        let third_request = review_request_runner("diff-v2");
+        let (request_code, request_json, request_err) =
+            run_with_runner(&["review", "start", "--json"], &mut fs, &third_request);
+        assert_eq!(request_code, ExitCode::SUCCESS);
+        assert_eq!(request_err, "");
+        let request: serde_json::Value = serde_json::from_str(&request_json).unwrap();
+        let input_checksum = request[0]["snapshot"]["input_checksum"].as_str().unwrap();
+        fs.write_string(
+            "/repo/review-result.json",
+            serde_json::json!({
+                "schema_version": 2,
+                "requirement_id": "root-review",
+                "input_checksum": input_checksum,
+                "grade": "A-",
+                "description": "The prior action is resolved and no current findings remain.",
+                "actions": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let third_result = review_result_runner("diff-v2");
+        let (result_code, result_out, result_err) = run_with_runner(
+            &["review", "complete", "--result", "review-result.json"],
+            &mut fs,
+            &third_result,
+        );
+        assert_eq!(result_code, ExitCode::SUCCESS);
+        assert_eq!(result_err, "");
+        assert!(result_out.contains("`root-review`: pass"));
         let state = load_state(&fs);
         let passed = &state.reviews["root-review"];
         assert_eq!(passed.status, OperationStatus::Pass);
-        assert!(passed.actions.is_empty());
-        assert_eq!(passed.attempts.len(), 2);
-        assert_eq!(passed.attempts[1].resolved_action_ids, vec!["REV-001"]);
+        assert_eq!(passed.actions.len(), 1);
+        assert_eq!(passed.actions[0].status, ReviewActionStatus::Resolved);
+        assert_eq!(passed.attempts.len(), 3);
+        assert_eq!(passed.attempts[2].resolved_action_ids, vec!["REV-001"]);
 
         let committed_status = FakeRunner::with_outcomes([
             successful_result("committed-head\n"),
@@ -2517,7 +2695,7 @@ minimum_grade = "A-"
 
         let new_request_runner = review_request_runner("diff-v3");
         let (request_code, _, request_err) =
-            run_with_runner(&["review"], &mut fs, &new_request_runner);
+            run_with_runner(&["review", "start"], &mut fs, &new_request_runner);
         assert_eq!(request_code, ExitCode::SUCCESS);
         assert_eq!(request_err, "");
         let mut pending_state = load_state(&fs);
@@ -2553,7 +2731,7 @@ minimum_grade = "A-"
         add_review_context(&mut fs);
 
         let (code, request_json, err) = run_with_runner(
-            &["review", "app/one.rs"],
+            &["review", "start", "--json", "app/one.rs"],
             &mut fs,
             &review_request_runner("diff-one"),
         );
@@ -2575,10 +2753,9 @@ minimum_grade = "A-"
         fs.write_string(
             "/repo/review-result.json",
             serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "root-review",
                 "input_checksum": checksum,
-                "status": "pass",
                 "grade": "A-",
                 "description": "The scoped review passes.",
                 "actions": []
@@ -2588,13 +2765,13 @@ minimum_grade = "A-"
         .unwrap();
 
         let (result_code, result_out, result_err) = run_with_runner(
-            &["review", "--result", "review-result.json"],
+            &["review", "complete", "--result", "review-result.json"],
             &mut fs,
             &review_result_runner("diff-one"),
         );
 
         assert_eq!(result_code, ExitCode::SUCCESS, "{result_err}");
-        assert!(result_out.contains("root-review: pass"));
+        assert!(result_out.contains("`root-review`: pass"));
         assert_eq!(
             load_state(&fs).reviews["root-review"].reviewed_paths,
             vec!["app/one.rs"]
@@ -2609,7 +2786,8 @@ minimum_grade = "A-"
             add_review_context(&mut fs);
             let runner = FakeRunner::successful("must not run");
 
-            let (code, out, err) = run_with_runner(&["review", requested], &mut fs, &runner);
+            let (code, out, err) =
+                run_with_runner(&["review", "start", requested], &mut fs, &runner);
 
             assert_eq!(code, ExitCode::from(2));
             assert_eq!(out, "");
@@ -2628,8 +2806,11 @@ minimum_grade = "A-"
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
         fs.add_file_with_contents("/repo/app/file.rs", "fn changed() {}\n");
         add_nested_review_contexts(&mut fs);
-        let (request_code, request_json, request_err) =
-            run_with_runner(&["review"], &mut fs, &two_review_request_runner());
+        let (request_code, request_json, request_err) = run_with_runner(
+            &["review", "start", "--json"],
+            &mut fs,
+            &two_review_request_runner(),
+        );
         assert_eq!(request_code, ExitCode::SUCCESS);
         assert_eq!(request_err, "");
         let requests: serde_json::Value = serde_json::from_str(&request_json).unwrap();
@@ -2648,18 +2829,16 @@ minimum_grade = "A-"
         fs.write_string(
             "/repo/review-results.json",
             serde_json::json!([{
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "root-review",
                 "input_checksum": checksum("root-review"),
-                "status": "pass",
                 "grade": "A-",
                 "description": "Root review passes.",
                 "actions": []
             }, {
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "app-review",
                 "input_checksum": "not-the-pending-checksum",
-                "status": "pass",
                 "grade": "A-",
                 "description": "This result is invalid.",
                 "actions": []
@@ -2669,7 +2848,7 @@ minimum_grade = "A-"
         .unwrap();
 
         let (code, out, err) = run_with_runner(
-            &["review", "--result", "review-results.json"],
+            &["review", "complete", "--result", "review-results.json"],
             &mut fs,
             &review_result_runner(""),
         );
@@ -2686,8 +2865,11 @@ minimum_grade = "A-"
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
         fs.add_file_with_contents("/repo/app/file.rs", "fn changed() {}\n");
         add_nested_review_contexts(&mut fs);
-        let (request_code, request_json, request_err) =
-            run_with_runner(&["review"], &mut fs, &two_review_request_runner());
+        let (request_code, request_json, request_err) = run_with_runner(
+            &["review", "start", "--json"],
+            &mut fs,
+            &two_review_request_runner(),
+        );
         assert_eq!(request_code, ExitCode::SUCCESS);
         assert_eq!(request_err, "");
         let requests: serde_json::Value = serde_json::from_str(&request_json).unwrap();
@@ -2702,18 +2884,16 @@ minimum_grade = "A-"
         fs.write_string(
             "/repo/review-results.json",
             serde_json::json!([{
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "root-review",
                 "input_checksum": checksum,
-                "status": "pass",
                 "grade": "A-",
                 "description": "First duplicate.",
                 "actions": []
             }, {
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "root-review",
                 "input_checksum": checksum,
-                "status": "pass",
                 "grade": "A-",
                 "description": "Second duplicate.",
                 "actions": []
@@ -2723,12 +2903,94 @@ minimum_grade = "A-"
         .unwrap();
         let before = load_state(&fs);
 
-        let (code, out, err) = run_with_fs(&["review", "--result", "review-results.json"], &mut fs);
+        let (code, out, err) = run_with_fs(
+            &["review", "complete", "--result", "review-results.json"],
+            &mut fs,
+        );
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
         assert!(err.contains("invalid review result; details were redacted"));
         assert_eq!(load_state(&fs), before);
+    }
+
+    #[test]
+    fn review_complete_assigns_work_global_task_ids_across_requirements() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["app/file.rs"]);
+        fs.add_file_with_contents("/repo/app/file.rs", "fn changed() {}\n");
+        add_nested_review_contexts(&mut fs);
+        let (request_code, request_json, request_err) = run_with_runner(
+            &["review", "start", "--json"],
+            &mut fs,
+            &two_review_request_runner(),
+        );
+        assert_eq!(request_code, ExitCode::SUCCESS);
+        assert_eq!(request_err, "");
+        let requests: serde_json::Value = serde_json::from_str(&request_json).unwrap();
+        let checksum = |id: &str| {
+            requests
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|request| request["requirement"]["requirement_id"] == id)
+                .unwrap()["snapshot"]["input_checksum"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        fs.write_string(
+            "/repo/review-results.json",
+            serde_json::json!([{
+                "schema_version": 2,
+                "requirement_id": "root-review",
+                "input_checksum": checksum("root-review"),
+                "grade": "B+",
+                "description": "Root finding.",
+                "actions": [{
+                    "prior_task_id": null,
+                    "title": "Root task",
+                    "rule_ids": ["ROOT-001"],
+                    "evidence": "app/file.rs:1: root evidence"
+                }]
+            }, {
+                "schema_version": 2,
+                "requirement_id": "app-review",
+                "input_checksum": checksum("app-review"),
+                "grade": "B+",
+                "description": "Application finding.",
+                "actions": [{
+                    "prior_task_id": null,
+                    "title": "Application task",
+                    "rule_ids": ["APP-001"],
+                    "evidence": "app/file.rs:1: application evidence"
+                }]
+            }])
+            .to_string(),
+        )
+        .unwrap();
+        let runner = FakeRunner::with_outcomes([
+            successful_result("abc123\n"),
+            successful_result(""),
+            successful_result(""),
+            successful_result("abc123\n"),
+            successful_result(""),
+            successful_result(""),
+        ]);
+
+        let (code, out, err) = run_with_runner(
+            &["review", "complete", "--result", "review-results.json"],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("`REV-001` open"));
+        assert!(out.contains("`REV-002` open"));
+        let state = load_state(&fs);
+        assert_eq!(state.reviews["root-review"].actions[0].id, "REV-001");
+        assert_eq!(state.reviews["app-review"].actions[0].id, "REV-002");
     }
 
     #[test]
@@ -3191,10 +3453,9 @@ signoffs = ["shared", "review"]
         fs.write_string(
             "/repo/review-result.json",
             serde_json::json!({
-                "schema_version": 1,
+                "schema_version": 2,
                 "requirement_id": "root-review",
                 "input_checksum": input_checksum,
-                "status": "pass",
                 "grade": "A-",
                 "description": "No current actions.",
                 "actions": []
@@ -3204,7 +3465,7 @@ signoffs = ["shared", "review"]
         .unwrap();
         let result_runner = review_result_runner("");
         let (result_code, _, result_err) = run_with_runner(
-            &["review", "--result", "review-result.json"],
+            &["review", "complete", "--result", "review-result.json"],
             &mut fs,
             &result_runner,
         );
@@ -3967,9 +4228,9 @@ references = []
     }
 
     fn add_nested_review_contexts(fs: &mut InMemoryFileSystem) {
-        for (path, purpose) in [
-            ("/repo/context.toml", "Repository"),
-            ("/repo/app/context.toml", "Application"),
+        for (path, purpose, rule_id) in [
+            ("/repo/context.toml", "Repository", "ROOT-001"),
+            ("/repo/app/context.toml", "Application", "APP-001"),
         ] {
             fs.write_string(
                 path,
@@ -3980,6 +4241,11 @@ purpose = "{purpose}"
 [[signoffs]]
 kind = "review"
 minimum_grade = "A-"
+
+[[rules]]
+id = "{rule_id}"
+text = "Review {purpose} behavior."
+references = []
 "#
                 ),
             )

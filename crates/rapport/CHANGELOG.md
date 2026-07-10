@@ -11,9 +11,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added typed build and review signoff declarations with inherited, folder-owned
   requirements and readable folder/kind workflow identities; build identities
   also include their target.
-- Added a host-neutral `rapport review` JSON request/result protocol with
-  adversarial instructions, resolved rules, grades, evidence-bearing actions,
-  exact input checksums, and local uncommitted-change support.
+- Added a host-neutral `rapport review start` / `rapport review complete`
+  protocol with Markdown-first requests, optional request JSON, structured
+  result JSON, adversarial instructions, resolved rules, grades,
+  evidence-bearing actions, exact input checksums, and local
+  uncommitted-change support.
+- Added `rapport work task address` and work-global review-task IDs with
+  `open -> addressed -> resolved` reconciliation across independent reviews.
 - Added structured build and review state, review attempt/action reconciliation,
   dynamic staleness reporting, and completion gates.
 - Added `rapport context signoff add`, `remove`, and `repair` commands that own
@@ -42,6 +46,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Made each declared review a comprehensive adversarial review with no target or
   profile; resolved context rules and instructions supply concerns such as
   security.
+- Changed review results to omit pass/fail and new-task IDs: Rapport assigns
+  `REV-###` IDs, applies the repository threshold, derives the result, and emits
+  Markdown guidance. Review prompts include the grading rubric but withhold the
+  passing threshold to avoid anchoring the reviewer.
+- Made Markdown multi-review requests define one ordered JSON result array, and
+  rejected result files stored inside reviewed content so repository-wide
+  reviews cannot invalidate themselves.
+- Replaced the unreleased single-command review protocol rather than retaining
+  an alias. Work state v2 loads with prior actions treated as open and saves as
+  v3, with duplicate reviewer-assigned IDs migrated to work-global IDs; pending
+  draft protocol-v1 requests must be restarted before submitting a protocol-v2
+  result.
 - Added redacted diagnostic formatting for build/review state, command output,
   resolved rules, proof snapshots, protocol errors, signoff requirements,
   attempts, and actions so captured output, repository-authored text, reviewer
@@ -55,12 +71,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   integration without consulting the legacy aggregate build fact.
 - Changed successful build guidance to request review only when a typed review
   applies; build-only work proceeds directly to integration.
-- Changed review requests to expose prior actions only in a final reconciliation
-  ledger, preserving independent findings and stable action IDs.
-- Changed explicit `rapport review <path...>` requests to scope shared review
-  paths, rules, instructions, and checksums to only the selected work, and
-  rejected parent traversal or ancestor widening for explicit build and review
-  paths.
+- Changed review requests to expose prior tasks only in a final reconciliation
+  ledger, preserving independent findings and stable Rapport task IDs.
+- Changed explicit `rapport review start <path...>` requests to scope shared
+  review paths, rules, instructions, and checksums to only the selected work,
+  and rejected parent traversal or ancestor widening for explicit build and
+  review paths.
 - Changed integration to re-evaluate exact local proof even when GitHub already
   reports a successful status, and included untracked file mode in snapshots.
 - Included empty untracked file paths and modes in local snapshot checksums,
