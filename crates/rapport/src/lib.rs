@@ -1308,6 +1308,30 @@ updated_at = "2026-07-07T23:00:00Z"
     }
 
     #[test]
+    fn work_complete_rejects_pending_signoffs() {
+        let mut fs = InMemoryFileSystem::default();
+        add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let mut state = load_state(&fs);
+        let mut signoff = WorkFact::new("pending");
+        signoff.required = vec![String::from("root-ci")];
+        signoff.pending = vec![String::from("root-ci")];
+        state.signoff = Some(signoff);
+        WorkStateStore::new(RapportPaths::new("/repo"))
+            .save(&mut fs, &state)
+            .unwrap();
+
+        let (code, out, err) = run_with_fs(
+            &["work", "complete", "--summary", "Not actually done"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("Required signoffs are still pending"));
+        assert_eq!(load_state(&fs).status, WorkStatus::Active);
+    }
+
+    #[test]
     fn work_complete_archives_integrated_work_and_clears_active_state() {
         let mut fs = InMemoryFileSystem::default();
         add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
@@ -1938,11 +1962,22 @@ signoffs = ["shared", "review"]
             Ok(successful_outcome("abc123\n")),
             Ok(successful_outcome("")),
             Ok(successful_outcome("")),
+            Ok(successful_outcome("[]")),
             Ok(successful_outcome(
                 "https://github.com/hedge-ops/rapport/pull/70\n",
             )),
             Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/resumable\n")),
+            Ok(successful_outcome(
+                r#"{"headRefOid":"abc123","headRefName":"work/resumable","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
+            )),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome("")),
             Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/resumable\n")),
+            Ok(successful_outcome(
+                r#"{"headRefOid":"abc123","headRefName":"work/resumable","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
+            )),
             Ok(successful_outcome("hedge-ops/rapport\n")),
             Ok(successful_outcome(r#"{"statuses":[]}"#)),
         ]);
@@ -1974,14 +2009,22 @@ signoffs = ["shared", "review"]
         assert_eq!(signoff.pending, vec!["root-ci"]);
 
         let second = FakeRunner::with_outcomes([
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
             Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/resumable\n")),
+            Ok(successful_outcome(
+                r#"{"headRefOid":"abc123","headRefName":"work/resumable","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
+            )),
             Ok(successful_outcome("hedge-ops/rapport\n")),
             Ok(successful_outcome(
                 r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
             )),
             Ok(successful_outcome("")),
             Ok(successful_outcome("")),
+            Ok(successful_outcome(
+                r#"{"statuses":[{"context":"signoff: root-ci","state":"success"}]}"#,
+            )),
         ]);
 
         let (second_code, second_out, second_err) =
@@ -1990,15 +2033,214 @@ signoffs = ["shared", "review"]
         assert_eq!(second_code, ExitCode::SUCCESS);
         assert_eq!(second_err, "");
         assert!(second_out.contains("passed `root-ci`"));
-        assert_eq!(second.calls()[4].0, CommandSpec::new("just", ["ci"]));
-        assert!(
-            second
-                .calls()
-                .iter()
-                .all(|(spec, _)| spec.args.first().is_none_or(|arg| arg != "status"))
-        );
+        assert_eq!(second.calls()[7].0, CommandSpec::new("just", ["ci"]));
         let completed = load_state(&fs);
         assert_eq!(completed.signoff.unwrap().status, "pass");
+    }
+
+    #[test]
+    fn integrate_refuses_to_sign_off_a_dirty_worktree() {
+        let mut fs = InMemoryFileSystem::default();
+        add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::successful(" M crates/rapport/src/lib.rs\n");
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("worktree must be completely clean"));
+        assert_eq!(
+            runner.calls(),
+            vec![(
+                CommandSpec::new("git", ["status", "--porcelain"]),
+                Utf8PathBuf::from("/repo")
+            )]
+        );
+    }
+
+    #[test]
+    fn integrate_resumes_publishing_and_reuses_existing_pr() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        record_publishing_integration(&mut fs, "work/resumable");
+        let pr_url = "https://github.com/hedge-ops/rapport/pull/70";
+        let pr_json = open_pr_json("work/resumable", false);
+        let runner = FakeRunner::with_outcomes([
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome(&format!(r#"[{{"url":"{pr_url}"}}]"#))),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/resumable\n")),
+            Ok(successful_outcome(&pr_json)),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/resumable\n")),
+            Ok(successful_outcome(&pr_json)),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome(r#"{"statuses":[]}"#)),
+            Ok(successful_outcome(r#"{"statuses":[]}"#)),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains(pr_url));
+        let calls = runner.calls();
+        assert!(
+            calls.iter().any(|(spec, _)| spec.program == "gh"
+                && spec.args.get(1).is_some_and(|arg| arg == "edit"))
+        );
+        assert!(!calls.iter().any(|(spec, _)| spec.program == "git"
+            && spec.args.first().is_some_and(|arg| arg == "commit")));
+        let state = load_state(&fs);
+        assert_eq!(state.integrate.unwrap().status, "pr_created");
+        assert_eq!(state.signoff.unwrap().status, "none");
+    }
+
+    #[test]
+    fn integrate_records_publishing_before_push_failure() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::with_outcomes([
+            Ok(successful_outcome(" M crates/rapport/src/lib.rs\n")),
+            Ok(successful_outcome("work/recover-push\n")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("")),
+            Ok(CommandOutcome {
+                success: false,
+                stdout: String::new(),
+                stderr: String::from("push rejected"),
+            }),
+        ]);
+
+        let (code, out, err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "Recover push",
+                "--message",
+                "Persist before remote side effects",
+            ],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("push rejected"));
+        let integration = load_state(&fs).integrate.unwrap();
+        assert_eq!(integration.status, "publishing");
+        assert_eq!(integration.branch.as_deref(), Some("work/recover-push"));
+        assert_eq!(integration.commit.as_deref(), Some("abc123"));
+        assert_eq!(
+            integration.message.as_deref(),
+            Some("Persist before remote side effects")
+        );
+    }
+
+    #[test]
+    fn integrate_rejects_closed_pr_on_resume() {
+        let mut fs = InMemoryFileSystem::default();
+        add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::with_outcomes([
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/issue-70-complete\n")),
+            Ok(successful_outcome(&pull_request_json(
+                "work/issue-70-complete",
+                "CLOSED",
+                false,
+            ))),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("signoff requires an open PR"));
+    }
+
+    #[test]
+    fn integrate_rejects_fork_pr_on_resume() {
+        let mut fs = InMemoryFileSystem::default();
+        add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let runner = FakeRunner::with_outcomes([
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/issue-70-complete\n")),
+            Ok(successful_outcome(&pull_request_json(
+                "work/issue-70-complete",
+                "OPEN",
+                true,
+            ))),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("fork pull requests are not supported"));
+    }
+
+    #[test]
+    fn integrate_rejects_multiple_prs_for_publishing_branch() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        record_publishing_integration(&mut fs, "work/ambiguous");
+        let runner = FakeRunner::with_outcomes([
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome(
+                r#"[{"url":"https://github.com/hedge-ops/rapport/pull/70"},{"url":"https://github.com/hedge-ops/rapport/pull/71"}]"#,
+            )),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("multiple PRs per branch are unsupported"));
+        assert_eq!(load_state(&fs).integrate.unwrap().status, "publishing");
+    }
+
+    #[test]
+    fn integrate_rejects_unexpected_status_added_during_signoff() {
+        let mut fs = InMemoryFileSystem::default();
+        add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        add_root_signoff(&mut fs, "ci");
+        let pr_json = open_pr_json("work/issue-70-complete", false);
+        let runner = FakeRunner::with_outcomes([
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/issue-70-complete\n")),
+            Ok(successful_outcome(&pr_json)),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome(
+                r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
+            )),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome(
+                r#"{"statuses":[{"context":"signoff: root-ci","state":"success"},{"context":"signoff: unexpected","state":"pending"}]}"#,
+            )),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("unexpected [signoff: unexpected]"));
+        assert_eq!(load_state(&fs).signoff.unwrap().status, "pending");
     }
 
     #[test]
@@ -2227,10 +2469,47 @@ summary = "Issue #70"
 commit = "abc123"
 branch = "work/issue-70-complete"
 pr_url = "https://github.com/hedge-ops/rapport/pull/70"
+
+[signoff]
+status = "none"
+at = "2026-07-07T23:00:00Z"
+summary = "no signoffs configured"
 "#
             ),
         )
         .unwrap();
+    }
+
+    fn record_publishing_integration(fs: &mut InMemoryFileSystem, branch: &str) {
+        let mut state = load_state(fs);
+        let mut integration = WorkFact::new("publishing").summary("Resume publication");
+        integration.message = Some(String::from("Persisted PR body"));
+        integration.branch = Some(branch.to_string());
+        integration.commit = Some(String::from("abc123"));
+        state.integrate = Some(integration);
+        state.signoff = None;
+        WorkStateStore::new(RapportPaths::new("/repo"))
+            .save(fs, &state)
+            .unwrap();
+    }
+
+    fn add_root_signoff(fs: &mut InMemoryFileSystem, target: &str) {
+        fs.write_string(
+            "/repo/context.toml",
+            format!("version = 1\npurpose = \"Repository\"\nsignoffs = [\"{target}\"]\n"),
+        )
+        .unwrap();
+        add_generated_signoff_contract(fs, "/repo", &[target]);
+    }
+
+    fn open_pr_json(branch: &str, is_cross_repository: bool) -> String {
+        pull_request_json(branch, "OPEN", is_cross_repository)
+    }
+
+    fn pull_request_json(branch: &str, state: &str, is_cross_repository: bool) -> String {
+        format!(
+            r#"{{"headRefOid":"abc123","headRefName":"{branch}","isCrossRepository":{is_cross_repository},"state":"{state}","url":"https://github.com/hedge-ops/rapport/pull/70"}}"#
+        )
     }
 
     fn successful_integrate_runner() -> FakeRunner {
@@ -2246,11 +2525,22 @@ pr_url = "https://github.com/hedge-ops/rapport/pull/70"
             Ok(successful_outcome("abc123\n")),
             Ok(successful_outcome("")),
             Ok(successful_outcome("")),
+            Ok(successful_outcome("[]")),
             Ok(successful_outcome(
                 "https://github.com/hedge-ops/rapport/pull/70\n",
             )),
             Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/issue-57-integrate\n")),
+            Ok(successful_outcome(
+                r#"{"headRefOid":"abc123","headRefName":"work/issue-57-integrate","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
+            )),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome("")),
             Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("work/issue-57-integrate\n")),
+            Ok(successful_outcome(
+                r#"{"headRefOid":"abc123","headRefName":"work/issue-57-integrate","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
+            )),
             Ok(successful_outcome("hedge-ops/rapport\n")),
             Ok(successful_outcome(
                 r#"{"statuses":[{"context":"signoff: root-shared","state":"pending"},{"context":"signoff: root-review","state":"pending"}]}"#,
@@ -2259,6 +2549,9 @@ pr_url = "https://github.com/hedge-ops/rapport/pull/70"
             Ok(successful_outcome("")),
             Ok(successful_outcome("")),
             Ok(successful_outcome("")),
+            Ok(successful_outcome(
+                r#"{"statuses":[{"context":"signoff: root-shared","state":"success"},{"context":"signoff: root-review","state":"success"}]}"#,
+            )),
         ])
     }
 

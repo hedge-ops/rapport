@@ -4,8 +4,6 @@ name: "Rapport signoff: root-ci"
 
 on:
   pull_request:
-    branches:
-      - "*"
     paths:
       - "**"
       - ".github/workflows/rapport-root-ci.yml"
@@ -16,6 +14,7 @@ concurrency:
 
 jobs:
   signoff:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/rapport-signoff.yml
     with:
       target: root-ci

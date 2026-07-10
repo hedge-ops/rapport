@@ -120,7 +120,7 @@ impl SignoffRequest {
             format!("      - \"{}/**\"\n", self.folder)
         };
         format!(
-            "name: \"Rapport signoff: {qualified}\"\n\n# Rapport owns this file byte-for-byte. Run `rapport context signoff repair {folder} {target}` to restore it.\n\non:\n  pull_request:\n    branches:\n      - \"*\"\n    paths:\n{paths}      - \"{workflow}\"\n\nconcurrency:\n  group: ${{{{ github.workflow }}}}-${{{{ github.event.pull_request.number || github.ref }}}}\n  cancel-in-progress: true\n\njobs:\n  signoff:\n    uses: ./.github/workflows/rapport-signoff.yml\n    with:\n      target: {qualified}\n    secrets: inherit\n",
+            "name: \"Rapport signoff: {qualified}\"\n\n# Rapport owns this file byte-for-byte. Run `rapport context signoff repair {folder} {target}` to restore it.\n\non:\n  pull_request:\n    paths:\n{paths}      - \"{workflow}\"\n\nconcurrency:\n  group: ${{{{ github.workflow }}}}-${{{{ github.event.pull_request.number || github.ref }}}}\n  cancel-in-progress: true\n\njobs:\n  signoff:\n    if: github.event.pull_request.head.repo.full_name == github.repository\n    uses: ./.github/workflows/rapport-signoff.yml\n    with:\n      target: {qualified}\n    secrets: inherit\n",
             qualified = self.qualified_target,
             folder = self.folder,
             target = self.target,
@@ -322,6 +322,11 @@ mod tests {
         let rendered = request.render(Utf8Path::new("/repo"));
         assert!(rendered.contains("target: app-apple-regression-ios"));
         assert!(rendered.contains("- \"app/apple/**\""));
+        assert!(!rendered.contains("branches:"));
+        assert!(
+            rendered
+                .contains("if: github.event.pull_request.head.repo.full_name == github.repository")
+        );
     }
 
     #[test]

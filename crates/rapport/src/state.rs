@@ -71,6 +71,8 @@ pub struct WorkFact {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
@@ -93,6 +95,7 @@ impl WorkFact {
             status: status.into(),
             at: None,
             summary: None,
+            message: None,
             commit: None,
             branch: None,
             pr_url: None,

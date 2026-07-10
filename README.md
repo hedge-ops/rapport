@@ -92,12 +92,13 @@ the declaring folder on the local host and posts the SHA-bound result.
 
 `rapport doctor` compares generated workflows byte-for-byte with their context
 declarations. `rapport integrate` runs the same validation before committing or
-opening a PR and unions inherited targets for every active work path. Once the
-PR exists, integration records its branch, commit, URL, and pending signoffs in
-current work before attempting proof. It rejects missing or unexpected signoff
-statuses, runs each requested Just target locally, and posts success or failure
-to the exact PR head SHA. A failed attempt leaves the PR recorded, so a bare
-`rapport integrate` retries signoff on that same PR without creating another.
+opening a PR and unions inherited targets for every active work path. After
+committing, it records a recoverable publication intent before pushing, then
+records the open same-repository PR and its pending signoffs before attempting
+proof. Signoff requires a completely clean worktree, rejects forks and missing
+or unexpected statuses, runs each requested Just target locally, and reconciles
+the final SHA-bound status set. A failed attempt leaves durable state, so a bare
+`rapport integrate` resumes publication or signoff without another commit or PR.
 
 ## Later Phases
 
