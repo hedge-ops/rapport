@@ -1952,35 +1952,27 @@ signoffs = ["shared", "review"]
         )
         .unwrap();
         add_generated_signoff_contract(&mut fs, "/repo", &["ci"]);
-        let first = FakeRunner::with_outcomes([
-            Ok(successful_outcome(
-                " M crates/rapport/src/lib.rs\n M .rapport/work.toml\n",
-            )),
-            Ok(successful_outcome("work/resumable\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("[]")),
-            Ok(successful_outcome(
-                "https://github.com/hedge-ops/rapport/pull/70\n",
-            )),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/resumable\n")),
-            Ok(successful_outcome(
-                r#"{"headRefOid":"abc123","headRefName":"work/resumable","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
-            )),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/resumable\n")),
-            Ok(successful_outcome(
-                r#"{"headRefOid":"abc123","headRefName":"work/resumable","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
-            )),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome(r#"{"statuses":[]}"#)),
+        let branch = "work/resumable";
+        let mut first_outcomes = vec![
+            successful_result(" M crates/rapport/src/lib.rs\n M .rapport/work.toml\n"),
+            successful_result(&format!("{branch}\n")),
+            successful_result("base123\n"),
+            successful_result(""),
+            successful_result(""),
+            successful_result("abc123\n"),
+            successful_result(""),
+        ];
+        push_local_identity(&mut first_outcomes, branch);
+        first_outcomes.extend([
+            successful_result(""),
+            successful_result("[]"),
+            successful_result("https://github.com/hedge-ops/rapport/pull/70\n"),
         ]);
+        push_pr_identity(&mut first_outcomes, branch);
+        first_outcomes.push(successful_result(""));
+        push_pr_identity(&mut first_outcomes, branch);
+        first_outcomes.push(successful_result(r#"{"statuses":[]}"#));
+        let first = FakeRunner::with_outcomes(first_outcomes);
 
         let (first_code, _, first_err) = run_with_runner(
             &[
@@ -2008,24 +2000,25 @@ signoffs = ["shared", "review"]
         assert_eq!(signoff.status, "pending");
         assert_eq!(signoff.pending, vec!["root-ci"]);
 
-        let second = FakeRunner::with_outcomes([
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/resumable\n")),
-            Ok(successful_outcome(
-                r#"{"headRefOid":"abc123","headRefName":"work/resumable","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
-            )),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome(
-                r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
-            )),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome(
-                r#"{"statuses":[{"context":"signoff: root-ci","state":"success"}]}"#,
-            )),
-        ]);
+        let mut second_outcomes = vec![successful_result("")];
+        push_pr_identity(&mut second_outcomes, branch);
+        second_outcomes.push(successful_result(""));
+        push_pr_identity(&mut second_outcomes, branch);
+        second_outcomes.push(successful_result(
+            r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
+        ));
+        second_outcomes.push(successful_result(""));
+        push_local_identity(&mut second_outcomes, branch);
+        second_outcomes.push(successful_result(""));
+        second_outcomes.push(successful_result(""));
+        push_local_identity(&mut second_outcomes, branch);
+        second_outcomes.push(successful_result(""));
+        second_outcomes.push(successful_result(""));
+        push_local_identity(&mut second_outcomes, branch);
+        second_outcomes.push(successful_result(
+            r#"{"statuses":[{"context":"signoff: root-ci","state":"success"}]}"#,
+        ));
+        let second = FakeRunner::with_outcomes(second_outcomes);
 
         let (second_code, second_out, second_err) =
             run_with_runner(&["integrate"], &mut fs, &second);
@@ -2033,7 +2026,12 @@ signoffs = ["shared", "review"]
         assert_eq!(second_code, ExitCode::SUCCESS);
         assert_eq!(second_err, "");
         assert!(second_out.contains("passed `root-ci`"));
-        assert_eq!(second.calls()[7].0, CommandSpec::new("just", ["ci"]));
+        assert!(
+            second
+                .calls()
+                .iter()
+                .any(|(spec, _)| spec == &CommandSpec::new("just", ["ci"]))
+        );
         let completed = load_state(&fs);
         assert_eq!(completed.signoff.unwrap().status, "pass");
     }
@@ -2059,30 +2057,57 @@ signoffs = ["shared", "review"]
     }
 
     #[test]
+    fn integrate_refuses_success_when_target_dirties_worktree() {
+        let mut fs = InMemoryFileSystem::default();
+        add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        add_root_signoff(&mut fs, "ci");
+        let branch = "work/issue-70-complete";
+        let mut outcomes = vec![successful_result("")];
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(""));
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(
+            r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
+        ));
+        outcomes.push(successful_result(""));
+        push_local_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(""));
+        outcomes.push(successful_result(" M crates/rapport/src/lib.rs\n"));
+        outcomes.push(successful_result(""));
+        let runner = FakeRunner::with_outcomes(outcomes);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("worktree must be completely clean"));
+        let post = runner.calls().last().unwrap().0.clone();
+        assert!(post.args.iter().any(|arg| arg == "state=failure"));
+        assert!(!post.args.iter().any(|arg| arg == "state=success"));
+    }
+
+    #[test]
     fn integrate_resumes_publishing_and_reuses_existing_pr() {
         let mut fs = InMemoryFileSystem::default();
         add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
         record_publishing_integration(&mut fs, "work/resumable");
         let pr_url = "https://github.com/hedge-ops/rapport/pull/70";
-        let pr_json = open_pr_json("work/resumable", false);
-        let runner = FakeRunner::with_outcomes([
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome(&format!(r#"[{{"url":"{pr_url}"}}]"#))),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/resumable\n")),
-            Ok(successful_outcome(&pr_json)),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/resumable\n")),
-            Ok(successful_outcome(&pr_json)),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome(r#"{"statuses":[]}"#)),
-            Ok(successful_outcome(r#"{"statuses":[]}"#)),
+        let branch = "work/resumable";
+        let mut outcomes = vec![successful_result(""), successful_result("")];
+        push_local_identity(&mut outcomes, branch);
+        outcomes.extend([
+            successful_result(""),
+            successful_result(&format!(r#"[{{"url":"{pr_url}"}}]"#)),
+            successful_result(""),
         ]);
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(""));
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(r#"{"statuses":[]}"#));
+        outcomes.push(successful_result(""));
+        push_local_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(r#"{"statuses":[]}"#));
+        let runner = FakeRunner::with_outcomes(outcomes);
 
         let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
 
@@ -2102,22 +2127,81 @@ signoffs = ["shared", "review"]
     }
 
     #[test]
+    fn integrate_validates_publishing_identity_before_push() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        record_publishing_integration(&mut fs, "work/resumable");
+        let runner = FakeRunner::with_outcomes([
+            successful_result(""),
+            successful_result(""),
+            successful_result("different123\n"),
+            successful_result("work/resumable\n"),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("does not match integrated commit"));
+        assert!(
+            !runner
+                .calls()
+                .iter()
+                .any(|(spec, _)| spec.args.first().is_some_and(|arg| arg == "push"))
+        );
+    }
+
+    #[test]
+    fn integrate_recovers_commit_created_before_publication_was_saved() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        record_commit_intent(&mut fs, "work/recover-commit");
+        let mut outcomes = vec![
+            successful_result("work/recover-commit\n"),
+            successful_result("abc123\n"),
+            successful_result(""),
+            successful_result("base123\n"),
+            successful_result("Recover commit\n\nPersist before commit"),
+            successful_result(""),
+        ];
+        push_local_identity(&mut outcomes, "work/recover-commit");
+        outcomes.push(Ok(CommandOutcome {
+            success: false,
+            stdout: String::new(),
+            stderr: String::from("push rejected"),
+        }));
+        let runner = FakeRunner::with_outcomes(outcomes);
+
+        let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("push rejected"));
+        let integration = load_state(&fs).integrate.unwrap();
+        assert_eq!(integration.status, "publishing");
+        assert_eq!(integration.commit.as_deref(), Some("abc123"));
+    }
+
+    #[test]
     fn integrate_records_publishing_before_push_failure() {
         let mut fs = InMemoryFileSystem::default();
         add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
-        let runner = FakeRunner::with_outcomes([
-            Ok(successful_outcome(" M crates/rapport/src/lib.rs\n")),
-            Ok(successful_outcome("work/recover-push\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("")),
-            Ok(CommandOutcome {
-                success: false,
-                stdout: String::new(),
-                stderr: String::from("push rejected"),
-            }),
-        ]);
+        let mut outcomes = vec![
+            successful_result(" M crates/rapport/src/lib.rs\n"),
+            successful_result("work/recover-push\n"),
+            successful_result("base123\n"),
+            successful_result(""),
+            successful_result(""),
+            successful_result("abc123\n"),
+            successful_result(""),
+        ];
+        push_local_identity(&mut outcomes, "work/recover-push");
+        outcomes.push(Ok(CommandOutcome {
+            success: false,
+            stdout: String::new(),
+            stderr: String::from("push rejected"),
+        }));
+        let runner = FakeRunner::with_outcomes(outcomes);
 
         let (code, out, err) = run_with_runner(
             &[
@@ -2148,8 +2232,12 @@ signoffs = ["shared", "review"]
     fn integrate_rejects_closed_pr_on_resume() {
         let mut fs = InMemoryFileSystem::default();
         add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        let mut state = load_state(&fs);
+        state.signoff = Some(WorkFact::new("pass"));
+        WorkStateStore::new(RapportPaths::new("/repo"))
+            .save(&mut fs, &state)
+            .unwrap();
         let runner = FakeRunner::with_outcomes([
-            Ok(successful_outcome("")),
             Ok(successful_outcome("")),
             Ok(successful_outcome("abc123\n")),
             Ok(successful_outcome("work/issue-70-complete\n")),
@@ -2165,6 +2253,7 @@ signoffs = ["shared", "review"]
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
         assert!(err.contains("signoff requires an open PR"));
+        assert_eq!(load_state(&fs).signoff.unwrap().status, "pass");
     }
 
     #[test]
@@ -2172,7 +2261,6 @@ signoffs = ["shared", "review"]
         let mut fs = InMemoryFileSystem::default();
         add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
         let runner = FakeRunner::with_outcomes([
-            Ok(successful_outcome("")),
             Ok(successful_outcome("")),
             Ok(successful_outcome("abc123\n")),
             Ok(successful_outcome("work/issue-70-complete\n")),
@@ -2195,14 +2283,15 @@ signoffs = ["shared", "review"]
         let mut fs = InMemoryFileSystem::default();
         add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
         record_publishing_integration(&mut fs, "work/ambiguous");
-        let runner = FakeRunner::with_outcomes([
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome(
+        let mut outcomes = vec![successful_result(""), successful_result("")];
+        push_local_identity(&mut outcomes, "work/ambiguous");
+        outcomes.extend([
+            successful_result(""),
+            successful_result(
                 r#"[{"url":"https://github.com/hedge-ops/rapport/pull/70"},{"url":"https://github.com/hedge-ops/rapport/pull/71"}]"#,
-            )),
+            ),
         ]);
+        let runner = FakeRunner::with_outcomes(outcomes);
 
         let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
 
@@ -2217,23 +2306,26 @@ signoffs = ["shared", "review"]
         let mut fs = InMemoryFileSystem::default();
         add_integrated_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
         add_root_signoff(&mut fs, "ci");
-        let pr_json = open_pr_json("work/issue-70-complete", false);
-        let runner = FakeRunner::with_outcomes([
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/issue-70-complete\n")),
-            Ok(successful_outcome(&pr_json)),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome(
-                r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
-            )),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome(
+        let branch = "work/issue-70-complete";
+        let mut outcomes = vec![successful_result("")];
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(""));
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(
+            r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
+        ));
+        outcomes.push(successful_result(""));
+        push_local_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(""));
+        outcomes.push(successful_result(""));
+        push_local_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(""));
+        outcomes.push(successful_result(""));
+        push_local_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(
                 r#"{"statuses":[{"context":"signoff: root-ci","state":"success"},{"context":"signoff: unexpected","state":"pending"}]}"#,
-            )),
-        ]);
+        ));
+        let runner = FakeRunner::with_outcomes(outcomes);
 
         let (code, out, err) = run_with_runner(&["integrate"], &mut fs, &runner);
 
@@ -2493,6 +2585,19 @@ summary = "no signoffs configured"
             .unwrap();
     }
 
+    fn record_commit_intent(fs: &mut InMemoryFileSystem, branch: &str) {
+        let mut state = load_state(fs);
+        let mut integration = WorkFact::new("committing").summary("Recover commit");
+        integration.message = Some(String::from("Persist before commit"));
+        integration.branch = Some(branch.to_string());
+        integration.commit = Some(String::from("base123"));
+        state.integrate = Some(integration);
+        state.signoff = None;
+        WorkStateStore::new(RapportPaths::new("/repo"))
+            .save(fs, &state)
+            .unwrap();
+    }
+
     fn add_root_signoff(fs: &mut InMemoryFileSystem, target: &str) {
         fs.write_string(
             "/repo/context.toml",
@@ -2512,47 +2617,64 @@ summary = "no signoffs configured"
         )
     }
 
+    type FakeOutcome = io::Result<CommandOutcome>;
+
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "test helper builds io::Result queues consumed by the fake runner"
+    )]
+    fn successful_result(stdout: &str) -> FakeOutcome {
+        Ok(successful_outcome(stdout))
+    }
+
+    fn push_local_identity(outcomes: &mut Vec<FakeOutcome>, branch: &str) {
+        outcomes.push(successful_result("abc123\n"));
+        outcomes.push(successful_result(&format!("{branch}\n")));
+    }
+
+    fn push_pr_identity(outcomes: &mut Vec<FakeOutcome>, branch: &str) {
+        push_local_identity(outcomes, branch);
+        outcomes.push(successful_result(&open_pr_json(branch, false)));
+        outcomes.push(successful_result("hedge-ops/rapport\n"));
+    }
+
     fn successful_integrate_runner() -> FakeRunner {
-        FakeRunner::with_outcomes([
-            Ok(successful_outcome(
-                " M crates/rapport/src/lib.rs\n M .rapport/work.toml\n",
-            )),
-            Ok(successful_outcome("work/issue-57-integrate\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome(
-                "[work/issue-57-integrate abc123] PW-356\n",
-            )),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("[]")),
-            Ok(successful_outcome(
-                "https://github.com/hedge-ops/rapport/pull/70\n",
-            )),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/issue-57-integrate\n")),
-            Ok(successful_outcome(
-                r#"{"headRefOid":"abc123","headRefName":"work/issue-57-integrate","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
-            )),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("abc123\n")),
-            Ok(successful_outcome("work/issue-57-integrate\n")),
-            Ok(successful_outcome(
-                r#"{"headRefOid":"abc123","headRefName":"work/issue-57-integrate","isCrossRepository":false,"state":"OPEN","url":"https://github.com/hedge-ops/rapport/pull/70"}"#,
-            )),
-            Ok(successful_outcome("hedge-ops/rapport\n")),
-            Ok(successful_outcome(
+        let branch = "work/issue-57-integrate";
+        let mut outcomes = vec![
+            successful_result(" M crates/rapport/src/lib.rs\n M .rapport/work.toml\n"),
+            successful_result(&format!("{branch}\n")),
+            successful_result("base123\n"),
+            successful_result(""),
+            successful_result("[work/issue-57-integrate abc123] PW-356\n"),
+            successful_result("abc123\n"),
+            successful_result(""),
+        ];
+        push_local_identity(&mut outcomes, branch);
+        outcomes.extend([
+            successful_result(""),
+            successful_result("[]"),
+            successful_result("https://github.com/hedge-ops/rapport/pull/70\n"),
+        ]);
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(""));
+        push_pr_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(
                 r#"{"statuses":[{"context":"signoff: root-shared","state":"pending"},{"context":"signoff: root-review","state":"pending"}]}"#,
-            )),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome("")),
-            Ok(successful_outcome(
+        ));
+        for _target in ["shared", "review"] {
+            outcomes.push(successful_result(""));
+            push_local_identity(&mut outcomes, branch);
+            outcomes.push(successful_result(""));
+            outcomes.push(successful_result(""));
+            push_local_identity(&mut outcomes, branch);
+            outcomes.push(successful_result(""));
+        }
+        outcomes.push(successful_result(""));
+        push_local_identity(&mut outcomes, branch);
+        outcomes.push(successful_result(
                 r#"{"statuses":[{"context":"signoff: root-shared","state":"success"},{"context":"signoff: root-review","state":"success"}]}"#,
-            )),
-        ])
+        ));
+        FakeRunner::with_outcomes(outcomes)
     }
 
     fn successful_outcome(stdout: &str) -> CommandOutcome {

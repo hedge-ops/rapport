@@ -21,9 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   statuses. A later bare `rapport integrate` resumes signoff on the recorded PR.
 - Changed PR integration to push its commit and update an existing open PR for
   the branch instead of attempting to create a duplicate.
-- Made publication recoverable by persisting its branch, commit, summary, and
-  message before remote side effects. Resumed integration rejects dirty trees,
-  closed or mismatched PRs, forks, ambiguous branch PRs, and late status drift.
+- Made integration recoverable by persisting intent before committing and
+  publication state before remote side effects. Resumed integration rejects
+  dirty trees, closed or mismatched PRs, forks, ambiguous branch PRs, target
+  mutations, and late status drift.
 - Changed work completion to require signoffs to pass, or to record that none
   were required.
 - Changed generated request workflows to match every base branch and skip fork

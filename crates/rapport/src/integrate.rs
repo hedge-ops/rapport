@@ -63,6 +63,14 @@ where
         return CommandResult::failure();
     }
 
+    if let Some(intent) = RecordedCommitIntent::from_state(&state) {
+        let resolved = match evaluate_signoffs(arguments, context, &state.paths) {
+            Ok(resolved) => resolved,
+            Err(result) => return result,
+        };
+        return resume_commit(arguments, context, store, &mut state, &intent, &resolved);
+    }
+
     if let Some(publication) = RecordedPublication::from_state(&state) {
         if let Err(result) = require_clean_worktree(context) {
             return result;
@@ -109,7 +117,30 @@ where
         Ok(resolved) => resolved,
         Err(result) => return result,
     };
+    start_new_integration(
+        arguments,
+        context,
+        store,
+        &mut state,
+        request,
+        &resolved_signoffs,
+    )
+}
 
+fn start_new_integration<F, C, O, E>(
+    arguments: &[String],
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+    request: IntegrationRequest<'_>,
+    resolved_signoffs: &ResolvedSignoffs,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
     if let Err(error) = record_event(
         "integrate start",
         arguments.to_owned(),
@@ -120,7 +151,7 @@ where
         return CommandResult::failure();
     }
 
-    let inspection = match inspect_active_changes(arguments, context, &state) {
+    let inspection = match inspect_active_changes(arguments, context, state) {
         Ok(inspection) => inspection,
         Err(result) => return result,
     };
@@ -128,16 +159,22 @@ where
         Ok(branch) => branch,
         Err(result) => return result,
     };
+    let base_commit = match current_head(context) {
+        Ok(commit) => commit,
+        Err(result) => return result,
+    };
+    let intent = RecordedCommitIntent {
+        summary: request.summary.to_string(),
+        message: request.message.to_string(),
+        branch: branch.clone(),
+        base_commit,
+    };
+    if let Err(result) = save_commit_intent(context, store, state, &intent) {
+        return result;
+    }
 
-    let commit = match commit_active_changes(
-        arguments,
-        context,
-        store,
-        &mut state,
-        request,
-        &branch,
-        &inspection.commit_paths,
-    ) {
+    let commit = match commit_active_changes(arguments, context, request, &inspection.commit_paths)
+    {
         Ok(commit) => commit,
         Err(result) => return result,
     };
@@ -148,16 +185,16 @@ where
         branch,
         commit,
     };
-    if let Err(result) = save_publication(context, store, &mut state, &publication) {
+    if let Err(result) = save_publication(context, store, state, &publication) {
         return result;
     }
     publish_and_sign(
         arguments,
         context,
         store,
-        &mut state,
+        state,
         &publication,
-        &resolved_signoffs,
+        resolved_signoffs,
     )
 }
 
@@ -185,6 +222,36 @@ struct RecordedIntegration {
     branch: String,
     commit: String,
     pr_url: String,
+}
+
+#[derive(Debug, Clone)]
+struct RecordedCommitIntent {
+    summary: String,
+    message: String,
+    branch: String,
+    base_commit: String,
+}
+
+impl RecordedCommitIntent {
+    fn from_state(state: &WorkState) -> Option<Self> {
+        let fact = state.integrate.as_ref()?;
+        if fact.status != "committing" {
+            return None;
+        }
+        Some(Self {
+            summary: fact.summary.clone()?,
+            message: fact.message.clone()?,
+            branch: fact.branch.clone()?,
+            base_commit: fact.commit.clone()?,
+        })
+    }
+
+    fn request(&self) -> IntegrationRequest<'_> {
+        IntegrationRequest {
+            summary: &self.summary,
+            message: &self.message,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -327,13 +394,40 @@ where
     }
 }
 
+fn current_head<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> Result<String, CommandResult>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    match run_step(context, &CommandSpec::new("git", ["rev-parse", "HEAD"])) {
+        Ok(outcome) if outcome.success => Ok(outcome.stdout.trim().to_string()),
+        Ok(outcome) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_command_failure("git rev-parse HEAD", &outcome)
+            );
+            Err(CommandResult::failure())
+        }
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_command_invoke_error("git rev-parse HEAD", &error)
+            );
+            Err(CommandResult::failure())
+        }
+    }
+}
+
 fn commit_active_changes<F, C, O, E>(
     arguments: &[String],
     context: &mut CommandContext<'_, F, C, O, E>,
-    store: &WorkStateStore,
-    state: &mut WorkState,
     request: IntegrationRequest<'_>,
-    branch: &str,
     commit_paths: &[String],
 ) -> Result<String, CommandResult>
 where
@@ -358,12 +452,6 @@ where
                 arguments.to_owned(),
                 context,
                 CommandResult::failure(),
-            );
-            record_failed_integration(
-                context,
-                store,
-                state,
-                FailedIntegration::new("commit_failed", request.summary).branch(branch),
             );
             let _ = writeln!(context.err, "{}", render_commit_error(&error));
             Err(CommandResult::failure())
@@ -406,6 +494,98 @@ where
     }
 }
 
+fn resume_commit<F, C, O, E>(
+    arguments: &[String],
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+    intent: &RecordedCommitIntent,
+    resolved: &ResolvedSignoffs,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let branch = match current_branch(context) {
+        Ok(branch) => branch,
+        Err(result) => return result,
+    };
+    if branch != intent.branch {
+        let error = SignoffError::Execution(format!(
+            "local branch `{branch}` does not match committing branch `{}`",
+            intent.branch
+        ));
+        let _ = writeln!(context.err, "{}", render_signoff_error(&error));
+        return CommandResult::failure();
+    }
+    let head = match current_head(context) {
+        Ok(head) => head,
+        Err(result) => return result,
+    };
+    let commit = if head == intent.base_commit {
+        let inspection = match inspect_active_changes(arguments, context, state) {
+            Ok(inspection) => inspection,
+            Err(result) => return result,
+        };
+        match commit_active_changes(
+            arguments,
+            context,
+            intent.request(),
+            &inspection.commit_paths,
+        ) {
+            Ok(commit) => commit,
+            Err(result) => return result,
+        }
+    } else {
+        if let Err(result) = require_clean_worktree(context) {
+            return result;
+        }
+        let parent = match signoff_stdout(
+            context,
+            &CommandSpec::new("git", ["rev-parse", "HEAD^"]),
+            "git rev-parse HEAD^",
+        ) {
+            Ok(parent) => parent,
+            Err(error) => {
+                let _ = writeln!(context.err, "{}", render_signoff_error(&error));
+                return CommandResult::failure();
+            }
+        };
+        let message = match signoff_stdout(
+            context,
+            &CommandSpec::new("git", ["log", "-1", "--format=%s%n%n%b"]),
+            "git log -1",
+        ) {
+            Ok(message) => message,
+            Err(error) => {
+                let _ = writeln!(context.err, "{}", render_signoff_error(&error));
+                return CommandResult::failure();
+            }
+        };
+        let expected_message = format!("{}\n\n{}", intent.summary, intent.message);
+        if parent != intent.base_commit || message != expected_message {
+            let error = SignoffError::Execution(String::from(
+                "HEAD does not match the single commit described by the saved integration intent",
+            ));
+            let _ = writeln!(context.err, "{}", render_signoff_error(&error));
+            return CommandResult::failure();
+        }
+        head
+    };
+    let publication = RecordedPublication {
+        summary: intent.summary.clone(),
+        message: intent.message.clone(),
+        branch,
+        commit,
+    };
+    if let Err(result) = save_publication(context, store, state, &publication) {
+        return result;
+    }
+    publish_and_sign(arguments, context, store, state, &publication, resolved)
+}
+
 fn publish_and_sign<F, C, O, E>(
     arguments: &[String],
     context: &mut CommandContext<'_, F, C, O, E>,
@@ -422,6 +602,10 @@ where
 {
     if let Err(result) = require_clean_worktree(context) {
         return result;
+    }
+    if let Err(error) = validate_local_identity(context, &publication.branch, &publication.commit) {
+        let _ = writeln!(context.err, "{}", render_signoff_error(&error));
+        return CommandResult::failure();
     }
     let body = pr_body(
         state,
@@ -491,6 +675,10 @@ where
     O: Write,
     E: Write,
 {
+    if let Err(error) = validate_pr_identity(context, integration) {
+        let _ = writeln!(context.err, "{}", render_signoff_error(&error));
+        return CommandResult::failure();
+    }
     if let Err(result) = save_pending_signoffs(context, store, state, &resolved.report) {
         return result;
     }
@@ -531,6 +719,38 @@ where
     };
     record_best_effort("integrate signoff", arguments.to_owned(), context, result);
     save_integration_result(context, store, state, integration, &report)
+}
+
+fn save_commit_intent<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+    intent: &RecordedCommitIntent,
+) -> Result<(), CommandResult>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let now = context.clock.now_rfc3339();
+    let mut fact = integration_fact(
+        "committing",
+        &now,
+        &intent.summary,
+        &intent.branch,
+        &intent.base_commit,
+        "",
+    );
+    fact.pr_url = None;
+    fact.message = Some(intent.message.clone());
+    state.integrate = Some(fact);
+    state.signoff = None;
+    state.updated_at = now;
+    store.save(context.fs, state).map_err(|error| {
+        let _ = writeln!(context.err, "{}", render_state_error(&error));
+        CommandResult::failure()
+    })
 }
 
 fn save_publication<F, C, O, E>(
@@ -754,7 +974,12 @@ where
     }
     let outcome = run_success(
         context,
-        &CommandSpec::new("gh", ["pr", "create", "--title", summary, "--body", body]),
+        &CommandSpec::new(
+            "gh",
+            [
+                "pr", "create", "--head", branch, "--title", summary, "--body", body,
+            ],
+        ),
         "gh pr create",
     )?;
     parse_pr_url(&outcome.stdout).ok_or_else(|| IntegrationStepError::InvalidOutput {
@@ -844,28 +1069,7 @@ where
     O: Write,
     E: Write,
 {
-    let local_head = signoff_stdout(
-        context,
-        &CommandSpec::new("git", ["rev-parse", "HEAD"]),
-        "git rev-parse HEAD",
-    )?;
-    if local_head != integration.commit {
-        return Err(SignoffError::Execution(format!(
-            "local HEAD `{local_head}` does not match integrated commit `{}`",
-            integration.commit
-        )));
-    }
-    let local_branch = signoff_stdout(
-        context,
-        &CommandSpec::new("git", ["branch", "--show-current"]),
-        "git branch --show-current",
-    )?;
-    if local_branch != integration.branch {
-        return Err(SignoffError::Execution(format!(
-            "local branch `{local_branch}` does not match integrated branch `{}`",
-            integration.branch
-        )));
-    }
+    validate_local_identity(context, &integration.branch, &integration.commit)?;
     let json = signoff_stdout(
         context,
         &CommandSpec::new(
@@ -931,6 +1135,40 @@ where
     Ok(repository)
 }
 
+fn validate_local_identity<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    branch: &str,
+    commit: &str,
+) -> Result<(), SignoffError>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let local_head = signoff_stdout(
+        context,
+        &CommandSpec::new("git", ["rev-parse", "HEAD"]),
+        "git rev-parse HEAD",
+    )?;
+    if local_head != commit {
+        return Err(SignoffError::Execution(format!(
+            "local HEAD `{local_head}` does not match integrated commit `{commit}`"
+        )));
+    }
+    let local_branch = signoff_stdout(
+        context,
+        &CommandSpec::new("git", ["branch", "--show-current"]),
+        "git branch --show-current",
+    )?;
+    if local_branch != branch {
+        return Err(SignoffError::Execution(format!(
+            "local branch `{local_branch}` does not match integrated branch `{branch}`"
+        )));
+    }
+    Ok(())
+}
+
 fn execute_signoffs<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
     integration: &RecordedIntegration,
@@ -947,7 +1185,10 @@ where
     let combined = fetch_statuses(context, &repository, &integration.commit)?;
     let states = verify_status_set(&resolved.requests, &combined)?;
 
+    let mut all_succeeded = true;
     for request in &resolved.requests {
+        ensure_clean_worktree(context)?;
+        validate_local_identity(context, &integration.branch, &integration.commit)?;
         let qualified = request.qualified_target().to_string();
         let context_name = format!("signoff: {qualified}");
         if states
@@ -970,6 +1211,21 @@ where
         } else {
             "failure"
         };
+        if outcome.success
+            && let Err(error) = ensure_clean_worktree(context).and_then(|()| {
+                validate_local_identity(context, &integration.branch, &integration.commit)
+            })
+        {
+            let _ = post_signoff_status(
+                context,
+                &repository,
+                &integration.commit,
+                &integration.pr_url,
+                &qualified,
+                "failure",
+            );
+            return Err(error);
+        }
         post_signoff_status(
             context,
             &repository,
@@ -978,6 +1234,14 @@ where
             &qualified,
             state,
         )?;
+        if !outcome.success {
+            all_succeeded = false;
+            break;
+        }
+    }
+    if all_succeeded {
+        ensure_clean_worktree(context)?;
+        validate_local_identity(context, &integration.branch, &integration.commit)?;
     }
     let final_statuses = fetch_statuses(context, &repository, &integration.commit)?;
     let final_states = verify_status_set(&resolved.requests, &final_statuses)?;
@@ -1518,73 +1782,6 @@ fn integration_fact(
     fact.commit = Some(commit.to_string());
     fact.pr_url = Some(pr_url.to_string());
     fact
-}
-
-fn failed_integration_fact(
-    status: &str,
-    timestamp: &str,
-    summary: &str,
-    branch: Option<&str>,
-    commit: Option<&str>,
-    pr_url: Option<&str>,
-) -> WorkFact {
-    let mut fact = WorkFact::new(status)
-        .at(timestamp)
-        .summary(summary.to_string());
-    fact.branch = branch.map(ToString::to_string);
-    fact.commit = commit.map(ToString::to_string);
-    fact.pr_url = pr_url.map(ToString::to_string);
-    fact
-}
-
-#[derive(Debug, Clone, Copy)]
-struct FailedIntegration<'failure> {
-    status: &'failure str,
-    summary: &'failure str,
-    branch: Option<&'failure str>,
-    commit: Option<&'failure str>,
-    pr_url: Option<&'failure str>,
-}
-
-impl<'failure> FailedIntegration<'failure> {
-    fn new(status: &'failure str, summary: &'failure str) -> Self {
-        Self {
-            status,
-            summary,
-            branch: None,
-            commit: None,
-            pr_url: None,
-        }
-    }
-
-    fn branch(mut self, branch: &'failure str) -> Self {
-        self.branch = Some(branch);
-        self
-    }
-}
-
-fn record_failed_integration<F, C, O, E>(
-    context: &mut CommandContext<'_, F, C, O, E>,
-    store: &WorkStateStore,
-    state: &mut WorkState,
-    failure: FailedIntegration<'_>,
-) where
-    F: FileSystem,
-    C: Clock,
-    O: Write,
-    E: Write,
-{
-    let now = context.clock.now_rfc3339();
-    state.integrate = Some(failed_integration_fact(
-        failure.status,
-        &now,
-        failure.summary,
-        failure.branch,
-        failure.commit,
-        failure.pr_url,
-    ));
-    state.updated_at = now;
-    let _ = store.save(context.fs, state);
 }
 
 fn finish<F, C, O, E>(
