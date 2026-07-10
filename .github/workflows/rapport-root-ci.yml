@@ -1,0 +1,22 @@
+name: "Rapport signoff: root-ci"
+
+# Rapport owns this file byte-for-byte. Run `rapport context signoff repair . ci` to restore it.
+
+on:
+  pull_request:
+    branches:
+      - "*"
+    paths:
+      - "**"
+      - ".github/workflows/rapport-root-ci.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signoff:
+    uses: ./.github/workflows/rapport-signoff.yml
+    with:
+      target: root-ci
+    secrets: inherit

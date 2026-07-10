@@ -44,6 +44,7 @@ jobs:
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SignoffRequest {
+    context_directory: Utf8PathBuf,
     folder: String,
     target: String,
     qualified_target: String,
@@ -82,6 +83,7 @@ impl SignoffRequest {
             .join(WORKFLOW_DIRECTORY)
             .join(format!("{REQUEST_PREFIX}{qualified_target}.yml"));
         Ok(Self {
+            context_directory: context_directory.to_path_buf(),
             folder,
             target: target.to_string(),
             qualified_target,
@@ -91,6 +93,10 @@ impl SignoffRequest {
 
     pub(crate) fn target(&self) -> &str {
         &self.target
+    }
+
+    pub(crate) fn context_directory(&self) -> &Utf8Path {
+        &self.context_directory
     }
 
     pub(crate) fn qualified_target(&self) -> &str {

@@ -1,0 +1,13 @@
+version = 1
+
+purpose = "Owns repository-wide Rapport workflow."
+
+signoffs = [
+  "ci",
+]
+
+rule_includes = []
+
+[ownership]
+owns = []
+boundaries = []

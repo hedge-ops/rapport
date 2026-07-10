@@ -46,6 +46,7 @@ rapport work rules list
 rapport work rules show <id>
 rapport build [path...]
 rapport integrate --summary "..." --message "..."
+rapport integrate # retry signoff for the recorded PR
 ```
 
 ## Repository Shape
@@ -86,13 +87,17 @@ Adding `ci` to `app/apple/context.toml` generates the exact Rapport-owned
 `.github/workflows/rapport-app-apple-ci.yml` request workflow. On matching pull
 requests it calls the shared `.github/workflows/rapport-signoff.yml` workflow,
 which posts `signoff: app-apple-ci` as pending for the PR head SHA. It does not
-run repository validation in GitHub; the appropriate local host supplies that
-proof later.
+run repository validation in GitHub; `rapport integrate` runs `just ci` from
+the declaring folder on the local host and posts the SHA-bound result.
 
 `rapport doctor` compares generated workflows byte-for-byte with their context
 declarations. `rapport integrate` runs the same validation before committing or
-opening a PR, unions inherited targets for every active work path, and records
-the exact statuses expected by the PR.
+opening a PR and unions inherited targets for every active work path. Once the
+PR exists, integration records its branch, commit, URL, and pending signoffs in
+current work before attempting proof. It rejects missing or unexpected signoff
+statuses, runs each requested Just target locally, and posts success or failure
+to the exact PR head SHA. A failed attempt leaves the PR recorded, so a bare
+`rapport integrate` retries signoff on that same PR without creating another.
 
 ## Later Phases
 

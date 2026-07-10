@@ -16,7 +16,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Changed integration to validate the complete signoff contract before any Git
-  commit or pull-request side effect and to report folder-qualified statuses.
+  commit or pull-request side effect, persist the PR before attempting signoff,
+  execute requested Just targets locally, and post folder-qualified SHA-bound
+  statuses. A later bare `rapport integrate` resumes signoff on the recorded PR.
+- Changed PR integration to push its commit and update an existing open PR for
+  the branch instead of attempting to create a duplicate.
 
 ## [0.3.0] - 2026-07-10
 

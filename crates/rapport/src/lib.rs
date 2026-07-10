@@ -1864,9 +1864,26 @@ signoffs = ["shared", "review"]
         assert_eq!(err, "");
         assert!(out.contains("pr_created"));
         assert!(out.contains("https://github.com/hedge-ops/rapport/pull/70"));
-        assert!(out.contains("pending `root-shared`"));
-        assert!(out.contains("pending `root-review`"));
-        assert_eq!(runner.calls(), successful_integrate_calls());
+        assert!(out.contains("passed `root-shared`"));
+        assert!(out.contains("passed `root-review`"));
+        let calls = runner.calls();
+        assert!(calls.iter().any(|(spec, _)| {
+            spec == &CommandSpec::new(
+                "git",
+                [
+                    "push",
+                    "--set-upstream",
+                    "origin",
+                    "work/issue-57-integrate",
+                ],
+            )
+        }));
+        assert!(calls.iter().any(|(spec, cwd)| {
+            spec == &CommandSpec::new("just", ["shared"]) && cwd == Utf8Path::new("/repo")
+        }));
+        assert!(calls.iter().any(|(spec, cwd)| {
+            spec == &CommandSpec::new("just", ["review"]) && cwd == Utf8Path::new("/repo")
+        }));
         let state = load_state(&fs);
         let integrate = state.integrate.unwrap();
         let signoff = state.signoff.unwrap();
@@ -1878,9 +1895,10 @@ signoffs = ["shared", "review"]
             integrate.pr_url.as_deref(),
             Some("https://github.com/hedge-ops/rapport/pull/70")
         );
-        assert_eq!(signoff.status, "pending");
+        assert_eq!(signoff.status, "pass");
         assert_eq!(signoff.required, vec!["root-shared", "root-review"]);
-        assert_eq!(signoff.pending, vec!["root-shared", "root-review"]);
+        assert_eq!(signoff.passed, vec!["root-shared", "root-review"]);
+        assert!(signoff.pending.is_empty());
         let events = events(&fs);
         let commands = events
             .iter()
@@ -1890,14 +1908,97 @@ signoffs = ["shared", "review"]
         assert_eq!(
             commands,
             vec![
-                "integrate signoff",
                 "integrate start",
                 "integrate inspect",
                 "integrate commit",
                 "integrate pr",
+                "integrate signoff",
                 "integrate",
             ]
         );
+    }
+
+    #[test]
+    fn integrate_records_pr_before_signoff_and_resumes_same_pr() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.write_string(
+            "/repo/context.toml",
+            "version = 1\npurpose = \"Repository\"\nsignoffs = [\"ci\"]\n",
+        )
+        .unwrap();
+        add_generated_signoff_contract(&mut fs, "/repo", &["ci"]);
+        let first = FakeRunner::with_outcomes([
+            Ok(successful_outcome(
+                " M crates/rapport/src/lib.rs\n M .rapport/work.toml\n",
+            )),
+            Ok(successful_outcome("work/resumable\n")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome(
+                "https://github.com/hedge-ops/rapport/pull/70\n",
+            )),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome(r#"{"statuses":[]}"#)),
+        ]);
+
+        let (first_code, _, first_err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "Resumable integration",
+                "--message",
+                "Exercise two phases",
+            ],
+            &mut fs,
+            &first,
+        );
+
+        assert_eq!(first_code, ExitCode::from(2));
+        assert!(first_err.contains("missing [signoff: root-ci]"));
+        let pending = load_state(&fs);
+        let integration = pending.integrate.unwrap();
+        let signoff = pending.signoff.unwrap();
+        assert_eq!(integration.status, "pr_created");
+        assert_eq!(integration.commit.as_deref(), Some("abc123"));
+        assert_eq!(
+            integration.pr_url.as_deref(),
+            Some("https://github.com/hedge-ops/rapport/pull/70")
+        );
+        assert_eq!(signoff.status, "pending");
+        assert_eq!(signoff.pending, vec!["root-ci"]);
+
+        let second = FakeRunner::with_outcomes([
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome(
+                r#"{"statuses":[{"context":"signoff: root-ci","state":"pending"}]}"#,
+            )),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+        ]);
+
+        let (second_code, second_out, second_err) =
+            run_with_runner(&["integrate"], &mut fs, &second);
+
+        assert_eq!(second_code, ExitCode::SUCCESS);
+        assert_eq!(second_err, "");
+        assert!(second_out.contains("passed `root-ci`"));
+        assert_eq!(second.calls()[4].0, CommandSpec::new("just", ["ci"]));
+        assert!(
+            second
+                .calls()
+                .iter()
+                .all(|(spec, _)| spec.args.first().is_none_or(|arg| arg != "status"))
+        );
+        let completed = load_state(&fs);
+        assert_eq!(completed.signoff.unwrap().status, "pass");
     }
 
     #[test]
@@ -2143,9 +2244,21 @@ pr_url = "https://github.com/hedge-ops/rapport/pull/70"
                 "[work/issue-57-integrate abc123] PW-356\n",
             )),
             Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
             Ok(successful_outcome(
                 "https://github.com/hedge-ops/rapport/pull/70\n",
             )),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("abc123\n")),
+            Ok(successful_outcome("hedge-ops/rapport\n")),
+            Ok(successful_outcome(
+                r#"{"statuses":[{"context":"signoff: root-shared","state":"pending"},{"context":"signoff: root-review","state":"pending"}]}"#,
+            )),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
+            Ok(successful_outcome("")),
         ])
     }
 
@@ -2155,47 +2268,5 @@ pr_url = "https://github.com/hedge-ops/rapport/pull/70"
             stdout: stdout.to_string(),
             stderr: String::new(),
         }
-    }
-
-    fn successful_integrate_calls() -> Vec<(CommandSpec, Utf8PathBuf)> {
-        vec![
-            (
-                CommandSpec::new("git", ["status", "--porcelain=v1"]),
-                Utf8PathBuf::from("/repo"),
-            ),
-            (
-                CommandSpec::new("git", ["branch", "--show-current"]),
-                Utf8PathBuf::from("/repo"),
-            ),
-            (
-                CommandSpec::new("git", ["add", "--", "crates/rapport/src/lib.rs"]),
-                Utf8PathBuf::from("/repo"),
-            ),
-            (
-                CommandSpec::new(
-                    "git",
-                    ["commit", "-m", "PW-356: Do the thing", "-m", "Do the thing"],
-                ),
-                Utf8PathBuf::from("/repo"),
-            ),
-            (
-                CommandSpec::new("git", ["rev-parse", "HEAD"]),
-                Utf8PathBuf::from("/repo"),
-            ),
-            (
-                CommandSpec::new(
-                    "gh",
-                    [
-                        "pr",
-                        "create",
-                        "--title",
-                        "PW-356: Do the thing",
-                        "--body",
-                        "Do the thing\n\n## Rapport\n- Work: Do the thing\n- Paths: crates/rapport/src/lib.rs\n- Build: pass\n- Signoffs: `signoff: root-shared`, `signoff: root-review`\n- Commit: abc123",
-                    ],
-                ),
-                Utf8PathBuf::from("/repo"),
-            ),
-        ]
     }
 }

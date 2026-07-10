@@ -350,10 +350,10 @@ pub struct BuildArgs {
 
 #[derive(Debug, Args)]
 pub struct IntegrateArgs {
-    /// Human summary for the integration record.
+    /// Human summary for a new integration record. Omit when resuming signoff.
     #[arg(long)]
-    pub summary: String,
-    /// Git commit or PR message body.
+    pub summary: Option<String>,
+    /// Git commit or PR message body. Omit when resuming signoff.
     #[arg(long)]
-    pub message: String,
+    pub message: Option<String>,
 }

@@ -2,12 +2,14 @@ use crate::cli::IntegrateArgs;
 use crate::context::{Clock, CommandContext};
 use crate::project_context;
 use crate::runner::{CommandOutcome, CommandSpec};
+use crate::signoff_contract::SignoffRequest;
 use crate::state::{WorkFact, WorkState, WorkStateError, WorkStateStore};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
-use std::collections::BTreeSet;
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -56,26 +58,31 @@ where
     O: Write,
     E: Write,
 {
-    let Some(request) = IntegrationRequest::from_args(integrate_args) else {
-        let _ = writeln!(context.err, "{}", render_missing_summary_or_message());
-        return CommandResult::failure();
-    };
-
     if let Err(error) = validate_work_context(&state) {
         let _ = writeln!(context.err, "{}", render_work_context_error(&error));
         return CommandResult::failure();
     }
 
-    let signoff_report = match evaluate_signoffs(arguments, context, &state.paths) {
-        Ok(report) => report,
+    let resolved_signoffs = match evaluate_signoffs(arguments, context, &state.paths) {
+        Ok(resolved) => resolved,
         Err(result) => return result,
     };
-    record_best_effort(
-        "integrate signoff",
-        arguments.to_owned(),
-        context,
-        CommandResult::success(),
-    );
+
+    if let Some(integration) = RecordedIntegration::from_state(&state) {
+        return resume_signoff(
+            arguments,
+            context,
+            store,
+            &mut state,
+            &integration,
+            resolved_signoffs,
+        );
+    }
+
+    let Some(request) = IntegrationRequest::from_args(integrate_args) else {
+        let _ = writeln!(context.err, "{}", render_missing_summary_or_message());
+        return CommandResult::failure();
+    };
 
     if let Err(error) = record_event(
         "integrate start",
@@ -109,7 +116,12 @@ where
         Err(result) => return result,
     };
 
-    let pr_body = pr_body(&state, request.message, &commit, &signoff_report.required);
+    let pr_body = pr_body(
+        &state,
+        request.message,
+        &commit,
+        &resolved_signoffs.report.required,
+    );
     let pr_url = match open_pull_request(
         arguments,
         context,
@@ -126,17 +138,29 @@ where
         Err(result) => return result,
     };
 
-    save_integration_result(
+    let integration = RecordedIntegration {
+        summary: request.summary.to_string(),
+        branch,
+        commit,
+        pr_url,
+    };
+    if let Err(result) = save_pending_integration(
         context,
         store,
         &mut state,
-        IntegrationOutput {
-            request,
-            branch: &branch,
-            commit: &commit,
-            pr_url: &pr_url,
-            signoffs: &signoff_report,
-        },
+        &integration,
+        &resolved_signoffs.report,
+    ) {
+        return result;
+    }
+
+    finish_signoff(
+        arguments,
+        context,
+        store,
+        &mut state,
+        &integration,
+        resolved_signoffs,
     )
 }
 
@@ -148,8 +172,8 @@ struct IntegrationRequest<'request> {
 
 impl<'request> IntegrationRequest<'request> {
     fn from_args(args: &'request IntegrateArgs) -> Option<Self> {
-        let summary = args.summary.trim();
-        let message = args.message.trim();
+        let summary = args.summary.as_deref()?.trim();
+        let message = args.message.as_deref()?.trim();
         if summary.is_empty() || message.is_empty() {
             None
         } else {
@@ -158,13 +182,27 @@ impl<'request> IntegrationRequest<'request> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct IntegrationOutput<'output> {
-    request: IntegrationRequest<'output>,
-    branch: &'output str,
-    commit: &'output str,
-    pr_url: &'output str,
-    signoffs: &'output SignoffReport,
+#[derive(Debug, Clone)]
+struct RecordedIntegration {
+    summary: String,
+    branch: String,
+    commit: String,
+    pr_url: String,
+}
+
+impl RecordedIntegration {
+    fn from_state(state: &WorkState) -> Option<Self> {
+        let fact = state.integrate.as_ref()?;
+        if fact.status != "pr_created" {
+            return None;
+        }
+        Some(Self {
+            summary: fact.summary.clone()?,
+            branch: fact.branch.clone()?,
+            commit: fact.commit.clone()?,
+            pr_url: fact.pr_url.clone()?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -334,7 +372,12 @@ where
     O: Write,
     E: Write,
 {
-    match create_pr(context, integration.request.summary, pr_body) {
+    match create_or_update_pr(
+        context,
+        integration.branch,
+        integration.request.summary,
+        pr_body,
+    ) {
         Ok(pr_url) => {
             record_best_effort(
                 "integrate pr",
@@ -369,7 +412,7 @@ fn evaluate_signoffs<F, C, O, E>(
     arguments: &[String],
     context: &mut CommandContext<'_, F, C, O, E>,
     work_paths: &[String],
-) -> Result<SignoffReport, CommandResult>
+) -> Result<ResolvedSignoffs, CommandResult>
 where
     F: FileSystem,
     C: Clock,
@@ -391,12 +434,70 @@ where
     }
 }
 
-fn save_integration_result<F, C, O, E>(
+fn resume_signoff<F, C, O, E>(
+    arguments: &[String],
     context: &mut CommandContext<'_, F, C, O, E>,
     store: &WorkStateStore,
     state: &mut WorkState,
-    output: IntegrationOutput<'_>,
+    integration: &RecordedIntegration,
+    resolved: ResolvedSignoffs,
 ) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    if let Err(result) = save_pending_signoffs(context, store, state, &resolved.report) {
+        return result;
+    }
+    finish_signoff(arguments, context, store, state, integration, resolved)
+}
+
+fn finish_signoff<F, C, O, E>(
+    arguments: &[String],
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+    integration: &RecordedIntegration,
+    resolved: ResolvedSignoffs,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let report = match execute_signoffs(context, &integration.commit, &integration.pr_url, resolved)
+    {
+        Ok(report) => report,
+        Err(error) => {
+            record_best_effort(
+                "integrate signoff",
+                arguments.to_owned(),
+                context,
+                CommandResult::failure(),
+            );
+            let _ = writeln!(context.err, "{}", render_signoff_error(&error));
+            return CommandResult::failure();
+        }
+    };
+    let result = if report.failed.is_empty() {
+        CommandResult::success()
+    } else {
+        CommandResult::failure()
+    };
+    record_best_effort("integrate signoff", arguments.to_owned(), context, result);
+    save_integration_result(context, store, state, integration, &report)
+}
+
+fn save_pending_integration<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+    integration: &RecordedIntegration,
+    signoffs: &SignoffReport,
+) -> Result<(), CommandResult>
 where
     F: FileSystem,
     C: Clock,
@@ -407,25 +508,68 @@ where
     state.integrate = Some(integration_fact(
         "pr_created",
         &now,
-        output.request.summary,
-        output.branch,
-        output.commit,
-        output.pr_url,
+        &integration.summary,
+        &integration.branch,
+        &integration.commit,
+        &integration.pr_url,
     ));
-    state.signoff = Some(output.signoffs.fact(&now));
+    state.signoff = Some(signoffs.fact(&now));
+    state.updated_at = now;
+    store.save(context.fs, state).map_err(|error| {
+        let _ = writeln!(context.err, "{}", render_state_error(&error));
+        CommandResult::failure()
+    })
+}
+
+fn save_pending_signoffs<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+    signoffs: &SignoffReport,
+) -> Result<(), CommandResult>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let now = context.clock.now_rfc3339();
+    state.signoff = Some(signoffs.fact(&now));
+    state.updated_at = now;
+    store.save(context.fs, state).map_err(|error| {
+        let _ = writeln!(context.err, "{}", render_state_error(&error));
+        CommandResult::failure()
+    })
+}
+
+fn save_integration_result<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+    integration: &RecordedIntegration,
+    signoffs: &SignoffReport,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let now = context.clock.now_rfc3339();
+    state.signoff = Some(signoffs.fact(&now));
     state.updated_at = now;
 
     match store.save(context.fs, state) {
-        Ok(()) if output.signoffs.failed.is_empty() => {
+        Ok(()) if signoffs.failed.is_empty() => {
             let _ = writeln!(
                 context.out,
                 "{}",
                 render_integrated(
-                    output.request.summary,
-                    output.branch,
-                    output.commit,
-                    output.pr_url,
-                    output.signoffs,
+                    &integration.summary,
+                    &integration.branch,
+                    &integration.commit,
+                    &integration.pr_url,
+                    signoffs,
                 )
             );
             CommandResult::success()
@@ -435,11 +579,11 @@ where
                 context.err,
                 "{}",
                 render_integrated_with_failed_signoffs(
-                    output.request.summary,
-                    output.branch,
-                    output.commit,
-                    output.pr_url,
-                    output.signoffs,
+                    &integration.summary,
+                    &integration.branch,
+                    &integration.commit,
+                    &integration.pr_url,
+                    signoffs,
                 )
             );
             CommandResult::failure()
@@ -479,8 +623,9 @@ where
     Ok(outcome.stdout.trim().to_string())
 }
 
-fn create_pr<F, C, O, E>(
+fn create_or_update_pr<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
+    branch: &str,
     summary: &str,
     body: &str,
 ) -> Result<String, IntegrationStepError>
@@ -490,6 +635,33 @@ where
     O: Write,
     E: Write,
 {
+    run_success(
+        context,
+        &CommandSpec::new("git", ["push", "--set-upstream", "origin", branch]),
+        "git push",
+    )?;
+    let existing = run_success(
+        context,
+        &CommandSpec::new(
+            "gh",
+            [
+                "pr", "list", "--head", branch, "--state", "open", "--json", "url", "--jq",
+                ".[0].url",
+            ],
+        ),
+        "gh pr list",
+    )?;
+    if let Some(pr_url) = parse_pr_url(&existing.stdout) {
+        run_success(
+            context,
+            &CommandSpec::new(
+                "gh",
+                ["pr", "edit", &pr_url, "--title", summary, "--body", body],
+            ),
+            "gh pr edit",
+        )?;
+        return Ok(pr_url);
+    }
     let outcome = run_success(
         context,
         &CommandSpec::new("gh", ["pr", "create", "--title", summary, "--body", body]),
@@ -504,7 +676,7 @@ where
 fn run_signoffs<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
     work_paths: &[String],
-) -> Result<SignoffReport, SignoffError>
+) -> Result<ResolvedSignoffs, SignoffError>
 where
     F: FileSystem,
     C: Clock,
@@ -518,13 +690,206 @@ where
             problems: problems.into_iter().map(ToString::to_string).collect(),
         });
     }
-    let required = project_context::required_signoffs_for_paths(
+    let requests = project_context::required_signoff_requests_for_paths(
         context.fs,
         context.paths.repo_root(),
         work_paths,
     )
     .map_err(SignoffError::Context)?;
-    Ok(SignoffReport::from_required(required))
+    let required = requests
+        .iter()
+        .map(|request| request.qualified_target().to_string())
+        .collect();
+    Ok(ResolvedSignoffs {
+        requests,
+        report: SignoffReport::from_required(required),
+    })
+}
+
+fn execute_signoffs<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    commit: &str,
+    pr_url: &str,
+    mut resolved: ResolvedSignoffs,
+) -> Result<SignoffReport, SignoffError>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let local_head = signoff_stdout(
+        context,
+        &CommandSpec::new("git", ["rev-parse", "HEAD"]),
+        "git rev-parse HEAD",
+    )?;
+    if local_head != commit {
+        return Err(SignoffError::Execution(format!(
+            "local HEAD `{local_head}` does not match integrated commit `{commit}`"
+        )));
+    }
+    let pr_head = signoff_stdout(
+        context,
+        &CommandSpec::new(
+            "gh",
+            [
+                "pr",
+                "view",
+                pr_url,
+                "--json",
+                "headRefOid",
+                "--jq",
+                ".headRefOid",
+            ],
+        ),
+        "gh pr view",
+    )?;
+    if pr_head != commit {
+        return Err(SignoffError::Execution(format!(
+            "PR HEAD `{pr_head}` does not match integrated commit `{commit}`"
+        )));
+    }
+    let repository = signoff_stdout(
+        context,
+        &CommandSpec::new(
+            "gh",
+            [
+                "repo",
+                "view",
+                "--json",
+                "nameWithOwner",
+                "--jq",
+                ".nameWithOwner",
+            ],
+        ),
+        "gh repo view",
+    )?;
+    let status_path = format!("repos/{repository}/commits/{commit}/status");
+    let status_json = signoff_stdout(
+        context,
+        &CommandSpec::new("gh", ["api", status_path.as_str()]),
+        "gh api commit status",
+    )?;
+    let combined: CombinedStatus = serde_json::from_str(&status_json).map_err(|error| {
+        SignoffError::Execution(format!("invalid commit status response: {error}"))
+    })?;
+    let states = verify_status_set(&resolved.requests, &combined)?;
+
+    for request in &resolved.requests {
+        let qualified = request.qualified_target().to_string();
+        let context_name = format!("signoff: {qualified}");
+        if states
+            .get(&context_name)
+            .is_some_and(|state| state == "success")
+        {
+            resolved.report.passed.push(qualified.clone());
+            resolved
+                .report
+                .pending
+                .retain(|target| target != &qualified);
+            continue;
+        }
+        let outcome = context
+            .runner
+            .run(
+                &CommandSpec::new("just", [request.target()]),
+                request.context_directory(),
+            )
+            .map_err(|error| {
+                SignoffError::Execution(format!("could not run signoff `{qualified}`: {error}"))
+            })?;
+        let state = if outcome.success {
+            "success"
+        } else {
+            "failure"
+        };
+        post_signoff_status(context, &repository, commit, pr_url, &qualified, state)?;
+        resolved
+            .report
+            .pending
+            .retain(|target| target != &qualified);
+        if outcome.success {
+            resolved.report.passed.push(qualified);
+        } else {
+            resolved.report.failed.push(qualified);
+        }
+    }
+    Ok(resolved.report)
+}
+
+fn signoff_stdout<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    spec: &CommandSpec,
+    display: &'static str,
+) -> Result<String, SignoffError>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    run_success(context, spec, display)
+        .map(|outcome| outcome.stdout.trim().to_string())
+        .map_err(|error| SignoffError::Execution(error.to_string()))
+}
+
+fn verify_status_set(
+    requests: &[SignoffRequest],
+    combined: &CombinedStatus,
+) -> Result<BTreeMap<String, String>, SignoffError> {
+    let expected = requests
+        .iter()
+        .map(|request| format!("signoff: {}", request.qualified_target()))
+        .collect::<BTreeSet<_>>();
+    let states = combined
+        .statuses
+        .iter()
+        .filter(|status| status.context.starts_with("signoff: "))
+        .map(|status| (status.context.clone(), status.state.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let actual = states.keys().cloned().collect::<BTreeSet<_>>();
+    if actual == expected {
+        return Ok(states);
+    }
+    let missing = expected.difference(&actual).cloned().collect::<Vec<_>>();
+    let unexpected = actual.difference(&expected).cloned().collect::<Vec<_>>();
+    Err(SignoffError::Execution(format!(
+        "PR signoff statuses do not match context: missing [{}], unexpected [{}]",
+        missing.join(", "),
+        unexpected.join(", ")
+    )))
+}
+
+fn post_signoff_status<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    repository: &str,
+    commit: &str,
+    pr_url: &str,
+    target: &str,
+    state: &str,
+) -> Result<(), SignoffError>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let path = format!("repos/{repository}/statuses/{commit}");
+    let args = vec![
+        String::from("api"),
+        String::from("-X"),
+        String::from("POST"),
+        path,
+        String::from("-f"),
+        format!("context=signoff: {target}"),
+        String::from("-f"),
+        format!("state={state}"),
+        String::from("-f"),
+        format!("description=local signoff {state}"),
+        String::from("-f"),
+        format!("target_url={pr_url}"),
+    ];
+    signoff_stdout(context, &CommandSpec::new("gh", args), "gh api post status").map(|_| ())
 }
 
 fn run_success<F, C, O, E>(
@@ -737,6 +1102,7 @@ impl Error for IntegrationStepError {}
 enum SignoffError {
     Contract { problems: Vec<String> },
     Context(project_context::ProjectContextError),
+    Execution(String),
 }
 
 impl fmt::Display for SignoffError {
@@ -749,6 +1115,7 @@ impl fmt::Display for SignoffError {
                 f,
                 "could not resolve signoffs from project context: {source}"
             ),
+            Self::Execution(detail) => f.write_str(detail),
         }
     }
 }
@@ -756,10 +1123,27 @@ impl fmt::Display for SignoffError {
 impl Error for SignoffError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Contract { .. } => None,
             Self::Context(source) => Some(source),
+            Self::Contract { .. } | Self::Execution(_) => None,
         }
     }
+}
+
+#[derive(Debug)]
+struct ResolvedSignoffs {
+    requests: Vec<SignoffRequest>,
+    report: SignoffReport,
+}
+
+#[derive(Debug, Deserialize)]
+struct CombinedStatus {
+    statuses: Vec<CommitStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommitStatus {
+    context: String,
+    state: String,
 }
 
 #[derive(Debug, Default)]

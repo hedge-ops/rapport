@@ -167,11 +167,25 @@ pub(crate) fn validate_repository(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn required_signoffs_for_paths(
     fs: &impl FileSystem,
     repo_root: &Utf8Path,
     paths: &[String],
 ) -> Result<Vec<String>, ProjectContextError> {
+    required_signoff_requests_for_paths(fs, repo_root, paths).map(|requests| {
+        requests
+            .into_iter()
+            .map(|request| request.qualified_target().to_string())
+            .collect()
+    })
+}
+
+pub(crate) fn required_signoff_requests_for_paths(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    paths: &[String],
+) -> Result<Vec<SignoffRequest>, ProjectContextError> {
     let resolver = ProjectContextResolver::new(ProjectContextStore::new(repo_root.to_path_buf()));
     let mut required = Vec::new();
     let mut seen = BTreeSet::new();
@@ -183,7 +197,7 @@ pub(crate) fn required_signoffs_for_paths(
             let request = SignoffRequest::new(repo_root, directory, &signoff.value)
                 .map_err(|source| ProjectContextError::SignoffContract { source })?;
             if seen.insert(request.qualified_target().to_string()) {
-                required.push(request.qualified_target().to_string());
+                required.push(request);
             }
         }
     }
