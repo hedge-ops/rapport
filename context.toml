@@ -2,12 +2,19 @@ version = 1
 
 purpose = "Owns repository-wide Rapport workflow."
 
-signoffs = [
-  "ci",
+rule_includes = [
+  "/rules/rust.toml",
+  "/rules/testing.toml",
 ]
-
-rule_includes = []
 
 [ownership]
 owns = []
 boundaries = []
+
+[[signoffs]]
+kind = "build"
+target = "ci"
+
+[[signoffs]]
+kind = "review"
+minimum_grade = "A-"

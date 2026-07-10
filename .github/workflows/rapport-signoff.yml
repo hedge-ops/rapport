@@ -1,13 +1,13 @@
 name: Rapport signoff (reusable)
 
 # Rapport owns this file byte-for-byte. Run `rapport context signoff repair` to restore it.
-# It asks for SHA-bound local proof by posting a pending `signoff: <target>` status.
+# It asks for SHA-bound local proof by posting a pending `signoff: <folder>-build-<target>` or `signoff: <folder>-review` status.
 
 on:
   workflow_call:
     inputs:
       target:
-        description: "Folder-qualified signoff target"
+        description: "Folder- and kind-qualified signoff; build identities also include the target"
         required: true
         type: string
 

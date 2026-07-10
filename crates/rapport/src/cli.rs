@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use rapport_files::Utf8PathBuf;
 
 const ROOT_ABOUT: &str = "repository rapport for human-directed agent work";
@@ -7,7 +7,7 @@ Rapport keeps human-directed agent work grounded in repository-owned rules, \
 build conventions, Git/GitHub integration, and local state.";
 const ROOT_AFTER_HELP: &str = "\
 First loop:
-  prime -> doctor -> work -> context -> build -> integrate -> work complete
+  prime -> doctor -> work -> context -> build -> review -> integrate -> work complete
 
 Rapport coordinates repository workflow; it does not replace Just or implement release/deploy behavior.";
 const CONTEXT_LONG_ABOUT: &str = "\
@@ -54,6 +54,8 @@ pub enum Command {
     Context(ContextArgs),
     /// Validate active work with existing repository Just conventions.
     Build(BuildArgs),
+    /// Request or record an independent adversarial review of active work.
+    Review(ReviewArgs),
     /// Turn validated local work into Git/GitHub integration state.
     Integrate(IntegrateArgs),
 }
@@ -80,7 +82,7 @@ pub enum ContextCommand {
     Ownership(ContextOwnershipArgs),
     /// Edit reusable rule includes and inline benchmarks.
     Rule(ContextRuleArgs),
-    /// Manage signoff targets and their generated GitHub request workflows.
+    /// Manage signoffs and their generated GitHub request workflows.
     Signoff(ContextSignoffArgs),
     /// Validate applicable context.toml files, signoff workflows, and rule includes.
     Doctor {
@@ -98,27 +100,42 @@ pub struct ContextSignoffArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ContextSignoffCommand {
-    /// Declare a signoff target and generate its GitHub request workflow.
+    /// Declare a signoff and generate its GitHub request workflow.
     Add {
-        /// Folder whose context.toml owns the target.
+        /// Folder whose context.toml owns the signoff.
         path: Utf8PathBuf,
-        /// Kebab-case signoff target, such as ci or regression-ios.
-        target: String,
+        /// Signoff operation kind.
+        kind: SignoffKindArg,
+        /// Kebab-case build target, such as ci. Omit for review.
+        target: Option<String>,
+        /// Passing grade threshold for review signoffs. Defaults to A-.
+        #[arg(long)]
+        minimum_grade: Option<String>,
     },
-    /// Remove a signoff target and its generated GitHub request workflow.
+    /// Remove a signoff and its generated GitHub request workflow.
     Remove {
-        /// Folder whose context.toml owns the target.
+        /// Folder whose context.toml owns the signoff.
         path: Utf8PathBuf,
-        /// Existing signoff target.
-        target: String,
+        /// Signoff operation kind.
+        kind: SignoffKindArg,
+        /// Existing build target. Omit for review.
+        target: Option<String>,
     },
-    /// Rewrite the exact Rapport-owned workflows for a declared target.
+    /// Rewrite the exact Rapport-owned workflows for a declared signoff.
     Repair {
-        /// Folder whose context.toml owns the target.
+        /// Folder whose context.toml owns the signoff.
         path: Utf8PathBuf,
-        /// Existing signoff target.
-        target: String,
+        /// Signoff operation kind.
+        kind: SignoffKindArg,
+        /// Existing build target. Omit for review.
+        target: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SignoffKindArg {
+    Build,
+    Review,
 }
 
 #[derive(Debug, Args)]
@@ -273,6 +290,8 @@ pub enum WorkCommand {
     Add(WorkAddArgs),
     /// Inspect repository-owned rules for active work.
     Rules(WorkRulesArgs),
+    /// Manage review actions attached to active work.
+    Task(WorkTaskArgs),
 }
 
 #[derive(Debug, Args)]
@@ -342,10 +361,64 @@ pub enum WorkRulesCommand {
 }
 
 #[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct WorkTaskArgs {
+    #[command(subcommand)]
+    pub command: WorkTaskCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkTaskCommand {
+    /// Mark an open review task addressed and ready for independent rereview.
+    Address(WorkTaskAddressArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WorkTaskAddressArgs {
+    /// Rapport-assigned review task id, such as REV-001.
+    pub id: String,
+    /// What changed to address the review action.
+    #[arg(long)]
+    pub summary: String,
+}
+
+#[derive(Debug, Args)]
 pub struct BuildArgs {
     /// Optional paths to validate instead of the active work paths.
     #[arg(value_name = "PATH")]
     pub paths: Vec<Utf8PathBuf>,
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct ReviewArgs {
+    #[command(subcommand)]
+    pub command: ReviewCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReviewCommand {
+    /// Start an independent review and emit its host-neutral request.
+    Start(ReviewStartArgs),
+    /// Validate and record a reviewer's structured result.
+    Complete(ReviewCompleteArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewStartArgs {
+    /// Optional paths to review instead of all active work paths.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<Utf8PathBuf>,
+    /// Emit the request packet as JSON instead of the default Markdown prompt.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ReviewCompleteArgs {
+    /// Structured JSON review result to validate and record.
+    #[arg(long, value_name = "FILE")]
+    pub result: Utf8PathBuf,
 }
 
 #[derive(Debug, Args)]

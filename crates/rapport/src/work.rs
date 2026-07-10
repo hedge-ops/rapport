@@ -1,7 +1,13 @@
-use crate::cli::{WorkAddCommand, WorkCompleteArgs, WorkStartArgs};
+use crate::build;
+use crate::cli::{WorkAddCommand, WorkCompleteArgs, WorkStartArgs, WorkTaskCommand};
 use crate::context::{Clock, CommandContext};
+use crate::review;
 use crate::rules::{PathRules, RuleResolver, RulesError};
-use crate::state::{WorkFact, WorkState, WorkStateError, WorkStateStore, WorkStatus};
+use crate::runner::CommandSpec;
+use crate::state::{
+    OperationStatus, ReviewActionStatus, WorkFact, WorkState, WorkStateError, WorkStateStore,
+    WorkStatus,
+};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
@@ -26,10 +32,32 @@ where
 {
     let store = WorkStateStore::new(context.paths.clone());
     let result = match store.load(context.fs) {
-        Ok(Some(state)) => {
-            let _ = writeln!(context.out, "{}", render_active_work(&state));
-            CommandResult::success()
-        }
+        Ok(Some(mut state)) => match build::status_lines(context, &mut state) {
+            Ok(build_lines) => match review::status_lines(context, &mut state) {
+                Ok(review_lines) => match store.save(context.fs, &state) {
+                    Ok(()) => {
+                        let _ = writeln!(
+                            context.out,
+                            "{}",
+                            render_active_work_with_signoffs(&state, &build_lines, &review_lines)
+                        );
+                        CommandResult::success()
+                    }
+                    Err(error) => {
+                        let _ = writeln!(context.err, "{}", render_invalid_work_state(&error));
+                        CommandResult::failure()
+                    }
+                },
+                Err(error) => {
+                    let _ = writeln!(context.err, "{}", render_review_state_error(&error));
+                    CommandResult::failure()
+                }
+            },
+            Err(error) => {
+                let _ = writeln!(context.err, "{}", render_build_state_error(&error));
+                CommandResult::failure()
+            }
+        },
         Ok(None) => {
             let _ = writeln!(
                 context.out,
@@ -132,13 +160,43 @@ where
         return CommandResult::failure();
     }
 
-    if !has_successful_integration(state) && !complete_args.without_integrate {
-        let _ = writeln!(
-            context.err,
-            "{}",
-            render_unintegrated_work_for_complete(state)
-        );
-        return CommandResult::failure();
+    match build::completion_problems(context, state) {
+        Ok(problems) if !problems.is_empty() => {
+            let _ = writeln!(context.err, "{}", render_build_gate(&problems));
+            return CommandResult::failure();
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_build_state_error(&error));
+            return CommandResult::failure();
+        }
+    }
+
+    match review::completion_problems(context, state) {
+        Ok(problems) if !problems.is_empty() => {
+            let _ = writeln!(context.err, "{}", render_review_gate(&problems));
+            return CommandResult::failure();
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_review_state_error(&error));
+            return CommandResult::failure();
+        }
+    }
+
+    if !complete_args.without_integrate {
+        if !has_successful_integration(state) {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_unintegrated_work_for_complete(state)
+            );
+            return CommandResult::failure();
+        }
+        if let Err(error) = validate_completion_head(context, state) {
+            let _ = writeln!(context.err, "{}", render_completion_identity_error(&error));
+            return CommandResult::failure();
+        }
     }
 
     let now = context.clock.now_rfc3339();
@@ -188,6 +246,165 @@ where
     }
 }
 
+pub fn task<F, C, O, E>(
+    task_command: &WorkTaskCommand,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    match task_command {
+        WorkTaskCommand::Address(args) => {
+            address_review_task(&args.id, &args.summary, arguments, context)
+        }
+    }
+}
+
+fn address_review_task<F, C, O, E>(
+    id: &str,
+    summary: &str,
+    arguments: Vec<String>,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = WorkStateStore::new(context.paths.clone());
+    let result = match store.load(context.fs) {
+        Ok(Some(mut state)) => {
+            address_review_task_in_state(id, summary, context, &store, &mut state)
+        }
+        Ok(None) => {
+            let _ = writeln!(context.err, "{}", render_missing_work_for_add());
+            CommandResult::failure()
+        }
+        Err(error) => {
+            let _ = writeln!(context.err, "{}", render_state_error(&error));
+            CommandResult::failure()
+        }
+    };
+    finish("work task address", arguments, context, result)
+}
+
+fn address_review_task_in_state<F, C, O, E>(
+    id: &str,
+    summary: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    if summary.trim().is_empty() {
+        let rendered = ViewBuilder::new()
+            .title("rapport work task address")
+            .paragraph("An addressing summary is required.")
+            .next_actions(nonempty![RunHint::new(format!(
+                "rapport work task address {id} --summary \"what changed\""
+            ))])
+            .build();
+        let _ = writeln!(context.err, "{rendered}");
+        return CommandResult::failure();
+    }
+
+    let matches = state
+        .reviews
+        .values()
+        .flat_map(|review| &review.actions)
+        .filter(|action| action.id == id)
+        .count();
+    if matches == 1 {
+        return update_review_task(id, summary, context, store, state);
+    }
+
+    let message = if matches == 0 {
+        format!("Review task `{id}` does not exist in active work.")
+    } else {
+        format!("Review task `{id}` is ambiguous in active work.")
+    };
+    let rendered = ViewBuilder::new()
+        .title("rapport work task address")
+        .paragraph(message)
+        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .build();
+    let _ = writeln!(context.err, "{rendered}");
+    CommandResult::failure()
+}
+
+fn update_review_task<F, C, O, E>(
+    id: &str,
+    summary: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    state: &mut WorkState,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let now = context.clock.now_rfc3339();
+    let mut prior_status = None;
+    for review in state.reviews.values_mut() {
+        let Some(action) = review.actions.iter_mut().find(|action| action.id == id) else {
+            continue;
+        };
+        if action.status == ReviewActionStatus::Open {
+            action.status = ReviewActionStatus::Addressed;
+            action.addressed_at = Some(now.clone());
+            action.addressed_summary = Some(summary.trim().to_string());
+            if review.status == OperationStatus::Pending {
+                review.status = OperationStatus::Stale;
+            }
+        } else {
+            prior_status = Some(action.status);
+        }
+        break;
+    }
+    if let Some(status) = prior_status {
+        let rendered = ViewBuilder::new()
+            .title("rapport work task address")
+            .paragraph(format!(
+                "Review task `{id}` is already {status}; only open tasks can be addressed."
+            ))
+            .next_actions(nonempty![RunHint::new("rapport work status")])
+            .build();
+        let _ = writeln!(context.err, "{rendered}");
+        return CommandResult::failure();
+    }
+
+    state.updated_at = now;
+    if let Err(error) = store.save(context.fs, state) {
+        let _ = writeln!(context.err, "{}", render_state_error(&error));
+        return CommandResult::failure();
+    }
+    let rendered = ViewBuilder::new()
+        .title("rapport work task address")
+        .section("Task", |b| {
+            b.entries(vec![
+                ("id", id.to_string()),
+                ("status", String::from("addressed")),
+                ("summary", summary.trim().to_string()),
+            ])
+        })
+        .next_actions(nonempty![RunHint::new("rapport review start")])
+        .build();
+    let _ = writeln!(context.out, "{rendered}");
+    CommandResult::success()
+}
+
 fn add_path<F, C, O, E>(
     path: &Utf8Path,
     arguments: Vec<String>,
@@ -212,6 +429,20 @@ where
                     match resolver.resolve_path(context.fs, &path) {
                         Ok(path_rules) => {
                             state.paths.push(path.to_string());
+                            state.build = None;
+                            state.integrate = None;
+                            state.signoff = None;
+                            for build in state.builds.values_mut() {
+                                if build.result_status.is_none()
+                                    && build.status != OperationStatus::Stale
+                                {
+                                    build.result_status = Some(build.status);
+                                }
+                                build.status = OperationStatus::Stale;
+                            }
+                            for review in state.reviews.values_mut() {
+                                review.status = OperationStatus::Stale;
+                            }
                             state.updated_at = context.clock.now_rfc3339();
                             match store.save(context.fs, &state) {
                                 Ok(()) => {
@@ -363,6 +594,91 @@ fn has_successful_integration(state: &WorkState) -> bool {
     pr_created && signoff_complete
 }
 
+fn validate_completion_head<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    state: &WorkState,
+) -> Result<(), CompletionIdentityError>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let expected = state
+        .integrate
+        .as_ref()
+        .and_then(|fact| fact.commit.as_deref())
+        .ok_or(CompletionIdentityError::MissingIntegratedCommit)?;
+    let outcome = context
+        .runner
+        .run(
+            &CommandSpec::new("git", ["rev-parse", "HEAD"]),
+            &context.repo_root,
+        )
+        .map_err(CompletionIdentityError::Invoke)?;
+    if !outcome.success {
+        return Err(CompletionIdentityError::CommandFailed(
+            outcome.stderr.trim().to_string(),
+        ));
+    }
+    let current = outcome.stdout.trim();
+    if current != expected {
+        return Err(CompletionIdentityError::Mismatch {
+            expected: expected.to_string(),
+            current: current.to_string(),
+        });
+    }
+    Ok(())
+}
+
+enum CompletionIdentityError {
+    MissingIntegratedCommit,
+    Invoke(std::io::Error),
+    CommandFailed(String),
+    Mismatch { expected: String, current: String },
+}
+
+impl fmt::Debug for CompletionIdentityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (kind, detail_bytes) = match self {
+            Self::MissingIntegratedCommit => ("missing_integrated_commit", 0),
+            Self::Invoke(source) => ("invoke", source.to_string().len()),
+            Self::CommandFailed(stderr) => ("command_failed", stderr.len()),
+            Self::Mismatch { expected, current } => {
+                ("mismatch", expected.len().saturating_add(current.len()))
+            }
+        };
+        f.debug_struct("CompletionIdentityError")
+            .field("kind", &kind)
+            .field("detail_bytes", &detail_bytes)
+            .finish()
+    }
+}
+
+impl fmt::Display for CompletionIdentityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingIntegratedCommit => {
+                f.write_str("successful integration does not record its commit SHA")
+            }
+            Self::Invoke(source) => {
+                write!(f, "could not read current HEAD ({:?})", source.kind())
+            }
+            Self::CommandFailed(stderr) => {
+                write!(f, "`git rev-parse HEAD` failed ({} bytes)", stderr.len())
+            }
+            Self::Mismatch { expected, current } => write!(
+                f,
+                "current HEAD does not match integrated PR head (current {} bytes, expected {} bytes)",
+                current.len(),
+                expected.len()
+            ),
+        }
+    }
+}
+
+impl Error for CompletionIdentityError {}
+
 fn archive_filename(state: &WorkState, timestamp: &str) -> String {
     format!(
         "{}-{}.toml",
@@ -411,6 +727,14 @@ fn render_no_work(state_file: &str) -> String {
 }
 
 pub fn render_active_work(state: &WorkState) -> String {
+    render_active_work_with_signoffs(state, &[], &[])
+}
+
+fn render_active_work_with_signoffs(
+    state: &WorkState,
+    build_lines: &[String],
+    review_lines: &[String],
+) -> String {
     let mut details = vec![("title", state.title.clone())];
     if let Some(ticket) = &state.ticket {
         details.push(("ticket", ticket.clone()));
@@ -443,9 +767,86 @@ pub fn render_active_work(state: &WorkState) -> String {
     if !facts.is_empty() {
         builder = builder.section("Recent", |b| b.entries(facts));
     }
+    if !build_lines.is_empty() {
+        builder = builder.section("Build Signoffs", |b| b.items(build_lines.to_vec()));
+    }
+    if !review_lines.is_empty() {
+        builder = builder.section("Review Signoffs", |b| b.items(review_lines.to_vec()));
+    }
 
-    builder
+    let open_task = first_open_review_task(review_lines);
+    let next = if let Some(task_id) = open_task {
+        format!("rapport work task address {task_id} --summary \"what changed\"")
+    } else if !review_lines.is_empty()
+        && review_lines.iter().any(|line| {
+            [" missing", " pending", " stale", " fail"]
+                .iter()
+                .any(|status| line.contains(status))
+        })
+    {
+        String::from("rapport review start")
+    } else if build_lines.iter().any(|line| {
+        [" missing", " stale", " fail"]
+            .iter()
+            .any(|status| line.contains(status))
+    }) {
+        String::from("rapport build")
+    } else {
+        String::from("rapport integrate")
+    };
+    builder.next_actions(nonempty![RunHint::new(next)]).build()
+}
+
+fn first_open_review_task(review_lines: &[String]) -> Option<String> {
+    review_lines.iter().find_map(|line| {
+        line.strip_prefix("task `")
+            .and_then(|remaining| remaining.split_once("` open;"))
+            .map(|(id, _)| id.to_string())
+    })
+}
+
+fn render_build_gate(problems: &[String]) -> String {
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph("Required builds are not complete.")
+        .section("Builds", |b| b.items(problems.to_vec()))
         .next_actions(nonempty![RunHint::new("rapport build")])
+        .build()
+}
+
+fn render_review_gate(problems: &[String]) -> String {
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph("Required reviews are not complete.")
+        .section("Reviews", |b| b.items(problems.to_vec()))
+        .next_actions(nonempty![RunHint::new("rapport review start")])
+        .build()
+}
+
+fn render_review_state_error(error: &review::ReviewError) -> String {
+    ViewBuilder::new()
+        .title("rapport work status")
+        .paragraph("Could not evaluate required review state.")
+        .paragraph(error)
+        .next_actions(nonempty![RunHint::new("rapport context doctor <path>")])
+        .build()
+}
+
+fn render_completion_identity_error(error: &CompletionIdentityError) -> String {
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph("Current work no longer matches the integrated pull request head.")
+        .paragraph(error)
+        .next_actions(nonempty![RunHint::new("rapport integrate")])
+        .build()
+}
+
+fn render_build_state_error(error: &build::BuildError) -> String {
+    ViewBuilder::new()
+        .title("rapport work status")
+        .paragraph("Could not evaluate required build state.")
+        .paragraph(error)
+        .next_actions(nonempty![RunHint::new("rapport context doctor <path>")])
         .build()
 }
 
@@ -705,5 +1106,43 @@ mod tests {
         assert!(view.contains("Do the thing"));
         assert!(view.contains("app/api"));
         assert!(view.contains("just ci"));
+    }
+
+    #[test]
+    fn next_action_uses_only_open_tasks_from_current_review_lines() {
+        let state = WorkState::new("Do the thing", "2026-07-07T23:00:00Z");
+        let current_pass = vec![String::from(
+            "`root-review` current pass; grade A (minimum A-)",
+        )];
+
+        let view = render_active_work_with_signoffs(&state, &[], &current_pass);
+
+        assert!(view.contains("rapport integrate"));
+        assert!(!view.contains("rapport work task address"));
+
+        let current_open = vec![
+            String::from("`root-review` current fail; grade B (minimum A-)"),
+            String::from("task `REV-123` open; fix the current review"),
+        ];
+        let view = render_active_work_with_signoffs(&state, &[], &current_open);
+        assert!(view.contains("rapport work task address REV-123 --summary \"what changed\""));
+    }
+
+    #[test]
+    fn completion_identity_diagnostics_redact_sources_output_and_shas() {
+        let invoke = CompletionIdentityError::Invoke(std::io::Error::other("PRIVATE IO"));
+        let failed = CompletionIdentityError::CommandFailed(String::from("PRIVATE STDERR"));
+        let mismatch = CompletionIdentityError::Mismatch {
+            expected: String::from("PRIVATE EXPECTED SHA"),
+            current: String::from("PRIVATE CURRENT SHA"),
+        };
+
+        let diagnostics =
+            format!("{invoke:?} {invoke} {failed:?} {failed} {mismatch:?} {mismatch}");
+
+        assert!(!diagnostics.contains("PRIVATE"));
+        assert!(diagnostics.contains("invoke"));
+        assert!(diagnostics.contains("command_failed"));
+        assert!(diagnostics.contains("mismatch"));
     }
 }

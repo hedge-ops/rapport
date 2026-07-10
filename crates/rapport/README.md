@@ -8,7 +8,7 @@ build conventions, GitHub integration, and local state.
 The first loop is:
 
 ```text
-work -> build -> integrate
+work -> build -> review -> integrate
 ```
 
 ## License

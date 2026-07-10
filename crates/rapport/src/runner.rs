@@ -5,10 +5,19 @@ use std::io;
 ///
 /// Paired with [`CommandOutcome`] across the [`CommandRunner`] trait: spec
 /// describes what to run, outcome describes what happened.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
+}
+
+impl std::fmt::Debug for CommandSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandSpec")
+            .field("program", &self.program)
+            .field("argument_count", &self.args.len())
+            .finish()
+    }
 }
 
 impl CommandSpec {
@@ -29,11 +38,21 @@ impl CommandSpec {
 /// Exit-code success is in [`Self::success`]; non-zero is not an error.
 /// `io::Error` is reserved for failures to *invoke* the program. Output is
 /// captured as `String` via `String::from_utf8_lossy`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CommandOutcome {
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
+}
+
+impl std::fmt::Debug for CommandOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandOutcome")
+            .field("success", &self.success)
+            .field("stdout_bytes", &self.stdout.len())
+            .field("stderr_bytes", &self.stderr.len())
+            .finish()
+    }
 }
 
 /// Runs external programs. Production code uses [`RealCommandRunner`];
@@ -63,5 +82,36 @@ impl CommandRunner for RealCommandRunner {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandOutcome, CommandSpec};
+
+    #[test]
+    fn command_spec_debug_redacts_arguments() {
+        let spec = CommandSpec::new("gh", ["pr", "create", "PRIVATE PR BODY"]);
+
+        let debug = format!("{spec:?}");
+
+        assert!(!debug.contains("PRIVATE"));
+        assert!(debug.contains("program: \"gh\""));
+        assert!(debug.contains("argument_count: 3"));
+    }
+
+    #[test]
+    fn command_outcome_debug_summarizes_captured_output() {
+        let outcome = CommandOutcome {
+            success: false,
+            stdout: String::from("PRIVATE STDOUT"),
+            stderr: String::from("PRIVATE STDERR"),
+        };
+
+        let debug = format!("{outcome:?}");
+
+        assert!(!debug.contains("PRIVATE"));
+        assert!(debug.contains("stdout_bytes: 14"));
+        assert!(debug.contains("stderr_bytes: 14"));
     }
 }
