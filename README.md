@@ -83,6 +83,9 @@ rapport context signoff remove app/apple ci
 rapport context signoff repair app/apple ci
 ```
 
+Signoff-owning folder components use ASCII letters, digits, dots, underscores,
+or hyphens so their generated YAML path filters remain unambiguous.
+
 Adding `ci` to `app/apple/context.toml` generates the exact Rapport-owned
 `.github/workflows/rapport-app-apple-ci.yml` request workflow. On matching pull
 requests it calls the shared `.github/workflows/rapport-signoff.yml` workflow,

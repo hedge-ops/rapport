@@ -73,6 +73,11 @@ impl SignoffRequest {
         } else {
             relative.as_str().replace('\\', "/")
         };
+        if folder != "." && !valid_folder_path(&folder) {
+            return Err(SignoffContractError::InvalidFolder {
+                path: relative.to_path_buf(),
+            });
+        }
         let folder_slug = if folder == "." {
             String::from("root")
         } else {
@@ -253,6 +258,17 @@ fn valid_target(target: &str) -> bool {
         && !target.contains("--")
 }
 
+fn valid_folder_path(folder: &str) -> bool {
+    folder.split('/').all(|component| {
+        !component.is_empty()
+            && component != "."
+            && component != ".."
+            && component
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    })
+}
+
 fn slug(folder: &str) -> String {
     let mut value = String::new();
     let mut separator = false;
@@ -280,6 +296,7 @@ fn display_path(repo_root: &Utf8Path, path: &Utf8Path) -> String {
 #[derive(Debug)]
 pub(crate) enum SignoffContractError {
     InvalidTarget { target: String },
+    InvalidFolder { path: Utf8PathBuf },
     OutsideRepository { path: Utf8PathBuf },
 }
 
@@ -289,6 +306,10 @@ impl fmt::Display for SignoffContractError {
             Self::InvalidTarget { target } => write!(
                 f,
                 "invalid signoff target `{target}`; use lowercase kebab-case"
+            ),
+            Self::InvalidFolder { path } => write!(
+                f,
+                "invalid signoff folder `{path}`; use ASCII letters, digits, dots, underscores, and hyphens in each path component"
             ),
             Self::OutsideRepository { path } => {
                 write!(f, "signoff context `{path}` is outside the repository")
@@ -327,6 +348,22 @@ mod tests {
             rendered
                 .contains("if: github.event.pull_request.head.repo.full_name == github.repository")
         );
+    }
+
+    #[test]
+    fn request_rejects_folder_names_that_are_unsafe_in_yaml_globs() {
+        for folder in ["app/\"legacy\"", "!app", "日本語"] {
+            let result = SignoffRequest::new(
+                Utf8Path::new("/repo"),
+                &Utf8Path::new("/repo").join(folder),
+                "ci",
+            );
+
+            assert!(matches!(
+                result,
+                Err(SignoffContractError::InvalidFolder { .. })
+            ));
+        }
     }
 
     #[test]

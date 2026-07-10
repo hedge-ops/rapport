@@ -29,6 +29,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were required.
 - Changed generated request workflows to match every base branch and skip fork
   PRs, which are intentionally unsupported.
+- Changed exact status reconciliation to request up to 100 contexts and reject
+  truncated responses, and rejected folder names unsafe for generated YAML
+  path filters.
 
 ## [0.3.0] - 2026-07-10
 

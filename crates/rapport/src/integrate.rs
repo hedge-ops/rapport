@@ -1262,15 +1262,30 @@ where
     O: Write,
     E: Write,
 {
-    let status_path = format!("repos/{repository}/commits/{commit}/status");
+    let status_path = format!("repos/{repository}/commits/{commit}/status?per_page=100");
     let json = signoff_stdout(
         context,
         &CommandSpec::new("gh", ["api", status_path.as_str()]),
         "gh api commit status",
     )?;
-    serde_json::from_str(&json).map_err(|error| {
+    let combined: CombinedStatus = serde_json::from_str(&json).map_err(|error| {
         SignoffError::Execution(format!("invalid commit status response: {error}"))
-    })
+    })?;
+    ensure_complete_status_page(&combined)?;
+    Ok(combined)
+}
+
+fn ensure_complete_status_page(combined: &CombinedStatus) -> Result<(), SignoffError> {
+    if combined
+        .total_count
+        .is_some_and(|count| count > combined.statuses.len())
+    {
+        Err(SignoffError::Execution(String::from(
+            "commit has more than 100 status contexts; exact signoff reconciliation is unsupported",
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 fn signoff_stdout<F, C, O, E>(
@@ -1610,6 +1625,8 @@ struct PullRequestInfo {
 
 #[derive(Debug, Deserialize)]
 struct CombinedStatus {
+    #[serde(default)]
+    total_count: Option<usize>,
     statuses: Vec<CommitStatus>,
 }
 
@@ -2092,5 +2109,20 @@ mod tests {
                 ignored_local_state: vec![String::from(".rapport/work.toml")]
             }
         );
+    }
+
+    #[test]
+    fn status_reconciliation_rejects_incomplete_page() {
+        let combined = CombinedStatus {
+            total_count: Some(101),
+            statuses: Vec::new(),
+        };
+
+        let error = match ensure_complete_status_page(&combined) {
+            Ok(()) => panic!("expected incomplete status page to fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("more than 100 status contexts"));
     }
 }
