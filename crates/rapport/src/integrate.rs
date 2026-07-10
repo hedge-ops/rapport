@@ -66,6 +66,17 @@ where
         return CommandResult::failure();
     }
 
+    let signoff_report = match evaluate_signoffs(arguments, context, &state.paths) {
+        Ok(report) => report,
+        Err(result) => return result,
+    };
+    record_best_effort(
+        "integrate signoff",
+        arguments.to_owned(),
+        context,
+        CommandResult::success(),
+    );
+
     if let Err(error) = record_event(
         "integrate start",
         arguments.to_owned(),
@@ -98,7 +109,7 @@ where
         Err(result) => return result,
     };
 
-    let pr_body = pr_body(&state, request.message, &commit);
+    let pr_body = pr_body(&state, request.message, &commit, &signoff_report.required);
     let pr_url = match open_pull_request(
         arguments,
         context,
@@ -108,37 +119,12 @@ where
             request,
             branch: &branch,
             commit: &commit,
-            pr_url: "",
         },
         &pr_body,
     ) {
         Ok(pr_url) => pr_url,
         Err(result) => return result,
     };
-
-    let integration = CreatedIntegration {
-        request,
-        branch: &branch,
-        commit: &commit,
-        pr_url: &pr_url,
-    };
-    let signoff_report = match evaluate_signoffs(arguments, context, store, &mut state, integration)
-    {
-        Ok(report) => report,
-        Err(result) => return result,
-    };
-
-    let signoff_result = if signoff_report.failed.is_empty() {
-        CommandResult::success()
-    } else {
-        CommandResult::failure()
-    };
-    record_best_effort(
-        "integrate signoff",
-        arguments.to_owned(),
-        context,
-        signoff_result,
-    );
 
     save_integration_result(
         context,
@@ -186,7 +172,6 @@ struct CreatedIntegration<'created> {
     request: IntegrationRequest<'created>,
     branch: &'created str,
     commit: &'created str,
-    pr_url: &'created str,
 }
 
 fn inspect_active_changes<F, C, O, E>(
@@ -383,9 +368,7 @@ where
 fn evaluate_signoffs<F, C, O, E>(
     arguments: &[String],
     context: &mut CommandContext<'_, F, C, O, E>,
-    store: &WorkStateStore,
-    state: &mut WorkState,
-    integration: CreatedIntegration<'_>,
+    work_paths: &[String],
 ) -> Result<SignoffReport, CommandResult>
 where
     F: FileSystem,
@@ -393,7 +376,7 @@ where
     O: Write,
     E: Write,
 {
-    match run_signoffs(context, &state.paths) {
+    match run_signoffs(context, work_paths) {
         Ok(report) => Ok(report),
         Err(error) => {
             record_best_effort(
@@ -401,15 +384,6 @@ where
                 arguments.to_owned(),
                 context,
                 CommandResult::failure(),
-            );
-            record_failed_integration(
-                context,
-                store,
-                state,
-                FailedIntegration::new("signoff_error", integration.request.summary)
-                    .branch(integration.branch)
-                    .commit(integration.commit)
-                    .pr_url(integration.pr_url),
             );
             let _ = writeln!(context.err, "{}", render_signoff_error(&error));
             Err(CommandResult::failure())
@@ -537,6 +511,13 @@ where
     O: Write,
     E: Write,
 {
+    let validation = project_context::validate_repository(context.fs, context.paths.repo_root());
+    let problems = validation.problem_details().collect::<Vec<_>>();
+    if !problems.is_empty() {
+        return Err(SignoffError::Contract {
+            problems: problems.into_iter().map(ToString::to_string).collect(),
+        });
+    }
     let required = project_context::required_signoffs_for_paths(
         context.fs,
         context.paths.repo_root(),
@@ -754,12 +735,16 @@ impl Error for IntegrationStepError {}
 
 #[derive(Debug)]
 enum SignoffError {
+    Contract { problems: Vec<String> },
     Context(project_context::ProjectContextError),
 }
 
 impl fmt::Display for SignoffError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Contract { problems } => {
+                write!(f, "invalid signoff contract: {}", problems.join("; "))
+            }
             Self::Context(source) => write!(
                 f,
                 "could not resolve signoffs from project context: {source}"
@@ -771,6 +756,7 @@ impl fmt::Display for SignoffError {
 impl Error for SignoffError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Contract { .. } => None,
             Self::Context(source) => Some(source),
         }
     }
@@ -878,7 +864,7 @@ fn parse_pr_url(stdout: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn pr_body(state: &WorkState, message: &str, commit: &str) -> String {
+fn pr_body(state: &WorkState, message: &str, commit: &str, signoffs: &[String]) -> String {
     let mut body = vec![
         message.to_string(),
         String::new(),
@@ -894,6 +880,16 @@ fn pr_body(state: &WorkState, message: &str, commit: &str) -> String {
     body.push(format!("- Paths: {}", state.paths.join(", ")));
     if let Some(build) = &state.build {
         body.push(format!("- Build: {}", build.status));
+    }
+    if !signoffs.is_empty() {
+        body.push(format!(
+            "- Signoffs: {}",
+            signoffs
+                .iter()
+                .map(|target| format!("`signoff: {target}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     body.push(format!("- Commit: {commit}"));
     body.join("\n")
@@ -960,11 +956,6 @@ impl<'failure> FailedIntegration<'failure> {
 
     fn commit(mut self, commit: &'failure str) -> Self {
         self.commit = Some(commit);
-        self
-    }
-
-    fn pr_url(mut self, pr_url: &'failure str) -> Self {
-        self.pr_url = Some(pr_url);
         self
     }
 }

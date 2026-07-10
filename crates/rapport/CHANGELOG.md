@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added `rapport context signoff add`, `remove`, and `repair` commands that own
+  exact GitHub workflows for requesting SHA-bound local signoffs.
+- Added byte-for-byte doctor validation for shared and folder-target signoff
+  request workflows.
+
+### Changed
+
+- Changed integration to validate the complete signoff contract before any Git
+  commit or pull-request side effect and to report folder-qualified statuses.
+
 ## [0.3.0] - 2026-07-10
 
 ### Added

@@ -10,6 +10,7 @@ mod project_context;
 mod repository_files;
 mod rules;
 mod runner;
+mod signoff_contract;
 mod state;
 mod telemetry;
 mod view;
@@ -137,7 +138,7 @@ where
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use rapport_files::InMemoryFileSystem;
+    use rapport_files::{InMemoryFileSystem, Utf8Path};
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::io;
@@ -421,7 +422,9 @@ boundaries = []
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("Project Context"));
-        assert!(out.contains("validated 1 context.toml file and 1 rules.toml file"));
+        assert!(
+            out.contains("validated 1 context.toml file, 0 signoff targets, and 1 rules.toml file")
+        );
         assert_eq!(err, "");
     }
 
@@ -805,6 +808,111 @@ text = "Second rule."
     }
 
     #[test]
+    fn context_signoff_add_generates_exact_github_request_contract() {
+        let mut fs = InMemoryFileSystem::default();
+        add_editable_context(&mut fs);
+
+        let (code, out, err) = run_with_fs(
+            &["context", "signoff", "add", "app/core/domain", "ci"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        assert!(out.contains("signoff: app-core-domain-ci"));
+        let context = fs
+            .read_to_string("/repo/app/core/domain/context.toml")
+            .unwrap();
+        assert!(context.contains("signoffs = [\n  \"ci\","));
+        let shared = fs
+            .read_to_string("/repo/.github/workflows/rapport-signoff.yml")
+            .unwrap();
+        assert!(shared.contains("context=signoff: ${TARGET}"));
+        let request = fs
+            .read_to_string("/repo/.github/workflows/rapport-app-core-domain-ci.yml")
+            .unwrap();
+        assert!(request.contains("- \"app/core/domain/**\""));
+        assert!(request.contains("target: app-core-domain-ci"));
+        assert!(!request.contains("runs-on:"));
+    }
+
+    #[test]
+    fn context_signoff_repair_and_remove_own_generated_workflow() {
+        let mut fs = InMemoryFileSystem::default();
+        add_editable_context(&mut fs);
+        let request_path = "/repo/.github/workflows/rapport-app-core-domain-ci.yml";
+        let _ = run_with_fs(
+            &["context", "signoff", "add", "app/core/domain", "ci"],
+            &mut fs,
+        );
+        fs.write_string(request_path, "changed\n").unwrap();
+
+        let (repair_code, _, repair_err) = run_with_fs(
+            &["context", "signoff", "repair", "app/core/domain", "ci"],
+            &mut fs,
+        );
+        let repaired = fs.read_to_string(request_path).unwrap();
+        let (remove_code, _, remove_err) = run_with_fs(
+            &["context", "signoff", "remove", "app/core/domain", "ci"],
+            &mut fs,
+        );
+
+        assert_eq!(repair_code, ExitCode::SUCCESS);
+        assert_eq!(repair_err, "");
+        assert!(repaired.contains("target: app-core-domain-ci"));
+        assert_eq!(remove_code, ExitCode::SUCCESS);
+        assert_eq!(remove_err, "");
+        assert!(!fs.is_file(request_path));
+        let context = fs
+            .read_to_string("/repo/app/core/domain/context.toml")
+            .unwrap();
+        assert!(context.contains("signoffs = []"));
+    }
+
+    #[test]
+    fn context_signoff_add_rejects_invalid_target_before_writing() {
+        let mut fs = InMemoryFileSystem::default();
+        add_editable_context(&mut fs);
+
+        let (code, out, err) = run_with_fs(
+            &["context", "signoff", "add", "app/core/domain", "Not Valid"],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("use lowercase kebab-case"));
+        assert!(!fs.is_dir("/repo/.github"));
+        let context = fs
+            .read_to_string("/repo/app/core/domain/context.toml")
+            .unwrap();
+        assert!(!context.contains("Not Valid"));
+    }
+
+    #[test]
+    fn doctor_rejects_drifted_signoff_request_workflow() {
+        let mut fs = InMemoryFileSystem::default();
+        add_editable_context(&mut fs);
+        let _ = run_with_fs(
+            &["context", "signoff", "add", "app/core/domain", "ci"],
+            &mut fs,
+        );
+        fs.write_string(
+            "/repo/.github/workflows/rapport-app-core-domain-ci.yml",
+            "changed\n",
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("has drifted from its generated content"));
+        assert!(err.contains("rapport-app-core-domain-ci.yml"));
+    }
+
+    #[test]
     fn context_show_prints_effective_context_and_benchmarks() {
         let mut fs = InMemoryFileSystem::default();
         fs.write_string(
@@ -961,12 +1069,17 @@ boundaries = []
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("status` — created"));
         assert!(out.contains("AGENTS.md"));
+        assert!(out.contains(".github/workflows/rapport-signoff.yml"));
         assert_eq!(err, "");
         let agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
 
         assert!(agents.contains("## Software Factory"));
         assert!(agents.contains("rapport prime"));
         assert!(!agents.contains("rapport work start"));
+        let signoff = fs
+            .read_to_string("/repo/.github/workflows/rapport-signoff.yml")
+            .unwrap();
+        assert!(signoff.contains("context=signoff: ${TARGET}"));
         let event = first_event(&fs);
 
         assert_eq!(event.command, "init");
@@ -1732,6 +1845,7 @@ signoffs = ["shared", "review"]
 "#,
         )
         .unwrap();
+        add_generated_signoff_contract(&mut fs, "/repo", &["shared", "review"]);
         let runner = successful_integrate_runner();
 
         let (code, out, err) = run_with_runner(
@@ -1750,8 +1864,8 @@ signoffs = ["shared", "review"]
         assert_eq!(err, "");
         assert!(out.contains("pr_created"));
         assert!(out.contains("https://github.com/hedge-ops/rapport/pull/70"));
-        assert!(out.contains("pending `shared`"));
-        assert!(out.contains("pending `review`"));
+        assert!(out.contains("pending `root-shared`"));
+        assert!(out.contains("pending `root-review`"));
         assert_eq!(runner.calls(), successful_integrate_calls());
         let state = load_state(&fs);
         let integrate = state.integrate.unwrap();
@@ -1765,8 +1879,8 @@ signoffs = ["shared", "review"]
             Some("https://github.com/hedge-ops/rapport/pull/70")
         );
         assert_eq!(signoff.status, "pending");
-        assert_eq!(signoff.required, vec!["shared", "review"]);
-        assert_eq!(signoff.pending, vec!["shared", "review"]);
+        assert_eq!(signoff.required, vec!["root-shared", "root-review"]);
+        assert_eq!(signoff.pending, vec!["root-shared", "root-review"]);
         let events = events(&fs);
         let commands = events
             .iter()
@@ -1776,11 +1890,11 @@ signoffs = ["shared", "review"]
         assert_eq!(
             commands,
             vec![
+                "integrate signoff",
                 "integrate start",
                 "integrate inspect",
                 "integrate commit",
                 "integrate pr",
-                "integrate signoff",
                 "integrate",
             ]
         );
@@ -1791,7 +1905,7 @@ signoffs = ["shared", "review"]
         let mut fs = InMemoryFileSystem::default();
         add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
         fs.write_string("/repo/context.toml", "version =").unwrap();
-        let runner = successful_integrate_runner();
+        let runner = FakeRunner::successful("must not run");
 
         let (code, out, err) = run_with_runner(
             &[
@@ -1810,12 +1924,43 @@ signoffs = ["shared", "review"]
         assert!(err.contains("Could not evaluate signoff requirements"));
         assert!(err.contains("context parse error"));
         assert!(load_state(&fs).signoff.is_none());
+        assert!(runner.calls().is_empty());
         let events = events(&fs);
 
-        assert_eq!(events[4].command, "integrate signoff");
-        assert_eq!(events[4].outcome, CommandEventOutcome::Failure);
-        assert_eq!(events[5].command, "integrate");
-        assert_eq!(events[5].outcome, CommandEventOutcome::Failure);
+        assert_eq!(events[0].command, "integrate signoff");
+        assert_eq!(events[0].outcome, CommandEventOutcome::Failure);
+        assert_eq!(events[1].command, "integrate");
+        assert_eq!(events[1].outcome, CommandEventOutcome::Failure);
+    }
+
+    #[test]
+    fn integrate_fails_before_side_effects_when_signoff_workflow_is_missing() {
+        let mut fs = InMemoryFileSystem::default();
+        add_built_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.write_string(
+            "/repo/context.toml",
+            "version = 1\npurpose = \"Repository\"\nsignoffs = [\"ci\"]\n",
+        )
+        .unwrap();
+        let runner = FakeRunner::successful("must not run");
+
+        let (code, out, err) = run_with_runner(
+            &[
+                "integrate",
+                "--summary",
+                "PW-356: Do the thing",
+                "--message",
+                "Do the thing",
+            ],
+            &mut fs,
+            &runner,
+        );
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("missing Rapport-owned signoff workflow"));
+        assert!(err.contains("rapport-signoff.yml"));
+        assert!(runner.calls().is_empty());
     }
 
     #[test]
@@ -1934,6 +2079,23 @@ summary = "`just ci` for crates/rapport/src/lib.rs"
         .unwrap();
     }
 
+    fn add_generated_signoff_contract(
+        fs: &mut InMemoryFileSystem,
+        context_directory: &str,
+        targets: &[&str],
+    ) {
+        signoff_contract::write_shared(fs, Utf8Path::new("/repo")).unwrap();
+        for target in targets {
+            let request = signoff_contract::SignoffRequest::new(
+                Utf8Path::new("/repo"),
+                Utf8Path::new(context_directory),
+                target,
+            )
+            .unwrap();
+            signoff_contract::write_request(fs, Utf8Path::new("/repo"), &request).unwrap();
+        }
+    }
+
     fn add_integrated_active_work_with_paths(fs: &mut InMemoryFileSystem, paths: &[&str]) {
         let rendered_paths = paths
             .iter()
@@ -2029,7 +2191,7 @@ pr_url = "https://github.com/hedge-ops/rapport/pull/70"
                         "--title",
                         "PW-356: Do the thing",
                         "--body",
-                        "Do the thing\n\n## Rapport\n- Work: Do the thing\n- Paths: crates/rapport/src/lib.rs\n- Build: pass\n- Commit: abc123",
+                        "Do the thing\n\n## Rapport\n- Work: Do the thing\n- Paths: crates/rapport/src/lib.rs\n- Build: pass\n- Signoffs: `signoff: root-shared`, `signoff: root-review`\n- Commit: abc123",
                     ],
                 ),
                 Utf8PathBuf::from("/repo"),

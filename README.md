@@ -71,13 +71,28 @@ Folder contexts declare integration needs close to the code they govern:
 ```toml
 version = 1
 purpose = "Owns the Apple application."
-signoffs = ["apple"]
+signoffs = ["ci"]
 ```
 
-Rapport unions inherited signoffs for every active work path and records them as
-pending during integration. A repository-owned GitHub Actions workflow matching
-each signoff name runs the actual validation on the appropriate host. This keeps
-path ownership in `context.toml` and platform execution in GitHub Actions.
+Manage targets through Rapport so their GitHub request workflows stay aligned:
+
+```text
+rapport context signoff add app/apple ci
+rapport context signoff remove app/apple ci
+rapport context signoff repair app/apple ci
+```
+
+Adding `ci` to `app/apple/context.toml` generates the exact Rapport-owned
+`.github/workflows/rapport-app-apple-ci.yml` request workflow. On matching pull
+requests it calls the shared `.github/workflows/rapport-signoff.yml` workflow,
+which posts `signoff: app-apple-ci` as pending for the PR head SHA. It does not
+run repository validation in GitHub; the appropriate local host supplies that
+proof later.
+
+`rapport doctor` compares generated workflows byte-for-byte with their context
+declarations. `rapport integrate` runs the same validation before committing or
+opening a PR, unions inherited targets for every active work path, and records
+the exact statuses expected by the PR.
 
 ## Later Phases
 

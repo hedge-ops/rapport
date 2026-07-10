@@ -13,8 +13,8 @@ Rapport coordinates repository workflow; it does not replace Just or implement r
 const CONTEXT_LONG_ABOUT: &str = "\
 Folder context answers what a project area is about before agents plan, code, test, build, \
 review, or integrate. Ownership records what belongs in the folder. Boundaries describe \
-neighboring responsibilities and where work should move instead. Rules are numbered, \
-reviewable benchmarks for judging local work.";
+neighboring responsibilities and where work should move instead. Signoffs declare the \
+SHA-bound proof a pull request needs. Rules are numbered, reviewable benchmarks for judging local work.";
 const CONTEXT_AFTER_HELP: &str = "\
 `context.toml` is Rapport-owned structured project state. Edit it through \
 `rapport context` commands so formatting, required fields, rule ids, includes, and \
@@ -67,7 +67,7 @@ pub struct ContextArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ContextCommand {
-    /// Show effective purpose, ownership, boundaries, and benchmarks.
+    /// Show effective purpose, ownership, boundaries, signoffs, and benchmarks.
     Show {
         /// Folder or file path to inspect. Defaults to the current directory.
         path: Option<Utf8PathBuf>,
@@ -80,10 +80,44 @@ pub enum ContextCommand {
     Ownership(ContextOwnershipArgs),
     /// Edit reusable rule includes and inline benchmarks.
     Rule(ContextRuleArgs),
-    /// Validate applicable context.toml files and rule includes.
+    /// Manage signoff targets and their generated GitHub request workflows.
+    Signoff(ContextSignoffArgs),
+    /// Validate applicable context.toml files, signoff workflows, and rule includes.
     Doctor {
         /// Folder or file path to inspect. Defaults to the current directory.
         path: Option<Utf8PathBuf>,
+    },
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct ContextSignoffArgs {
+    #[command(subcommand)]
+    pub command: ContextSignoffCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContextSignoffCommand {
+    /// Declare a signoff target and generate its GitHub request workflow.
+    Add {
+        /// Folder whose context.toml owns the target.
+        path: Utf8PathBuf,
+        /// Kebab-case signoff target, such as ci or regression-ios.
+        target: String,
+    },
+    /// Remove a signoff target and its generated GitHub request workflow.
+    Remove {
+        /// Folder whose context.toml owns the target.
+        path: Utf8PathBuf,
+        /// Existing signoff target.
+        target: String,
+    },
+    /// Rewrite the exact Rapport-owned workflows for a declared target.
+    Repair {
+        /// Folder whose context.toml owns the target.
+        path: Utf8PathBuf,
+        /// Existing signoff target.
+        target: String,
     },
 }
 
