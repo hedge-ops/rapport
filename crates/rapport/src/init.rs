@@ -1,4 +1,5 @@
 use crate::context::{Clock, CommandContext};
+use crate::signoff_contract;
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
@@ -29,13 +30,21 @@ where
             let contents = upsert_rapport_section(existing.as_deref());
             match context.fs.write_string(&path, contents) {
                 Ok(()) => {
-                    let status = if existing.is_some() {
-                        "updated"
-                    } else {
-                        "created"
-                    };
-                    let _ = writeln!(context.out, "{}", render_initialized(status));
-                    CommandResult::success()
+                    match signoff_contract::write_shared(context.fs, context.paths.repo_root()) {
+                        Ok(()) => {
+                            let status = if existing.is_some() {
+                                "updated"
+                            } else {
+                                "created"
+                            };
+                            let _ = writeln!(context.out, "{}", render_initialized(status));
+                            CommandResult::success()
+                        }
+                        Err(error) => {
+                            let _ = writeln!(context.err, "{}", render_init_error(&error));
+                            CommandResult::failure()
+                        }
+                    }
                 }
                 Err(error) => {
                     let _ = writeln!(context.err, "{}", render_init_error(&error));
@@ -173,6 +182,9 @@ fn render_initialized(status: &str) -> String {
                 ("status", status.to_string()),
                 ("path", AGENTS_FILE.to_string()),
             ])
+        })
+        .section("Signoff Workflow", |b| {
+            b.entries([("path", signoff_contract::SHARED_WORKFLOW.to_string())])
         })
         .next_actions(nonempty![RunHint::new("rapport work status")])
         .build()

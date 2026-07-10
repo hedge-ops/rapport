@@ -116,8 +116,9 @@ where
         return vec![DoctorCheck::pass(
             PROJECT_CONTEXT_CHECK,
             format!(
-                "validated {} and {}",
+                "validated {}, {}, and {}",
                 file_count(context_validation.context_file_count(), "context.toml file"),
+                file_count(context_validation.signoff_target_count(), "signoff target"),
                 file_count(rule_validation.rule_file_count(), "rules.toml file")
             ),
         )];

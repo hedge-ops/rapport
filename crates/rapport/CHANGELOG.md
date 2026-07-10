@@ -6,6 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added `rapport context signoff add`, `remove`, and `repair` commands that own
+  exact GitHub workflows for requesting SHA-bound local signoffs.
+- Added byte-for-byte doctor validation for shared and folder-target signoff
+  request workflows.
+
+### Changed
+
+- Changed integration to validate the complete signoff contract before any Git
+  commit or pull-request side effect, persist the PR before attempting signoff,
+  execute requested Just targets locally, and post folder-qualified SHA-bound
+  statuses. A later bare `rapport integrate` resumes signoff on the recorded PR.
+- Changed PR integration to push its commit and update an existing open PR for
+  the branch instead of attempting to create a duplicate.
+- Made integration recoverable by persisting intent before committing and
+  publication state before remote side effects. Resumed integration rejects
+  dirty trees, closed or mismatched PRs, forks, ambiguous branch PRs, target
+  mutations, and late status drift.
+- Changed work completion to require signoffs to pass, or to record that none
+  were required.
+- Changed generated request workflows to match every base branch and skip fork
+  PRs, which are intentionally unsupported.
+- Changed exact status reconciliation to request up to 100 contexts and reject
+  truncated responses, and rejected folder names unsafe for generated YAML
+  path filters.
+
 ## [0.3.0] - 2026-07-10
 
 ### Added

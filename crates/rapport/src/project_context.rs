@@ -1,9 +1,11 @@
 use crate::cli::{
     ContextCommand, ContextInitArgs, ContextListCommand, ContextOwnershipCommand,
     ContextPurposeCommand, ContextRuleAddArgs, ContextRuleCommand, ContextRuleUpdateArgs,
+    ContextSignoffCommand,
 };
 use crate::context::{Clock, CommandContext};
 use crate::repository_files::find_named_files;
+use crate::signoff_contract::{self, SignoffRequest};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
@@ -78,6 +80,19 @@ where
                 ("context rule remove", remove_rule(path, id, context))
             }
         },
+        ContextCommand::Signoff(args) => match &args.command {
+            ContextSignoffCommand::Add { path, target } => {
+                ("context signoff add", add_signoff(path, target, context))
+            }
+            ContextSignoffCommand::Remove { path, target } => (
+                "context signoff remove",
+                remove_signoff(path, target, context),
+            ),
+            ContextSignoffCommand::Repair { path, target } => (
+                "context signoff repair",
+                repair_signoff(path, target, context),
+            ),
+        },
         ContextCommand::Doctor { path } => ("context doctor", doctor(path.as_ref(), context)),
     };
     finish(command_name, arguments, context, result)
@@ -92,6 +107,7 @@ pub(crate) fn validate_repository(
         Err(source) => {
             return ProjectContextRepositoryValidation {
                 context_files: Vec::new(),
+                signoff_target_count: 0,
                 problems: vec![ProjectContextValidationProblem {
                     detail: format!(
                         "could not scan repository for `{CONTEXT_FILE}` files at `{repo_root}`: {source}"
@@ -116,17 +132,60 @@ pub(crate) fn validate_repository(
         }
     }
 
+    let mut requests = Vec::new();
+    for context_file in &context_files {
+        let Ok(document) = ProjectContextStore::load_context_file(fs, context_file) else {
+            continue;
+        };
+        let directory = context_file.parent().unwrap_or(repo_root);
+        for target in document.signoffs {
+            match SignoffRequest::new(repo_root, directory, &target) {
+                Ok(request) => requests.push(request),
+                Err(error) => {
+                    let detail = normalize_problem_detail(&format!(
+                        "invalid signoff declaration in `{}`: {error}",
+                        context_file.strip_prefix(repo_root).unwrap_or(context_file)
+                    ));
+                    if seen_problems.insert(detail.clone()) {
+                        problems.push(ProjectContextValidationProblem { detail });
+                    }
+                }
+            }
+        }
+    }
+    for detail in signoff_contract::validate(fs, repo_root, &requests) {
+        let detail = normalize_problem_detail(&detail);
+        if seen_problems.insert(detail.clone()) {
+            problems.push(ProjectContextValidationProblem { detail });
+        }
+    }
+
     ProjectContextRepositoryValidation {
         context_files,
+        signoff_target_count: requests.len(),
         problems,
     }
 }
 
+#[cfg(test)]
 pub(crate) fn required_signoffs_for_paths(
     fs: &impl FileSystem,
     repo_root: &Utf8Path,
     paths: &[String],
 ) -> Result<Vec<String>, ProjectContextError> {
+    required_signoff_requests_for_paths(fs, repo_root, paths).map(|requests| {
+        requests
+            .into_iter()
+            .map(|request| request.qualified_target().to_string())
+            .collect()
+    })
+}
+
+pub(crate) fn required_signoff_requests_for_paths(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    paths: &[String],
+) -> Result<Vec<SignoffRequest>, ProjectContextError> {
     let resolver = ProjectContextResolver::new(ProjectContextStore::new(repo_root.to_path_buf()));
     let mut required = Vec::new();
     let mut seen = BTreeSet::new();
@@ -134,8 +193,11 @@ pub(crate) fn required_signoffs_for_paths(
     for path in paths {
         let effective = resolver.resolve(fs, &repo_root.join(path))?;
         for signoff in effective.signoffs {
-            if seen.insert(signoff.value.clone()) {
-                required.push(signoff.value);
+            let directory = signoff.source.parent().unwrap_or(repo_root);
+            let request = SignoffRequest::new(repo_root, directory, &signoff.value)
+                .map_err(|source| ProjectContextError::SignoffContract { source })?;
+            if seen.insert(request.qualified_target().to_string()) {
+                required.push(request);
             }
         }
     }
@@ -146,12 +208,17 @@ pub(crate) fn required_signoffs_for_paths(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectContextRepositoryValidation {
     context_files: Vec<Utf8PathBuf>,
+    signoff_target_count: usize,
     problems: Vec<ProjectContextValidationProblem>,
 }
 
 impl ProjectContextRepositoryValidation {
     pub(crate) fn context_file_count(&self) -> usize {
         self.context_files.len()
+    }
+
+    pub(crate) fn signoff_target_count(&self) -> usize {
+        self.signoff_target_count
     }
 
     pub(crate) fn problem_details(&self) -> impl Iterator<Item = &str> {
@@ -284,6 +351,209 @@ where
             CommandResult::failure()
         }
     }
+}
+
+fn add_signoff<F, C, O, E>(
+    path: &Utf8PathBuf,
+    target: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    edit_signoff(path, target, SignoffEdit::Add, context)
+}
+
+fn remove_signoff<F, C, O, E>(
+    path: &Utf8PathBuf,
+    target: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    edit_signoff(path, target, SignoffEdit::Remove, context)
+}
+
+fn repair_signoff<F, C, O, E>(
+    path: &Utf8PathBuf,
+    target: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    edit_signoff(path, target, SignoffEdit::Repair, context)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SignoffEdit {
+    Add,
+    Remove,
+    Repair,
+}
+
+impl SignoffEdit {
+    fn command(self) -> &'static str {
+        match self {
+            Self::Add => "add",
+            Self::Remove => "remove",
+            Self::Repair => "repair",
+        }
+    }
+}
+
+fn edit_signoff<F, C, O, E>(
+    path: &Utf8PathBuf,
+    target: &str,
+    edit: SignoffEdit,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = ProjectContextStore::new(context.repo_root.clone());
+    let requested_path = requested_path_from_cwd(Some(path), &context.cwd);
+    let result = apply_signoff_edit(
+        context.fs,
+        context.paths.repo_root(),
+        &store,
+        &requested_path,
+        target,
+        edit,
+    );
+
+    match result {
+        Ok((context_file, request)) => {
+            let _ = writeln!(
+                context.out,
+                "{}",
+                render_signoff_edit(edit.command(), &store, &context_file, &request)
+            );
+            CommandResult::success()
+        }
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    &format!("signoff {}", edit.command()),
+                    "Could not update the signoff contract.",
+                    &error,
+                )
+            );
+            CommandResult::failure()
+        }
+    }
+}
+
+fn apply_signoff_edit(
+    fs: &mut impl FileSystem,
+    repo_root: &Utf8Path,
+    store: &ProjectContextStore,
+    requested_path: &Utf8Path,
+    target: &str,
+    edit: SignoffEdit,
+) -> Result<(Utf8PathBuf, SignoffRequest), ProjectContextError> {
+    let context_file = store.context_file_for_path(fs, requested_path)?;
+    if !fs.is_file(&context_file) {
+        return Err(ProjectContextError::MissingContext { path: context_file });
+    }
+    let directory = context_file.parent().unwrap_or(repo_root);
+    let request = SignoffRequest::new(repo_root, directory, target)
+        .map_err(|source| ProjectContextError::SignoffContract { source })?;
+    let target = request.target();
+    match edit {
+        SignoffEdit::Add => {
+            apply_signoff_add(fs, repo_root, store, requested_path, target, &request)?;
+        }
+        SignoffEdit::Remove => {
+            apply_signoff_remove(fs, store, requested_path, target, &request)?;
+        }
+        SignoffEdit::Repair => {
+            let document = ProjectContextStore::load_context_file(fs, &context_file)?;
+            if !document.signoffs.iter().any(|value| value == target) {
+                return Err(ProjectContextError::MissingSignoffTarget {
+                    target: target.to_string(),
+                });
+            }
+            write_signoff_workflows(fs, repo_root, &request)?;
+        }
+    }
+    Ok((context_file, request))
+}
+
+fn apply_signoff_add(
+    fs: &mut impl FileSystem,
+    repo_root: &Utf8Path,
+    store: &ProjectContextStore,
+    requested_path: &Utf8Path,
+    target: &str,
+    request: &SignoffRequest,
+) -> Result<(), ProjectContextError> {
+    store.mutate(fs, requested_path, |document| {
+        if document.signoffs.iter().any(|value| value == target) {
+            return Ok(EditStatus::Unchanged);
+        }
+        document.signoffs.push(target.to_string());
+        Ok(EditStatus::Added)
+    })?;
+    write_signoff_workflows(fs, repo_root, request)
+}
+
+fn apply_signoff_remove(
+    fs: &mut impl FileSystem,
+    store: &ProjectContextStore,
+    requested_path: &Utf8Path,
+    target: &str,
+    request: &SignoffRequest,
+) -> Result<(), ProjectContextError> {
+    store.mutate(fs, requested_path, |document| {
+        let Some(index) = document.signoffs.iter().position(|value| value == target) else {
+            return Err(ProjectContextError::MissingSignoffTarget {
+                target: target.to_string(),
+            });
+        };
+        document.signoffs.remove(index);
+        Ok(EditStatus::Removed)
+    })?;
+    if fs.is_file(request.workflow_path()) {
+        fs.remove_file(request.workflow_path())
+            .map_err(|source| ProjectContextError::Io {
+                path: request.workflow_path().to_path_buf(),
+                source,
+            })?;
+    }
+    Ok(())
+}
+
+fn write_signoff_workflows(
+    fs: &mut impl FileSystem,
+    repo_root: &Utf8Path,
+    request: &SignoffRequest,
+) -> Result<(), ProjectContextError> {
+    signoff_contract::write_shared(fs, repo_root).map_err(|source| ProjectContextError::Io {
+        path: repo_root.join(signoff_contract::SHARED_WORKFLOW),
+        source,
+    })?;
+    signoff_contract::write_request(fs, repo_root, request).map_err(|source| {
+        ProjectContextError::Io {
+            path: request.workflow_path().to_path_buf(),
+            source,
+        }
+    })
 }
 
 fn add_list_value<F, C, O, E>(
@@ -1190,6 +1460,12 @@ pub(crate) enum ProjectContextError {
     MissingInlineRule {
         id: String,
     },
+    MissingSignoffTarget {
+        target: String,
+    },
+    SignoffContract {
+        source: signoff_contract::SignoffContractError,
+    },
     OutsideRepository {
         path: Utf8PathBuf,
     },
@@ -1250,6 +1526,13 @@ impl fmt::Display for ProjectContextError {
             Self::MissingInlineRule { id } => {
                 write!(f, "inline rule `{id}` does not exist in this context.")
             }
+            Self::MissingSignoffTarget { target } => {
+                write!(
+                    f,
+                    "signoff target `{target}` does not exist in this context."
+                )
+            }
+            Self::SignoffContract { source } => write!(f, "{source}"),
             Self::OutsideRepository { path } => {
                 write!(f, "`{path}` is outside the repository.")
             }
@@ -1265,6 +1548,7 @@ impl Error for ProjectContextError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Decode { source, .. } | Self::RuleDecode { source, .. } => Some(source),
+            Self::SignoffContract { source } => Some(source),
             Self::UnsupportedSchemaVersion { .. }
             | Self::UnsupportedRuleSchemaVersion { .. }
             | Self::ContextAlreadyExists { .. }
@@ -1274,6 +1558,7 @@ impl Error for ProjectContextError {
             | Self::DuplicateRuleId { .. }
             | Self::DuplicateLocalRuleId { .. }
             | Self::MissingInlineRule { .. }
+            | Self::MissingSignoffTarget { .. }
             | Self::OutsideRepository { .. }
             | Self::EmptyField { .. } => None,
         }
@@ -1484,6 +1769,26 @@ fn render_edit(command: &str, store: &ProjectContextStore, report: &EditReport) 
                     .unwrap_or_else(|| store.repo_root.as_path())
             )
         ))])
+        .build()
+}
+
+fn render_signoff_edit(
+    command: &str,
+    store: &ProjectContextStore,
+    context_file: &Utf8Path,
+    request: &SignoffRequest,
+) -> String {
+    ViewBuilder::new()
+        .title(format!("rapport context signoff {command}"))
+        .section("Signoff", |b| {
+            b.entries([
+                ("target", request.target().to_string()),
+                ("status", format!("signoff: {}", request.qualified_target())),
+                ("context", store.display_path(context_file)),
+                ("workflow", store.display_path(request.workflow_path())),
+            ])
+        })
+        .next_actions(nonempty![RunHint::new("rapport doctor")])
         .build()
 }
 
@@ -1745,12 +2050,12 @@ text = "Keep core boring."
         .unwrap();
         fs.write_string(
             "/repo/apple/context.toml",
-            "version = 1\npurpose = \"Apple\"\nsignoffs = [\"apple\", \"shared\"]\n",
+            "version = 1\npurpose = \"Apple\"\nsignoffs = [\"ci\"]\n",
         )
         .unwrap();
         fs.write_string(
             "/repo/windows/context.toml",
-            "version = 1\npurpose = \"Windows\"\nsignoffs = [\"windows\"]\n",
+            "version = 1\npurpose = \"Windows\"\nsignoffs = [\"ci\"]\n",
         )
         .unwrap();
 
@@ -1761,7 +2066,7 @@ text = "Keep core boring."
         )
         .unwrap();
 
-        assert_eq!(required, vec!["shared", "apple", "windows"]);
+        assert_eq!(required, vec!["root-shared", "apple-ci", "windows-ci"]);
     }
 
     #[test]

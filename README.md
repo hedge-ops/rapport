@@ -46,6 +46,7 @@ rapport work rules list
 rapport work rules show <id>
 rapport build [path...]
 rapport integrate --summary "..." --message "..."
+rapport integrate # retry signoff for the recorded PR
 ```
 
 ## Repository Shape
@@ -71,13 +72,37 @@ Folder contexts declare integration needs close to the code they govern:
 ```toml
 version = 1
 purpose = "Owns the Apple application."
-signoffs = ["apple"]
+signoffs = ["ci"]
 ```
 
-Rapport unions inherited signoffs for every active work path and records them as
-pending during integration. A repository-owned GitHub Actions workflow matching
-each signoff name runs the actual validation on the appropriate host. This keeps
-path ownership in `context.toml` and platform execution in GitHub Actions.
+Manage targets through Rapport so their GitHub request workflows stay aligned:
+
+```text
+rapport context signoff add app/apple ci
+rapport context signoff remove app/apple ci
+rapport context signoff repair app/apple ci
+```
+
+Signoff-owning folder components use ASCII letters, digits, dots, underscores,
+or hyphens so their generated YAML path filters remain unambiguous.
+
+Adding `ci` to `app/apple/context.toml` generates the exact Rapport-owned
+`.github/workflows/rapport-app-apple-ci.yml` request workflow. On matching pull
+requests it calls the shared `.github/workflows/rapport-signoff.yml` workflow,
+which posts `signoff: app-apple-ci` as pending for the PR head SHA. It does not
+run repository validation in GitHub; `rapport integrate` runs `just ci` from
+the declaring folder on the local host and posts the SHA-bound result.
+
+`rapport doctor` compares generated workflows byte-for-byte with their context
+declarations. `rapport integrate` runs the same validation before committing or
+opening a PR and unions inherited targets for every active work path. It records
+commit intent before creating the commit, promotes that to publication state
+before pushing, then records the open same-repository PR and its pending
+signoffs before attempting proof. Signoff requires a completely clean worktree
+before and after every target, rejects forks and missing or unexpected statuses,
+and reconciles the final SHA-bound status set. A failed attempt leaves durable
+state, so a bare `rapport integrate` resumes the interrupted phase without a
+duplicate commit or PR.
 
 ## Later Phases
 

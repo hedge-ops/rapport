@@ -352,10 +352,15 @@ fn resolve_existing_work_path(
 }
 
 fn has_successful_integration(state: &WorkState) -> bool {
-    state
+    let pr_created = state
         .integrate
         .as_ref()
-        .is_some_and(|fact| fact.status == "pr_created")
+        .is_some_and(|fact| fact.status == "pr_created");
+    let signoff_complete = state
+        .signoff
+        .as_ref()
+        .is_some_and(|fact| matches!(fact.status.as_str(), "pass" | "none"));
+    pr_created && signoff_complete
 }
 
 fn archive_filename(state: &WorkState, timestamp: &str) -> String {
@@ -578,12 +583,17 @@ fn render_missing_summary_for_complete() -> String {
 }
 
 fn render_unintegrated_work_for_complete(state: &WorkState) -> String {
-    ViewBuilder::new()
-        .title("rapport work complete")
-        .paragraph(format!(
+    let problem = match state.signoff.as_ref().map(|fact| fact.status.as_str()) {
+        Some("pending") => String::from("Required signoffs are still pending."),
+        Some("fail") => String::from("Required signoffs are failing."),
+        _ => format!(
             "Active work `{}` has not recorded a successful integration.",
             state.title
-        ))
+        ),
+    };
+    ViewBuilder::new()
+        .title("rapport work complete")
+        .paragraph(problem)
         .paragraph("Use the local-only flag only when this work should close without a PR.")
         .next_actions(nonempty![
             RunHint::new("rapport integrate"),
