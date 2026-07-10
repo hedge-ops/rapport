@@ -9,7 +9,7 @@ integration, and local state.
 The first delivery loop is intentionally tight:
 
 ```text
-work -> build -> integrate
+work -> build -> review -> integrate
 ```
 
 The goal is not to invent another build system. Rapport sits on top of the
@@ -31,8 +31,11 @@ Rapport's first responsibility is the inner development loop:
 
 - `work` creates and reports active local work context: title, ticket,
   objective, paths, stage, and applicable rules.
-- `build` validates that active work by running existing repository Just
-  conventions.
+- `build` runs applicable typed build declarations through existing repository
+  Just conventions and records their exact inputs.
+- `review` emits product-neutral JSON packets for an independent adversarial
+  reviewer and records structured JSON results against the exact reviewed
+  inputs.
 - `integrate` turns local work into durable Git/GitHub state: commit, PR,
   signoff status, and remaining action.
 
@@ -45,6 +48,8 @@ rapport work add path <path>
 rapport work rules list
 rapport work rules show <id>
 rapport build [path...]
+rapport review [path...]
+rapport review --result <result.json>
 rapport integrate --summary "..." --message "..."
 rapport integrate # retry signoff for the recorded PR
 ```
@@ -72,37 +77,108 @@ Folder contexts declare integration needs close to the code they govern:
 ```toml
 version = 1
 purpose = "Owns the Apple application."
-signoffs = ["ci"]
+
+[[signoffs]]
+kind = "build"
+target = "ci"
+
+[[signoffs]]
+kind = "review"
+minimum_grade = "A-"
 ```
 
 Manage targets through Rapport so their GitHub request workflows stay aligned:
 
 ```text
-rapport context signoff add app/apple ci
-rapport context signoff remove app/apple ci
-rapport context signoff repair app/apple ci
+rapport context signoff add app/apple build ci
+rapport context signoff add app/apple review --minimum-grade A-
+rapport context signoff remove app/apple review
+rapport context signoff repair app/apple build ci
 ```
 
 Signoff-owning folder components use ASCII letters, digits, dots, underscores,
-or hyphens so their generated YAML path filters remain unambiguous.
+or hyphens so their generated YAML path filters remain unambiguous. Generated
+identities use `[folder-path|root]-[build-[target]|review]`: for example,
+`app-apple-build-ci`, `app-apple-review`, and `root-review`. Reviews are one
+comprehensive, adversarial check per declaring folder; security and other
+concerns come from the resolved rules and instructions rather than review
+profiles. Because readable folder slugs are intentionally lossy, Rapport rejects
+collisions such as `app/apple` versus `app-apple`, as well as identities over
+GitHub's 140-byte status-context limit and duplicate identities within one
+context, before mutating either the context or generated workflows.
 
-Adding `ci` to `app/apple/context.toml` generates the exact Rapport-owned
-`.github/workflows/rapport-app-apple-ci.yml` request workflow. On matching pull
+Adding the build above to `app/apple/context.toml` generates the exact
+Rapport-owned `.github/workflows/rapport-app-apple-build-ci.yml` request
+workflow. On matching pull
 requests it calls the shared `.github/workflows/rapport-signoff.yml` workflow,
-which posts `signoff: app-apple-ci` as pending for the PR head SHA. It does not
-run repository validation in GitHub; `rapport integrate` runs `just ci` from
-the declaring folder on the local host and posts the SHA-bound result.
+which posts `signoff: app-apple-build-ci` as pending for the PR head SHA. Folder
+and kind are always part of workflow names and status contexts; build identities
+also include their target. It does not run repository validation in GitHub;
+`rapport integrate` runs `just ci` from the declaring folder on the local host
+and posts the SHA-bound result.
 
-`rapport doctor` compares generated workflows byte-for-byte with their context
-declarations. `rapport integrate` runs the same validation before committing or
-opening a PR and unions inherited targets for every active work path. It records
+Signoffs inherit from ancestor contexts and union across active work paths. A
+parent build and child review therefore remain independent requirements. The
+old string form, `signoffs = ["ci"]`, remains readable and means a build named
+`ci`. The next context edit (including `signoff add` or `signoff repair`) renders
+typed `[[signoffs]]` tables, writes the new kind-qualified workflow, and removes
+the corresponding legacy workflow. That is the explicit migration path; review
+declarations have no string shorthand. Cleanup preserves any legacy-named path
+that is also owned by a distinct current typed declaration.
+
+`rapport review` resolves each applicable review declaration, active paths, and
+context benchmarks. It emits a JSON request containing adversarial instructions,
+resolved rules, base/head SHAs, and deterministic content, rule, instruction,
+and aggregate input checksums. Reviewers must form current findings first; the
+packet then supplies a separate prior-action reconciliation ledger so a fresh
+reviewer can preserve stable IDs without anchoring the adversarial pass. A
+capable host can hand the packet to any independent reviewer and write its JSON
+result to a file for `rapport review --result <file>`. Every new input checksum
+remains pending until a matching result is accepted; a prior grade is history,
+not proof for the new request. Supplying explicit paths scopes each shared
+review requirement, its resolved rules, and its checksum to those paths instead
+of retaining unrelated active-work paths. Explicit build and review scopes must
+be descendants of an active-work path; parent traversal and ancestor widening
+are rejected.
+
+Results carry `pass` or `fail`, an A-F grade with optional `+` or `-`, a
+description, and current actions with stable IDs, cited rule IDs, and concrete
+evidence. Rapport verifies the checksum and derives the outcome from the
+declaration. The default passing threshold is A- and any outstanding action
+fails the review. Local reviews include uncommitted changes in their content
+checksum, so `HEAD` is never treated as sufficient proof.
+
+`rapport work status` recomputes current build and review inputs. It shows each
+required build and review as missing, pending, stale, passing, or failing, with
+its SHA/checksum; reviews also include grade and active actions. Editing signed
+content makes the prior result stale while retaining review actions. A later
+review replaces the current action set and records resolved IDs and all prior
+attempts in work history. When an exact review input remains reusable across a
+commit, status refreshes the displayed head SHA to the current commit. Once all
+typed requirements pass—including review-only or no-signoff work—the next step
+is integration rather than an inapplicable build command.
+
+`rapport doctor` compares generated workflows byte-for-byte with their typed
+context declarations. `rapport integrate` runs the same validation before
+committing or opening a PR and unions inherited requirements for every active
+work path. Integration does not depend on the legacy aggregate `build` fact: it
+runs or exactly reuses each typed build and review requirement directly, so a
+review-only context is valid. It records
 commit intent before creating the commit, promotes that to publication state
 before pushing, then records the open same-repository PR and its pending
 signoffs before attempting proof. Signoff requires a completely clean worktree
 before and after every target, rejects forks and missing or unexpected statuses,
-and reconciles the final SHA-bound status set. A failed attempt leaves durable
-state, so a bare `rapport integrate` resumes the interrupted phase without a
-duplicate commit or PR.
+and reconciles the final SHA-bound status set. Integration calls the same build
+and review services as the first-class verbs. A local result is reused only when
+its content, base, declaration/instruction, and rule checksums match the exact PR
+inputs; otherwise the operation reruns, or a fresh review request remains
+pending. Even an existing successful GitHub status is accepted only after that
+local exact-input proof is re-evaluated. A failed or interrupted attempt leaves durable state, so a bare
+`rapport integrate` resumes without a duplicate commit, PR, or completed
+operation. Missing or stale builds, and missing, stale, below-threshold, or
+action-bearing reviews, block both integration success and work completion.
+Normal work completion also requires local `HEAD` to equal the recorded
+integrated PR head; `--without-integrate` remains the explicit local-only path.
 
 ## Later Phases
 

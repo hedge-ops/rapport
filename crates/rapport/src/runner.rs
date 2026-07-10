@@ -29,11 +29,21 @@ impl CommandSpec {
 /// Exit-code success is in [`Self::success`]; non-zero is not an error.
 /// `io::Error` is reserved for failures to *invoke* the program. Output is
 /// captured as `String` via `String::from_utf8_lossy`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CommandOutcome {
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
+}
+
+impl std::fmt::Debug for CommandOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandOutcome")
+            .field("success", &self.success)
+            .field("stdout_bytes", &self.stdout.len())
+            .field("stderr_bytes", &self.stderr.len())
+            .finish()
+    }
 }
 
 /// Runs external programs. Production code uses [`RealCommandRunner`];
@@ -63,5 +73,25 @@ impl CommandRunner for RealCommandRunner {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommandOutcome;
+
+    #[test]
+    fn command_outcome_debug_summarizes_captured_output() {
+        let outcome = CommandOutcome {
+            success: false,
+            stdout: String::from("PRIVATE STDOUT"),
+            stderr: String::from("PRIVATE STDERR"),
+        };
+
+        let debug = format!("{outcome:?}");
+
+        assert!(!debug.contains("PRIVATE"));
+        assert!(debug.contains("stdout_bytes: 14"));
+        assert!(debug.contains("stderr_bytes: 14"));
     }
 }

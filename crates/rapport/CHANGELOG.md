@@ -8,6 +8,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added typed build and review signoff declarations with inherited, folder-owned
+  requirements and readable folder/kind workflow identities; build identities
+  also include their target.
+- Added a host-neutral `rapport review` JSON request/result protocol with
+  adversarial instructions, resolved rules, grades, evidence-bearing actions,
+  exact input checksums, and local uncommitted-change support.
+- Added structured build and review state, review attempt/action reconciliation,
+  dynamic staleness reporting, and completion gates.
 - Added `rapport context signoff add`, `remove`, and `repair` commands that own
   exact GitHub workflows for requesting SHA-bound local signoffs.
 - Added byte-for-byte doctor validation for shared and folder-target signoff
@@ -15,6 +23,56 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Changed `rapport build` and `rapport integrate` to use one typed build service,
+  and changed integration to coordinate that same service with the review
+  service. Exact local results are reused only when their base, content, rule,
+  and instruction inputs match the PR head operation. Integration no longer
+  requires the obsolete aggregate build fact, including for review-only
+  contexts.
+- Kept legacy string signoffs readable as build declarations; the next context
+  edit writes typed `[[signoffs]]` tables, replaces the legacy workflow with its
+  kind-qualified identity, and review declarations require the typed form.
+  Every implicit migration now checks repository-wide readable-identity
+  collisions before changing either context or workflow files, and legacy
+  cleanup preserves paths owned by a distinct typed workflow.
+- Changed signoff workflows and commit statuses to use
+  `[folder-path|root]-[build-[target]|review]`, such as
+  `signoff: root-build-ci` and `signoff: root-review`; ambiguous readable folder
+  slugs are rejected before mutation and reported by doctor.
+- Made each declared review a comprehensive adversarial review with no target or
+  profile; resolved context rules and instructions supply concerns such as
+  security.
+- Added redacted diagnostic formatting for build/review state, command output,
+  resolved rules, proof snapshots, protocol errors, signoff requirements,
+  attempts, and actions so captured output, repository-authored text, reviewer
+  prose, evidence, paths, SHAs, and checksums do not leak through Debug or error
+  displays. Work state/facts, completion identity errors, and user-visible
+  captured operation output use the same redacted summaries.
+- Changed work status and completion to recapture build inputs, mark old proof
+  stale, and reject missing, stale, or failing required builds.
+- Changed work status to refresh the displayed head SHA when exact review proof
+  survives a commit, and to route passing review-only or no-signoff work to
+  integration without consulting the legacy aggregate build fact.
+- Changed successful build guidance to request review only when a typed review
+  applies; build-only work proceeds directly to integration.
+- Changed review requests to expose prior actions only in a final reconciliation
+  ledger, preserving independent findings and stable action IDs.
+- Changed explicit `rapport review <path...>` requests to scope shared review
+  paths, rules, instructions, and checksums to only the selected work, and
+  rejected parent traversal or ancestor widening for explicit build and review
+  paths.
+- Changed integration to re-evaluate exact local proof even when GitHub already
+  reports a successful status, and included untracked file mode in snapshots.
+- Included empty untracked file paths and modes in local snapshot checksums,
+  disabled Git text conversion for byte-exact diffs, fetched and revalidated the
+  PR head/base merge-base around integration proof, and made multi-review result
+  envelopes validate atomically with duplicate-ID rejection.
+- Changed new review checksums to remain pending until their own result is
+  accepted, without inheriting an earlier passing grade.
+- Changed work completion to require current `HEAD` to match the integrated PR
+  head, and changed all outdated build outcomes to render as stale.
+- Rejected generated signoff identities over GitHub's status-context limit
+  before context mutation.
 - Changed integration to validate the complete signoff contract before any Git
   commit or pull-request side effect, persist the PR before attempting signoff,
   execute requested Just targets locally, and post folder-qualified SHA-bound

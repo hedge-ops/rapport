@@ -1,11 +1,11 @@
 use crate::cli::IntegrateArgs;
 use crate::context::{Clock, CommandContext};
-use crate::project_context;
+use crate::project_context::{self, SignoffRequirement};
 use crate::runner::{CommandOutcome, CommandSpec};
-use crate::signoff_contract::SignoffRequest;
-use crate::state::{WorkFact, WorkState, WorkStateError, WorkStateStore};
+use crate::signoff_contract::SignoffKind;
+use crate::state::{OperationStatus, WorkFact, WorkState, WorkStateError, WorkStateStore};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
-use crate::{RunHint, ViewBuilder};
+use crate::{RunHint, ViewBuilder, build, review};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
 use serde::Deserialize;
@@ -513,10 +513,10 @@ where
         Err(result) => return result,
     };
     if branch != intent.branch {
-        let error = SignoffError::Execution(format!(
-            "local branch `{branch}` does not match committing branch `{}`",
-            intent.branch
-        ));
+        let error = SignoffError::execution(
+            "local branch does not match committing branch",
+            format!("current `{branch}`, expected `{}`", intent.branch),
+        );
         let _ = writeln!(context.err, "{}", render_signoff_error(&error));
         return CommandResult::failure();
     }
@@ -566,9 +566,10 @@ where
         };
         let expected_message = format!("{}\n\n{}", intent.summary, intent.message);
         if parent != intent.base_commit || message != expected_message {
-            let error = SignoffError::Execution(String::from(
-                "HEAD does not match the single commit described by the saved integration intent",
-            ));
+            let error = SignoffError::execution(
+                "HEAD does not match the saved integration intent",
+                String::from("parent or commit message differs"),
+            );
             let _ = writeln!(context.err, "{}", render_signoff_error(&error));
             return CommandResult::failure();
         }
@@ -699,7 +700,7 @@ where
     O: Write,
     E: Write,
 {
-    let report = match execute_signoffs(context, integration, resolved) {
+    let report = match execute_signoffs(context, store, state, integration, resolved) {
         Ok(report) => report,
         Err(error) => {
             record_best_effort(
@@ -1005,18 +1006,18 @@ where
             problems: problems.into_iter().map(ToString::to_string).collect(),
         });
     }
-    let requests = project_context::required_signoff_requests_for_paths(
+    let requirements = project_context::required_signoff_requirements_for_paths(
         context.fs,
         context.paths.repo_root(),
         work_paths,
     )
     .map_err(SignoffError::Context)?;
-    let required = requests
+    let required = requirements
         .iter()
-        .map(|request| request.qualified_target().to_string())
+        .map(|requirement| requirement.request.qualified_target().to_string())
         .collect();
     Ok(ResolvedSignoffs {
-        requests,
+        requirements,
         report: SignoffReport::from_required(required),
     })
 }
@@ -1053,16 +1054,17 @@ where
     if status.is_empty() {
         Ok(())
     } else {
-        Err(SignoffError::Execution(format!(
-            "worktree must be completely clean before signoff:\n{status}"
-        )))
+        Err(SignoffError::execution(
+            "worktree must be completely clean before signoff",
+            status,
+        ))
     }
 }
 
 fn validate_pr_identity<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
     integration: &RecordedIntegration,
-) -> Result<String, SignoffError>
+) -> Result<ValidatedPullRequest, SignoffError>
 where
     F: FileSystem,
     C: Clock,
@@ -1079,36 +1081,37 @@ where
                 "view",
                 &integration.pr_url,
                 "--json",
-                "headRefOid,headRefName,isCrossRepository,state,url",
+                "baseRefOid,headRefOid,headRefName,isCrossRepository,state,url",
             ],
         ),
         "gh pr view",
     )?;
     let pull_request: PullRequestInfo = serde_json::from_str(&json).map_err(|error| {
-        SignoffError::Execution(format!("invalid pull request response: {error}"))
+        SignoffError::execution("invalid pull request response", error.to_string())
     })?;
     if pull_request.state != "OPEN" {
-        return Err(SignoffError::Execution(format!(
-            "pull request is `{}`; signoff requires an open PR",
-            pull_request.state
-        )));
+        return Err(SignoffError::execution(
+            "signoff requires an open PR",
+            pull_request.state,
+        ));
     }
     if pull_request.is_cross_repository {
-        return Err(SignoffError::Execution(String::from(
+        return Err(SignoffError::execution(
             "fork pull requests are not supported for Rapport signoff",
-        )));
+            String::new(),
+        ));
     }
     if pull_request.head_ref_oid != integration.commit {
-        return Err(SignoffError::Execution(format!(
-            "PR HEAD `{}` does not match integrated commit `{}`",
-            pull_request.head_ref_oid, integration.commit
-        )));
+        return Err(SignoffError::execution(
+            "PR HEAD does not match integrated commit",
+            format!("{} != {}", pull_request.head_ref_oid, integration.commit),
+        ));
     }
     if pull_request.head_ref_name != integration.branch {
-        return Err(SignoffError::Execution(format!(
-            "PR branch `{}` does not match integrated branch `{}`",
-            pull_request.head_ref_name, integration.branch
-        )));
+        return Err(SignoffError::execution(
+            "PR branch does not match integrated branch",
+            format!("{} != {}", pull_request.head_ref_name, integration.branch),
+        ));
     }
     let repository = signoff_stdout(
         context,
@@ -1127,12 +1130,41 @@ where
     )?;
     let expected_prefix = format!("https://github.com/{repository}/pull/");
     if !pull_request.url.starts_with(&expected_prefix) {
-        return Err(SignoffError::Execution(format!(
-            "pull request `{}` does not belong to repository `{repository}`",
-            pull_request.url
-        )));
+        return Err(SignoffError::execution(
+            "pull request does not belong to the current repository",
+            format!("{} not under {repository}", pull_request.url),
+        ));
     }
-    Ok(repository)
+    signoff_stdout(
+        context,
+        &CommandSpec::new(
+            "git",
+            [
+                "fetch",
+                "--no-tags",
+                "origin",
+                pull_request.base_ref_oid.as_str(),
+            ],
+        ),
+        "git fetch PR base",
+    )?;
+    let merge_base_sha = signoff_stdout(
+        context,
+        &CommandSpec::new(
+            "git",
+            [
+                "merge-base",
+                &pull_request.head_ref_oid,
+                &pull_request.base_ref_oid,
+            ],
+        ),
+        "git merge-base PR head and base",
+    )?;
+    Ok(ValidatedPullRequest {
+        repository,
+        base_ref_oid: pull_request.base_ref_oid,
+        merge_base_sha,
+    })
 }
 
 fn validate_local_identity<F, C, O, E>(
@@ -1152,9 +1184,10 @@ where
         "git rev-parse HEAD",
     )?;
     if local_head != commit {
-        return Err(SignoffError::Execution(format!(
-            "local HEAD `{local_head}` does not match integrated commit `{commit}`"
-        )));
+        return Err(SignoffError::execution(
+            "local HEAD does not match integrated commit",
+            format!("{local_head} != {commit}"),
+        ));
     }
     let local_branch = signoff_stdout(
         context,
@@ -1162,15 +1195,37 @@ where
         "git branch --show-current",
     )?;
     if local_branch != branch {
-        return Err(SignoffError::Execution(format!(
-            "local branch `{local_branch}` does not match integrated branch `{branch}`"
-        )));
+        return Err(SignoffError::execution(
+            "local branch does not match integrated branch",
+            format!("{local_branch} != {branch}"),
+        ));
     }
     Ok(())
 }
 
+fn ensure_pr_base_unchanged(
+    before: &ValidatedPullRequest,
+    after: &ValidatedPullRequest,
+) -> Result<(), SignoffError> {
+    if before.repository == after.repository
+        && before.base_ref_oid == after.base_ref_oid
+        && before.merge_base_sha == after.merge_base_sha
+    {
+        return Ok(());
+    }
+    Err(SignoffError::execution(
+        "PR base changed while signoff was running; rerun `rapport integrate`",
+        format!(
+            "base {} -> {}, merge-base {} -> {}",
+            before.base_ref_oid, after.base_ref_oid, before.merge_base_sha, after.merge_base_sha
+        ),
+    ))
+}
+
 fn execute_signoffs<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
+    store: &WorkStateStore,
+    work_state: &mut WorkState,
     integration: &RecordedIntegration,
     resolved: &ResolvedSignoffs,
 ) -> Result<SignoffReport, SignoffError>
@@ -1181,72 +1236,105 @@ where
     E: Write,
 {
     ensure_clean_worktree(context)?;
-    let repository = validate_pr_identity(context, integration)?;
-    let combined = fetch_statuses(context, &repository, &integration.commit)?;
-    let states = verify_status_set(&resolved.requests, &combined)?;
+    let mut pull_request = validate_pr_identity(context, integration)?;
+    let combined = fetch_statuses(context, &pull_request.repository, &integration.commit)?;
+    verify_status_set(&resolved.requirements, &combined)?;
 
     let mut all_succeeded = true;
-    for request in &resolved.requests {
+    for requirement in &resolved.requirements {
         ensure_clean_worktree(context)?;
         validate_local_identity(context, &integration.branch, &integration.commit)?;
+        let request = &requirement.request;
         let qualified = request.qualified_target().to_string();
-        let context_name = format!("signoff: {qualified}");
-        if states
-            .get(&context_name)
-            .is_some_and(|state| state == "success")
-        {
-            continue;
-        }
-        let outcome = context
-            .runner
-            .run(
-                &CommandSpec::new("just", [request.target()]),
-                request.context_directory(),
+        // A remote success proves only that this context name was posted for
+        // the SHA. Re-evaluate the shared local service so reuse is accepted
+        // only when content, base, rules, and instructions still match.
+        let (operation_status, review_packet) = match request.kind() {
+            SignoffKind::Build => {
+                let execution = build::evaluate_requirement(
+                    context,
+                    work_state,
+                    requirement,
+                    &pull_request.merge_base_sha,
+                )
+                .map_err(|error| {
+                    SignoffError::execution("build signoff operation failed", error.to_string())
+                })?;
+                (execution.status, None)
+            }
+            SignoffKind::Review => review::evaluate_requirement(
+                context,
+                work_state,
+                requirement,
+                &pull_request.merge_base_sha,
             )
             .map_err(|error| {
-                SignoffError::Execution(format!("could not run signoff `{qualified}`: {error}"))
-            })?;
-        let state = if outcome.success {
-            "success"
-        } else {
-            "failure"
+                SignoffError::execution("review signoff operation failed", error.to_string())
+            })?,
         };
-        if outcome.success
-            && let Err(error) = ensure_clean_worktree(context).and_then(|()| {
-                validate_local_identity(context, &integration.branch, &integration.commit)
-            })
-        {
-            let _ = post_signoff_status(
-                context,
-                &repository,
-                &integration.commit,
-                &integration.pr_url,
-                &qualified,
-                "failure",
-            );
-            return Err(error);
+        work_state.updated_at = context.clock.now_rfc3339();
+        store.save(context.fs, work_state).map_err(|error| {
+            SignoffError::execution("could not save signoff work state", error.to_string())
+        })?;
+        let status_state = match operation_status {
+            OperationStatus::Pass => "success",
+            OperationStatus::Fail | OperationStatus::Stale => "failure",
+            OperationStatus::Pending => "pending",
+        };
+        if operation_status == OperationStatus::Pass {
+            let refreshed = ensure_clean_worktree(context)
+                .and_then(|()| validate_pr_identity(context, integration));
+            let refreshed = match refreshed.and_then(|refreshed| {
+                ensure_pr_base_unchanged(&pull_request, &refreshed)?;
+                Ok(refreshed)
+            }) {
+                Ok(refreshed) => refreshed,
+                Err(error) => {
+                    let _ = post_signoff_status(
+                        context,
+                        &pull_request.repository,
+                        &integration.commit,
+                        &integration.pr_url,
+                        &qualified,
+                        "failure",
+                    );
+                    return Err(error);
+                }
+            };
+            pull_request = refreshed;
         }
         post_signoff_status(
             context,
-            &repository,
+            &pull_request.repository,
             &integration.commit,
             &integration.pr_url,
             &qualified,
-            state,
+            status_state,
         )?;
-        if !outcome.success {
+        if let Some(packet) = review_packet {
+            let json = serde_json::to_string_pretty(&packet).map_err(|error| {
+                SignoffError::execution("could not encode review request", error.to_string())
+            })?;
+            let _ = writeln!(
+                context.err,
+                "Review `{qualified}` requires an independent structured result.\n{json}"
+            );
+        }
+        if operation_status != OperationStatus::Pass {
             all_succeeded = false;
             break;
         }
     }
     if all_succeeded {
         ensure_clean_worktree(context)?;
-        validate_local_identity(context, &integration.branch, &integration.commit)?;
+        let final_pull_request = validate_pr_identity(context, integration)?;
+        ensure_pr_base_unchanged(&pull_request, &final_pull_request)?;
+        pull_request = final_pull_request;
     }
-    let final_statuses = fetch_statuses(context, &repository, &integration.commit)?;
-    let final_states = verify_status_set(&resolved.requests, &final_statuses)?;
+    let final_statuses = fetch_statuses(context, &pull_request.repository, &integration.commit)?;
+    let final_states = verify_status_set(&resolved.requirements, &final_statuses)?;
     Ok(SignoffReport::from_states(
-        &resolved.requests,
+        &resolved.requirements,
         &final_states,
     ))
 }
@@ -1269,7 +1357,7 @@ where
         "gh api commit status",
     )?;
     let combined: CombinedStatus = serde_json::from_str(&json).map_err(|error| {
-        SignoffError::Execution(format!("invalid commit status response: {error}"))
+        SignoffError::execution("invalid commit status response", error.to_string())
     })?;
     ensure_complete_status_page(&combined)?;
     Ok(combined)
@@ -1280,9 +1368,10 @@ fn ensure_complete_status_page(combined: &CombinedStatus) -> Result<(), SignoffE
         .total_count
         .is_some_and(|count| count > combined.statuses.len())
     {
-        Err(SignoffError::Execution(String::from(
-            "commit has more than 100 status contexts; exact signoff reconciliation is unsupported",
-        )))
+        Err(SignoffError::execution(
+            "more than 100 status contexts; exact signoff reconciliation is unsupported",
+            combined.statuses.len().to_string(),
+        ))
     } else {
         Ok(())
     }
@@ -1301,16 +1390,16 @@ where
 {
     run_success(context, spec, display)
         .map(|outcome| outcome.stdout.trim().to_string())
-        .map_err(|error| SignoffError::Execution(error.to_string()))
+        .map_err(|error| SignoffError::execution(display, error.to_string()))
 }
 
 fn verify_status_set(
-    requests: &[SignoffRequest],
+    requirements: &[SignoffRequirement],
     combined: &CombinedStatus,
 ) -> Result<BTreeMap<String, String>, SignoffError> {
-    let expected = requests
+    let expected = requirements
         .iter()
-        .map(|request| format!("signoff: {}", request.qualified_target()))
+        .map(|requirement| format!("signoff: {}", requirement.request.qualified_target()))
         .collect::<BTreeSet<_>>();
     let states = combined
         .statuses
@@ -1324,11 +1413,14 @@ fn verify_status_set(
     }
     let missing = expected.difference(&actual).cloned().collect::<Vec<_>>();
     let unexpected = actual.difference(&expected).cloned().collect::<Vec<_>>();
-    Err(SignoffError::Execution(format!(
-        "PR signoff statuses do not match context: missing [{}], unexpected [{}]",
-        missing.join(", "),
-        unexpected.join(", ")
-    )))
+    Err(SignoffError::execution(
+        "PR signoff statuses do not match context",
+        format!(
+            "missing [{}], unexpected [{}]",
+            missing.join(", "),
+            unexpected.join(", ")
+        ),
+    ))
 }
 
 fn post_signoff_status<F, C, O, E>(
@@ -1404,13 +1496,7 @@ fn validate_work_context(state: &WorkState) -> Result<(), WorkContextError> {
     if state.paths.is_empty() {
         return Err(WorkContextError::NoPaths);
     }
-    match &state.build {
-        Some(build) if build.status == "pass" => Ok(()),
-        Some(build) => Err(WorkContextError::BuildNotPassing {
-            status: build.status.clone(),
-        }),
-        None => Err(WorkContextError::MissingBuild),
-    }
+    Ok(())
 }
 
 fn inspect_status(status: &str, work_paths: &[String]) -> Result<StatusInspection, StatusError> {
@@ -1499,18 +1585,39 @@ struct StatusInspection {
     ignored_local_state: Vec<String>,
 }
 
-#[derive(Debug)]
 enum WorkContextError {
     NoPaths,
-    MissingBuild,
-    BuildNotPassing { status: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl fmt::Debug for WorkContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WorkContextError")
+            .field("kind", &"no_paths")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 enum StatusError {
     NoWorkDiff { ignored_local_state: Vec<String> },
     OutsideWork { paths: Vec<String> },
     StagedLocalState { paths: Vec<String> },
+}
+
+impl fmt::Debug for StatusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (kind, path_count) = match self {
+            Self::NoWorkDiff {
+                ignored_local_state,
+            } => ("no_work_diff", ignored_local_state.len()),
+            Self::OutsideWork { paths } => ("outside_work", paths.len()),
+            Self::StagedLocalState { paths } => ("staged_local_state", paths.len()),
+        };
+        f.debug_struct("StatusError")
+            .field("kind", &kind)
+            .field("path_count", &path_count)
+            .finish()
+    }
 }
 
 impl fmt::Display for StatusError {
@@ -1537,7 +1644,6 @@ impl fmt::Display for StatusError {
 
 impl Error for StatusError {}
 
-#[derive(Debug)]
 enum IntegrationStepError {
     CommandFailed {
         command: String,
@@ -1553,15 +1659,37 @@ enum IntegrationStepError {
     },
 }
 
+impl fmt::Debug for IntegrationStepError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::CommandFailed { .. } => "command_failed",
+            Self::Invoke { .. } => "invoke",
+            Self::InvalidOutput { .. } => "invalid_output",
+        };
+        f.debug_struct("IntegrationStepError")
+            .field("kind", &kind)
+            .finish()
+    }
+}
+
 impl fmt::Display for IntegrationStepError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CommandFailed { command, outcome } => {
-                write!(f, "`{command}` failed: {}", captured_output(outcome))
+            Self::CommandFailed { command, outcome } => write!(
+                f,
+                "`{command}` failed (stdout {} bytes, stderr {} bytes)",
+                outcome.stdout.len(),
+                outcome.stderr.len()
+            ),
+            Self::Invoke { command, source } => {
+                write!(f, "could not run `{command}` ({:?})", source.kind())
             }
-            Self::Invoke { command, source } => write!(f, "could not run `{command}`: {source}"),
             Self::InvalidOutput { command, message } => {
-                write!(f, "`{command}` returned unexpected output: {message}")
+                write!(
+                    f,
+                    "`{command}` returned unexpected output ({} bytes)",
+                    message.len()
+                )
             }
         }
     }
@@ -1569,50 +1697,73 @@ impl fmt::Display for IntegrationStepError {
 
 impl Error for IntegrationStepError {}
 
-#[derive(Debug)]
 enum SignoffError {
-    Contract { problems: Vec<String> },
+    Contract {
+        problems: Vec<String>,
+    },
     Context(project_context::ProjectContextError),
-    Execution(String),
+    Execution {
+        summary: &'static str,
+        detail: String,
+    },
+}
+
+impl SignoffError {
+    fn execution(summary: &'static str, detail: impl Into<String>) -> Self {
+        Self::Execution {
+            summary,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl fmt::Debug for SignoffError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::Contract { .. } => "contract",
+            Self::Context(_) => "context",
+            Self::Execution { .. } => "execution",
+        };
+        f.debug_struct("SignoffError").field("kind", &kind).finish()
+    }
 }
 
 impl fmt::Display for SignoffError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Contract { problems } => {
-                write!(f, "invalid signoff contract: {}", problems.join("; "))
-            }
+            Self::Contract { problems } => write!(
+                f,
+                "invalid signoff contract ({} problem(s))",
+                problems.len()
+            ),
             Self::Context(source) => write!(
                 f,
-                "could not resolve signoffs from project context: {source}"
+                "could not resolve signoffs from project context (detail {} bytes)",
+                source.to_string().len()
             ),
-            Self::Execution(detail) => f.write_str(detail),
+            Self::Execution { summary, detail } => {
+                write!(f, "{summary} (detail {} bytes)", detail.len())
+            }
         }
     }
 }
 
-impl Error for SignoffError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Context(source) => Some(source),
-            Self::Contract { .. } | Self::Execution(_) => None,
-        }
-    }
-}
+impl Error for SignoffError {}
 
-#[derive(Debug)]
 struct ResolvedSignoffs {
-    requests: Vec<SignoffRequest>,
+    requirements: Vec<SignoffRequirement>,
     report: SignoffReport,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct PullRequestCandidate {
     url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct PullRequestInfo {
+    #[serde(rename = "baseRefOid")]
+    base_ref_oid: String,
     #[serde(rename = "headRefOid")]
     head_ref_oid: String,
     #[serde(rename = "headRefName")]
@@ -1623,20 +1774,26 @@ struct PullRequestInfo {
     url: String,
 }
 
-#[derive(Debug, Deserialize)]
+struct ValidatedPullRequest {
+    repository: String,
+    base_ref_oid: String,
+    merge_base_sha: String,
+}
+
+#[derive(Deserialize)]
 struct CombinedStatus {
     #[serde(default)]
     total_count: Option<usize>,
     statuses: Vec<CommitStatus>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct CommitStatus {
     context: String,
     state: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct SignoffReport {
     required: Vec<String>,
     passed: Vec<String>,
@@ -1653,9 +1810,10 @@ impl SignoffReport {
         }
     }
 
-    fn from_states(requests: &[SignoffRequest], states: &BTreeMap<String, String>) -> Self {
+    fn from_states(requirements: &[SignoffRequirement], states: &BTreeMap<String, String>) -> Self {
         let mut report = Self::default();
-        for request in requests {
+        for requirement in requirements {
+            let request = &requirement.request;
             let target = request.qualified_target().to_string();
             let context = format!("signoff: {target}");
             report.required.push(target.clone());
@@ -1859,18 +2017,11 @@ where
 }
 
 fn captured_output(outcome: &CommandOutcome) -> String {
-    let mut parts = Vec::new();
-    if !outcome.stdout.trim().is_empty() {
-        parts.push(format!("stdout:\n{}", outcome.stdout.trim()));
-    }
-    if !outcome.stderr.trim().is_empty() {
-        parts.push(format!("stderr:\n{}", outcome.stderr.trim()));
-    }
-    if parts.is_empty() {
-        String::from("no output")
-    } else {
-        parts.join("\n\n")
-    }
+    format!(
+        "stdout: {} bytes\nstderr: {} bytes",
+        outcome.stdout.len(),
+        outcome.stderr.len()
+    )
 }
 
 fn render_missing_work() -> String {
@@ -1895,25 +2046,11 @@ fn render_missing_summary_or_message() -> String {
 }
 
 fn render_work_context_error(error: &WorkContextError) -> String {
-    let next = match error {
-        WorkContextError::NoPaths => "rapport work add path <path>",
-        WorkContextError::MissingBuild | WorkContextError::BuildNotPassing { .. } => {
-            "rapport build"
-        }
-    };
-    let message = match error {
-        WorkContextError::NoPaths => String::from("Active work has no paths to integrate."),
-        WorkContextError::MissingBuild => {
-            String::from("Active work has not passed build validation yet.")
-        }
-        WorkContextError::BuildNotPassing { status } => {
-            format!("Active work build status is `{status}`, not `pass`.")
-        }
-    };
+    let WorkContextError::NoPaths = error;
     ViewBuilder::new()
         .title("rapport integrate")
-        .paragraph(message)
-        .next_actions(nonempty![RunHint::new(next)])
+        .paragraph("Active work has no paths to integrate.")
+        .next_actions(nonempty![RunHint::new("rapport work add path <path>")])
         .build()
 }
 
@@ -1985,7 +2122,7 @@ fn render_command_invoke_error(command: &str, error: &io::Error) -> String {
     ViewBuilder::new()
         .title("rapport integrate")
         .paragraph(format!("Could not run `{command}`."))
-        .paragraph(error)
+        .paragraph(format!("Invocation failed ({:?}).", error.kind()))
         .next_actions(nonempty![RunHint::new(
             "install Git/GitHub CLI, then run rapport integrate"
         )])
@@ -2124,5 +2261,35 @@ mod tests {
         };
 
         assert!(error.to_string().contains("more than 100 status contexts"));
+    }
+
+    #[test]
+    fn integration_diagnostics_redact_command_output_and_signoff_details() {
+        let outcome = CommandOutcome {
+            success: false,
+            stdout: String::from("PRIVATE STDOUT"),
+            stderr: String::from("PRIVATE STDERR"),
+        };
+        let step = IntegrationStepError::CommandFailed {
+            command: String::from("git command"),
+            outcome: outcome.clone(),
+        };
+        let signoff = SignoffError::execution(
+            "signoff command failed",
+            String::from("PRIVATE SIGNOFF DETAIL"),
+        );
+        let contract = SignoffError::Contract {
+            problems: vec![String::from("PRIVATE CONTRACT PROBLEM")],
+        };
+
+        let diagnostics = format!(
+            "{step:?} {step} {signoff:?} {signoff} {contract:?} {contract} {}",
+            captured_output(&outcome)
+        );
+
+        assert!(!diagnostics.contains("PRIVATE"));
+        assert!(diagnostics.contains("stdout 14 bytes"));
+        assert!(diagnostics.contains("detail 22 bytes"));
+        assert!(diagnostics.contains("1 problem(s)"));
     }
 }

@@ -81,7 +81,8 @@ fn render_prime() -> String {
                 "`rapport context show <path>` - read folder purpose, ownership, boundaries, and applicable benchmarks",
                 "`rapport work rules list` - read repository rules for active work paths",
                 "`rapport doctor` - verify Git and GitHub prerequisites before integration",
-                "`rapport build` - run repository validation for active work",
+                "`rapport build` - run applicable typed build operations for active work",
+                "`rapport review` - emit host-neutral adversarial review requests; use `--result <file>` to record structured results",
                 "`rapport integrate --summary \"...\" --message \"...\"` - commit active changes and open a PR",
                 "`rapport work complete --summary \"...\"` - archive completed work and clear local state",
             ])
@@ -120,6 +121,7 @@ mod tests {
         assert!(view.contains("rapport work rules list"));
         assert!(view.contains("rapport doctor"));
         assert!(view.contains("rapport build"));
+        assert!(view.contains("rapport review"));
         assert!(view.contains("rapport integrate"));
         assert!(view.contains("rapport work complete"));
     }

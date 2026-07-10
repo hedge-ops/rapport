@@ -1,11 +1,12 @@
 use crate::cli::{
     ContextCommand, ContextInitArgs, ContextListCommand, ContextOwnershipCommand,
     ContextPurposeCommand, ContextRuleAddArgs, ContextRuleCommand, ContextRuleUpdateArgs,
-    ContextSignoffCommand,
+    ContextSignoffCommand, SignoffKindArg,
 };
 use crate::context::{Clock, CommandContext};
 use crate::repository_files::find_named_files;
-use crate::signoff_contract::{self, SignoffRequest};
+use crate::signoff_contract::{self, SignoffKind, SignoffRequest};
+use crate::state::{ReviewGrade, ReviewGradeError};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
@@ -81,16 +82,28 @@ where
             }
         },
         ContextCommand::Signoff(args) => match &args.command {
-            ContextSignoffCommand::Add { path, target } => {
-                ("context signoff add", add_signoff(path, target, context))
-            }
-            ContextSignoffCommand::Remove { path, target } => (
-                "context signoff remove",
-                remove_signoff(path, target, context),
+            ContextSignoffCommand::Add {
+                path,
+                kind,
+                target,
+                minimum_grade,
+            } => (
+                "context signoff add",
+                add_signoff(
+                    path,
+                    *kind,
+                    target.as_deref(),
+                    minimum_grade.as_deref(),
+                    context,
+                ),
             ),
-            ContextSignoffCommand::Repair { path, target } => (
+            ContextSignoffCommand::Remove { path, kind, target } => (
+                "context signoff remove",
+                remove_signoff(path, *kind, target.as_deref(), context),
+            ),
+            ContextSignoffCommand::Repair { path, kind, target } => (
                 "context signoff repair",
-                repair_signoff(path, target, context),
+                repair_signoff(path, *kind, target.as_deref(), context),
             ),
         },
         ContextCommand::Doctor { path } => ("context doctor", doctor(path.as_ref(), context)),
@@ -107,7 +120,7 @@ pub(crate) fn validate_repository(
         Err(source) => {
             return ProjectContextRepositoryValidation {
                 context_files: Vec::new(),
-                signoff_target_count: 0,
+                signoff_count: 0,
                 problems: vec![ProjectContextValidationProblem {
                     detail: format!(
                         "could not scan repository for `{CONTEXT_FILE}` files at `{repo_root}`: {source}"
@@ -138,8 +151,8 @@ pub(crate) fn validate_repository(
             continue;
         };
         let directory = context_file.parent().unwrap_or(repo_root);
-        for target in document.signoffs {
-            match SignoffRequest::new(repo_root, directory, &target) {
+        for declaration in document.signoffs {
+            match declaration.to_request(repo_root, directory) {
                 Ok(request) => requests.push(request),
                 Err(error) => {
                     let detail = normalize_problem_detail(&format!(
@@ -162,7 +175,7 @@ pub(crate) fn validate_repository(
 
     ProjectContextRepositoryValidation {
         context_files,
-        signoff_target_count: requests.len(),
+        signoff_count: requests.len(),
         problems,
     }
 }
@@ -181,23 +194,48 @@ pub(crate) fn required_signoffs_for_paths(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn required_signoff_requests_for_paths(
     fs: &impl FileSystem,
     repo_root: &Utf8Path,
     paths: &[String],
 ) -> Result<Vec<SignoffRequest>, ProjectContextError> {
+    required_signoff_requirements_for_paths(fs, repo_root, paths).map(|requirements| {
+        requirements
+            .into_iter()
+            .map(|requirement| requirement.request)
+            .collect()
+    })
+}
+
+pub(crate) fn required_signoff_requirements_for_paths(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    paths: &[String],
+) -> Result<Vec<SignoffRequirement>, ProjectContextError> {
     let resolver = ProjectContextResolver::new(ProjectContextStore::new(repo_root.to_path_buf()));
-    let mut required = Vec::new();
-    let mut seen = BTreeSet::new();
+    let mut required: Vec<SignoffRequirement> = Vec::new();
 
     for path in paths {
         let effective = resolver.resolve(fs, &repo_root.join(path))?;
         for signoff in effective.signoffs {
             let directory = signoff.source.parent().unwrap_or(repo_root);
-            let request = SignoffRequest::new(repo_root, directory, &signoff.value)
+            let request = signoff
+                .declaration
+                .to_request(repo_root, directory)
                 .map_err(|source| ProjectContextError::SignoffContract { source })?;
-            if seen.insert(request.qualified_target().to_string()) {
-                required.push(request);
+            if let Some(existing) = required
+                .iter_mut()
+                .find(|existing| existing.request.qualified_target() == request.qualified_target())
+            {
+                if !existing.paths.contains(path) {
+                    existing.paths.push(path.clone());
+                }
+            } else {
+                required.push(SignoffRequirement {
+                    request,
+                    paths: vec![path.clone()],
+                });
             }
         }
     }
@@ -205,10 +243,95 @@ pub(crate) fn required_signoff_requests_for_paths(
     Ok(required)
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct SignoffRequirement {
+    pub(crate) request: SignoffRequest,
+    pub(crate) paths: Vec<String>,
+}
+
+impl fmt::Debug for SignoffRequirement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SignoffRequirement")
+            .field("request", &self.request)
+            .field("path_count", &self.paths.len())
+            .finish()
+    }
+}
+
+pub(crate) fn resolved_rules_for_paths(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    paths: &[String],
+) -> Result<Vec<ResolvedContextRule>, ProjectContextError> {
+    let resolver = ProjectContextResolver::new(ProjectContextStore::new(repo_root.to_path_buf()));
+    let mut rules: Vec<ResolvedContextRule> = Vec::new();
+    let mut seen: BTreeMap<String, Utf8PathBuf> = BTreeMap::new();
+    for path in paths {
+        let effective = resolver.resolve(fs, &repo_root.join(path))?;
+        for rule in effective.rules {
+            if let Some(first_source) = seen.get(&rule.id) {
+                if first_source != &rule.source {
+                    return Err(ProjectContextError::DuplicateRuleId {
+                        id: rule.id,
+                        first_source: first_source.clone(),
+                        second_source: rule.source,
+                    });
+                }
+                continue;
+            }
+            seen.insert(rule.id.clone(), rule.source.clone());
+            rules.push(ResolvedContextRule {
+                id: rule.id,
+                text: rule.text,
+                rationale: rule.rationale,
+                references: rule.references,
+                source: rule
+                    .source
+                    .strip_prefix(repo_root)
+                    .unwrap_or(&rule.source)
+                    .as_str()
+                    .replace('\\', "/"),
+            });
+        }
+    }
+    Ok(rules)
+}
+
+#[derive(Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct ResolvedContextRule {
+    pub(crate) id: String,
+    pub(crate) text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) rationale: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) references: Vec<String>,
+    pub(crate) source: String,
+}
+
+impl fmt::Debug for ResolvedContextRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedContextRule")
+            .field("id", &RedactedContextText(&self.id))
+            .field("text", &RedactedContextText(&self.text))
+            .field("has_rationale", &self.rationale.is_some())
+            .field("reference_count", &self.references.len())
+            .field("source", &RedactedContextText(&self.source))
+            .finish()
+    }
+}
+
+struct RedactedContextText<'a>(&'a str);
+
+impl fmt::Debug for RedactedContextText<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<redacted; {} bytes>", self.0.len())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectContextRepositoryValidation {
     context_files: Vec<Utf8PathBuf>,
-    signoff_target_count: usize,
+    signoff_count: usize,
     problems: Vec<ProjectContextValidationProblem>,
 }
 
@@ -217,8 +340,8 @@ impl ProjectContextRepositoryValidation {
         self.context_files.len()
     }
 
-    pub(crate) fn signoff_target_count(&self) -> usize {
-        self.signoff_target_count
+    pub(crate) fn signoff_count(&self) -> usize {
+        self.signoff_count
     }
 
     pub(crate) fn problem_details(&self) -> impl Iterator<Item = &str> {
@@ -355,7 +478,9 @@ where
 
 fn add_signoff<F, C, O, E>(
     path: &Utf8PathBuf,
-    target: &str,
+    kind: SignoffKindArg,
+    target: Option<&str>,
+    minimum_grade: Option<&str>,
     context: &mut CommandContext<'_, F, C, O, E>,
 ) -> CommandResult
 where
@@ -364,12 +489,44 @@ where
     O: Write,
     E: Write,
 {
-    edit_signoff(path, target, SignoffEdit::Add, context)
+    let kind = signoff_kind(kind);
+    let target = match canonical_signoff_target(kind, target) {
+        Ok(target) => target,
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    "signoff add",
+                    "Could not update the signoff contract.",
+                    &error,
+                )
+            );
+            return CommandResult::failure();
+        }
+    };
+    let minimum_grade = match minimum_grade.map(str::parse).transpose() {
+        Ok(grade) => grade,
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    "signoff add",
+                    "Could not update the signoff contract.",
+                    &ProjectContextError::InvalidReviewGrade(error),
+                )
+            );
+            return CommandResult::failure();
+        }
+    };
+    edit_signoff(path, kind, target, minimum_grade, SignoffEdit::Add, context)
 }
 
 fn remove_signoff<F, C, O, E>(
     path: &Utf8PathBuf,
-    target: &str,
+    kind: SignoffKindArg,
+    target: Option<&str>,
     context: &mut CommandContext<'_, F, C, O, E>,
 ) -> CommandResult
 where
@@ -378,12 +535,29 @@ where
     O: Write,
     E: Write,
 {
-    edit_signoff(path, target, SignoffEdit::Remove, context)
+    let kind = signoff_kind(kind);
+    let target = match canonical_signoff_target(kind, target) {
+        Ok(target) => target,
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    "signoff remove",
+                    "Could not update the signoff contract.",
+                    &error,
+                )
+            );
+            return CommandResult::failure();
+        }
+    };
+    edit_signoff(path, kind, target, None, SignoffEdit::Remove, context)
 }
 
 fn repair_signoff<F, C, O, E>(
     path: &Utf8PathBuf,
-    target: &str,
+    kind: SignoffKindArg,
+    target: Option<&str>,
     context: &mut CommandContext<'_, F, C, O, E>,
 ) -> CommandResult
 where
@@ -392,7 +566,42 @@ where
     O: Write,
     E: Write,
 {
-    edit_signoff(path, target, SignoffEdit::Repair, context)
+    let kind = signoff_kind(kind);
+    let target = match canonical_signoff_target(kind, target) {
+        Ok(target) => target,
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    "signoff repair",
+                    "Could not update the signoff contract.",
+                    &error,
+                )
+            );
+            return CommandResult::failure();
+        }
+    };
+    edit_signoff(path, kind, target, None, SignoffEdit::Repair, context)
+}
+
+fn canonical_signoff_target(
+    kind: SignoffKind,
+    target: Option<&str>,
+) -> Result<&str, ProjectContextError> {
+    match (kind, target) {
+        (SignoffKind::Build, Some(target)) => Ok(target),
+        (SignoffKind::Build, None) => Err(ProjectContextError::MissingBuildTarget),
+        (SignoffKind::Review, None) => Ok("review"),
+        (SignoffKind::Review, Some(_)) => Err(ProjectContextError::UnexpectedReviewTarget),
+    }
+}
+
+fn signoff_kind(kind: SignoffKindArg) -> SignoffKind {
+    match kind {
+        SignoffKindArg::Build => SignoffKind::Build,
+        SignoffKindArg::Review => SignoffKind::Review,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -414,7 +623,9 @@ impl SignoffEdit {
 
 fn edit_signoff<F, C, O, E>(
     path: &Utf8PathBuf,
+    kind: SignoffKind,
     target: &str,
+    minimum_grade: Option<ReviewGrade>,
     edit: SignoffEdit,
     context: &mut CommandContext<'_, F, C, O, E>,
 ) -> CommandResult
@@ -431,7 +642,11 @@ where
         context.paths.repo_root(),
         &store,
         &requested_path,
-        target,
+        SignoffSelection {
+            kind,
+            target,
+            minimum_grade,
+        },
         edit,
     );
 
@@ -459,12 +674,19 @@ where
     }
 }
 
+#[derive(Clone, Copy)]
+struct SignoffSelection<'selection> {
+    kind: SignoffKind,
+    target: &'selection str,
+    minimum_grade: Option<ReviewGrade>,
+}
+
 fn apply_signoff_edit(
     fs: &mut impl FileSystem,
     repo_root: &Utf8Path,
     store: &ProjectContextStore,
     requested_path: &Utf8Path,
-    target: &str,
+    selection: SignoffSelection<'_>,
     edit: SignoffEdit,
 ) -> Result<(Utf8PathBuf, SignoffRequest), ProjectContextError> {
     let context_file = store.context_file_for_path(fs, requested_path)?;
@@ -472,8 +694,14 @@ fn apply_signoff_edit(
         return Err(ProjectContextError::MissingContext { path: context_file });
     }
     let directory = context_file.parent().unwrap_or(repo_root);
-    let request = SignoffRequest::new(repo_root, directory, target)
-        .map_err(|source| ProjectContextError::SignoffContract { source })?;
+    let request = SignoffRequest::new(
+        repo_root,
+        directory,
+        selection.kind,
+        selection.target,
+        selection.minimum_grade,
+    )
+    .map_err(|source| ProjectContextError::SignoffContract { source })?;
     let target = request.target();
     match edit {
         SignoffEdit::Add => {
@@ -483,16 +711,62 @@ fn apply_signoff_edit(
             apply_signoff_remove(fs, store, requested_path, target, &request)?;
         }
         SignoffEdit::Repair => {
-            let document = ProjectContextStore::load_context_file(fs, &context_file)?;
-            if !document.signoffs.iter().any(|value| value == target) {
-                return Err(ProjectContextError::MissingSignoffTarget {
-                    target: target.to_string(),
-                });
-            }
+            store.mutate(fs, requested_path, |document| {
+                if !document
+                    .signoffs
+                    .iter()
+                    .any(|value| value.matches(selection.kind, target))
+                {
+                    return Err(ProjectContextError::MissingSignoff {
+                        kind: request.kind(),
+                        target: (request.kind() == SignoffKind::Build).then(|| target.to_string()),
+                    });
+                }
+                Ok(EditStatus::Updated)
+            })?;
             write_signoff_workflows(fs, repo_root, &request)?;
         }
     }
     Ok((context_file, request))
+}
+
+fn ensure_context_signoff_identities_available(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    requested_context_file: &Utf8Path,
+    requested_document: &ProjectContextFile,
+) -> Result<(), ProjectContextError> {
+    let context_files = find_named_files(fs, repo_root, CONTEXT_FILE).map_err(|source| {
+        ProjectContextError::Io {
+            path: repo_root.to_path_buf(),
+            source,
+        }
+    })?;
+    let mut seen = BTreeMap::<String, Utf8PathBuf>::new();
+    for context_file in context_files {
+        let loaded;
+        let document = if context_file == requested_context_file {
+            requested_document
+        } else {
+            loaded = ProjectContextStore::load_context_file(fs, &context_file)?;
+            &loaded
+        };
+        let directory = context_file.parent().unwrap_or(repo_root);
+        for declaration in &document.signoffs {
+            let existing = declaration
+                .to_request(repo_root, directory)
+                .map_err(|source| ProjectContextError::SignoffContract { source })?;
+            let identity = existing.qualified_target().to_string();
+            if let Some(existing_context) = seen.insert(identity.clone(), context_file.clone()) {
+                return Err(ProjectContextError::SignoffIdentityCollision {
+                    identity,
+                    existing_context,
+                    requested_context: context_file,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn apply_signoff_add(
@@ -504,10 +778,18 @@ fn apply_signoff_add(
     request: &SignoffRequest,
 ) -> Result<(), ProjectContextError> {
     store.mutate(fs, requested_path, |document| {
-        if document.signoffs.iter().any(|value| value == target) {
+        if document
+            .signoffs
+            .iter()
+            .any(|value| value.matches(request.kind(), target))
+        {
             return Ok(EditStatus::Unchanged);
         }
-        document.signoffs.push(target.to_string());
+        document.signoffs.push(ContextSignoffDeclaration::typed(
+            request.kind(),
+            target,
+            request.minimum_grade(),
+        ));
         Ok(EditStatus::Added)
     })?;
     write_signoff_workflows(fs, repo_root, request)
@@ -521,9 +803,14 @@ fn apply_signoff_remove(
     request: &SignoffRequest,
 ) -> Result<(), ProjectContextError> {
     store.mutate(fs, requested_path, |document| {
-        let Some(index) = document.signoffs.iter().position(|value| value == target) else {
-            return Err(ProjectContextError::MissingSignoffTarget {
-                target: target.to_string(),
+        let Some(index) = document
+            .signoffs
+            .iter()
+            .position(|value| value.matches(request.kind(), target))
+        else {
+            return Err(ProjectContextError::MissingSignoff {
+                kind: request.kind(),
+                target: (request.kind() == SignoffKind::Build).then(|| target.to_string()),
             });
         };
         document.signoffs.remove(index);
@@ -948,8 +1235,39 @@ impl ProjectContextStore {
             return Err(ProjectContextError::MissingContext { path: context_file });
         }
         let mut document = Self::load_context_file(fs, &context_file)?;
+        let directory = context_file.parent().unwrap_or(&self.repo_root);
+        let legacy_requests = document
+            .signoffs
+            .iter()
+            .filter(|declaration| matches!(declaration, ContextSignoffDeclaration::LegacyBuild(_)))
+            .map(|declaration| {
+                declaration
+                    .to_request(&self.repo_root, directory)
+                    .map_err(|source| ProjectContextError::SignoffContract { source })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let status = mutation(&mut document)?;
+        ensure_context_signoff_identities_available(fs, &self.repo_root, &context_file, &document)?;
         Self::save_context_file(fs, &context_file, &document)?;
+        for request in legacy_requests {
+            if document
+                .signoffs
+                .iter()
+                .any(|declaration| declaration.matches(request.kind(), request.target()))
+            {
+                write_signoff_workflows(fs, &self.repo_root, &request)?;
+            }
+            let legacy_path = request.legacy_workflow_path(&self.repo_root);
+            if fs.is_file(&legacy_path)
+                && !workflow_is_owned_by_declared_signoff(fs, &self.repo_root, &legacy_path)?
+            {
+                fs.remove_file(&legacy_path)
+                    .map_err(|source| ProjectContextError::Io {
+                        path: legacy_path,
+                        source,
+                    })?;
+            }
+        }
         Ok(EditReport {
             context_file,
             status,
@@ -1085,6 +1403,32 @@ impl ProjectContextStore {
     }
 }
 
+fn workflow_is_owned_by_declared_signoff(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    workflow_path: &Utf8Path,
+) -> Result<bool, ProjectContextError> {
+    let context_files = find_named_files(fs, repo_root, CONTEXT_FILE).map_err(|source| {
+        ProjectContextError::Io {
+            path: repo_root.to_path_buf(),
+            source,
+        }
+    })?;
+    for context_file in context_files {
+        let document = ProjectContextStore::load_context_file(fs, &context_file)?;
+        let directory = context_file.parent().unwrap_or(repo_root);
+        for declaration in document.signoffs {
+            let request = declaration
+                .to_request(repo_root, directory)
+                .map_err(|source| ProjectContextError::SignoffContract { source })?;
+            if request.workflow_path() == workflow_path {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 #[derive(Debug, Clone)]
 struct ProjectContextResolver {
     store: ProjectContextStore,
@@ -1127,12 +1471,17 @@ impl ProjectContextResolver {
                     .into_iter()
                     .map(|value| ContextEntry::new(value, context_file.clone())),
             );
-            effective.signoffs.extend(
-                document
-                    .signoffs
-                    .into_iter()
-                    .map(|value| ContextEntry::new(value, context_file.clone())),
-            );
+            effective
+                .signoffs
+                .extend(
+                    document
+                        .signoffs
+                        .into_iter()
+                        .map(|declaration| EffectiveSignoff {
+                            declaration,
+                            source: context_file.clone(),
+                        }),
+                );
 
             for include in document.rule_includes {
                 effective
@@ -1226,9 +1575,24 @@ struct EffectiveProjectContext {
     purpose: Option<ContextEntry>,
     owns: Vec<ContextEntry>,
     boundaries: Vec<ContextEntry>,
-    signoffs: Vec<ContextEntry>,
+    signoffs: Vec<EffectiveSignoff>,
     rule_includes: Vec<ContextEntry>,
     rules: Vec<ApplicableRule>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EffectiveSignoff {
+    declaration: ContextSignoffDeclaration,
+    source: Utf8PathBuf,
+}
+
+impl fmt::Debug for EffectiveSignoff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EffectiveSignoff")
+            .field("declaration", &self.declaration)
+            .field("source", &RedactedContextText(self.source.as_str()))
+            .finish()
+    }
 }
 
 impl EffectiveProjectContext {
@@ -1353,13 +1717,127 @@ struct ProjectContextFile {
     version: u16,
     purpose: String,
     #[serde(default)]
-    signoffs: Vec<String>,
+    signoffs: Vec<ContextSignoffDeclaration>,
     #[serde(default)]
     rule_includes: Vec<String>,
     #[serde(default)]
     ownership: ContextOwnership,
     #[serde(default)]
     rules: Vec<ContextRuleDefinition>,
+}
+
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum ContextSignoffDeclaration {
+    LegacyBuild(String),
+    Typed(TypedContextSignoff),
+}
+
+impl fmt::Debug for ContextSignoffDeclaration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ContextSignoffDeclaration")
+            .field("kind", &self.kind())
+            .field("has_target", &self.target().is_some())
+            .field("minimum_grade", &self.minimum_grade())
+            .finish()
+    }
+}
+
+impl ContextSignoffDeclaration {
+    fn typed(kind: SignoffKind, target: &str, minimum_grade: Option<ReviewGrade>) -> Self {
+        Self::Typed(TypedContextSignoff {
+            kind,
+            target: match kind {
+                SignoffKind::Build => Some(target.to_string()),
+                SignoffKind::Review => None,
+            },
+            minimum_grade,
+        })
+    }
+
+    fn kind(&self) -> SignoffKind {
+        match self {
+            Self::LegacyBuild(_) => SignoffKind::Build,
+            Self::Typed(signoff) => signoff.kind,
+        }
+    }
+
+    fn target(&self) -> Option<&str> {
+        match self {
+            Self::LegacyBuild(target) => Some(target),
+            Self::Typed(signoff) => signoff.target.as_deref(),
+        }
+    }
+
+    fn request_target(&self) -> &str {
+        self.target().unwrap_or("review")
+    }
+
+    fn minimum_grade(&self) -> Option<ReviewGrade> {
+        match self {
+            Self::LegacyBuild(_) => None,
+            Self::Typed(signoff) => signoff.minimum_grade,
+        }
+    }
+
+    fn matches(&self, kind: SignoffKind, target: &str) -> bool {
+        self.kind() == kind && self.request_target() == target
+    }
+
+    fn to_request(
+        &self,
+        repo_root: &Utf8Path,
+        directory: &Utf8Path,
+    ) -> Result<SignoffRequest, signoff_contract::SignoffContractError> {
+        match (self.kind(), self.target()) {
+            (SignoffKind::Build, None) => {
+                return Err(signoff_contract::SignoffContractError::MissingBuildTarget);
+            }
+            (SignoffKind::Review, Some(_)) => {
+                return Err(signoff_contract::SignoffContractError::UnexpectedReviewTarget);
+            }
+            (SignoffKind::Build, Some(_)) | (SignoffKind::Review, None) => {}
+        }
+        SignoffRequest::new(
+            repo_root,
+            directory,
+            self.kind(),
+            self.request_target(),
+            self.minimum_grade(),
+        )
+    }
+
+    fn display(&self) -> String {
+        match (self.kind(), self.minimum_grade()) {
+            (SignoffKind::Review, Some(grade)) => {
+                format!("review (minimum grade {grade})")
+            }
+            (SignoffKind::Review, None) => String::from("review"),
+            (SignoffKind::Build, _) => {
+                format!("build {}", self.request_target())
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TypedContextSignoff {
+    kind: SignoffKind,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    minimum_grade: Option<ReviewGrade>,
+}
+
+impl fmt::Debug for TypedContextSignoff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TypedContextSignoff")
+            .field("kind", &self.kind)
+            .field("has_target", &self.target.is_some())
+            .field("minimum_grade", &self.minimum_grade)
+            .finish()
+    }
 }
 
 impl ProjectContextFile {
@@ -1460,12 +1938,21 @@ pub(crate) enum ProjectContextError {
     MissingInlineRule {
         id: String,
     },
-    MissingSignoffTarget {
-        target: String,
+    MissingSignoff {
+        kind: SignoffKind,
+        target: Option<String>,
+    },
+    MissingBuildTarget,
+    UnexpectedReviewTarget,
+    SignoffIdentityCollision {
+        identity: String,
+        existing_context: Utf8PathBuf,
+        requested_context: Utf8PathBuf,
     },
     SignoffContract {
         source: signoff_contract::SignoffContractError,
     },
+    InvalidReviewGrade(ReviewGradeError),
     OutsideRepository {
         path: Utf8PathBuf,
     },
@@ -1526,13 +2013,36 @@ impl fmt::Display for ProjectContextError {
             Self::MissingInlineRule { id } => {
                 write!(f, "inline rule `{id}` does not exist in this context.")
             }
-            Self::MissingSignoffTarget { target } => {
-                write!(
-                    f,
-                    "signoff target `{target}` does not exist in this context."
-                )
+            Self::MissingSignoff {
+                kind: SignoffKind::Build,
+                target: Some(target),
+            } => write!(
+                f,
+                "build signoff target `{target}` does not exist in this context."
+            ),
+            Self::MissingSignoff {
+                kind: SignoffKind::Review,
+                ..
+            } => f.write_str("review signoff does not exist in this context."),
+            Self::MissingSignoff { kind, .. } => {
+                write!(f, "{kind} signoff does not exist in this context.")
             }
+            Self::MissingBuildTarget => {
+                f.write_str("build signoffs require a target, such as `ci`.")
+            }
+            Self::UnexpectedReviewTarget => {
+                f.write_str("review signoffs do not accept a target or profile.")
+            }
+            Self::SignoffIdentityCollision {
+                identity,
+                existing_context,
+                requested_context,
+            } => write!(
+                f,
+                "signoff identity `{identity}` in `{requested_context}` collides with a declaration in `{existing_context}`"
+            ),
             Self::SignoffContract { source } => write!(f, "{source}"),
+            Self::InvalidReviewGrade(source) => write!(f, "{source}"),
             Self::OutsideRepository { path } => {
                 write!(f, "`{path}` is outside the repository.")
             }
@@ -1549,6 +2059,7 @@ impl Error for ProjectContextError {
             Self::Io { source, .. } => Some(source),
             Self::Decode { source, .. } | Self::RuleDecode { source, .. } => Some(source),
             Self::SignoffContract { source } => Some(source),
+            Self::InvalidReviewGrade(source) => Some(source),
             Self::UnsupportedSchemaVersion { .. }
             | Self::UnsupportedRuleSchemaVersion { .. }
             | Self::ContextAlreadyExists { .. }
@@ -1558,7 +2069,10 @@ impl Error for ProjectContextError {
             | Self::DuplicateRuleId { .. }
             | Self::DuplicateLocalRuleId { .. }
             | Self::MissingInlineRule { .. }
-            | Self::MissingSignoffTarget { .. }
+            | Self::MissingSignoff { .. }
+            | Self::MissingBuildTarget
+            | Self::UnexpectedReviewTarget
+            | Self::SignoffIdentityCollision { .. }
             | Self::OutsideRepository { .. }
             | Self::EmptyField { .. } => None,
         }
@@ -1705,7 +2219,7 @@ fn render_context_show(
             ))
         })
         .section("Signoffs", |b| {
-            b.items(render_entries(
+            b.items(render_signoffs(
                 store,
                 &effective.signoffs,
                 "No signoffs required.",
@@ -1778,16 +2292,18 @@ fn render_signoff_edit(
     context_file: &Utf8Path,
     request: &SignoffRequest,
 ) -> String {
+    let mut entries = vec![
+        ("kind", request.kind().to_string()),
+        ("status", format!("signoff: {}", request.qualified_target())),
+        ("context", store.display_path(context_file)),
+        ("workflow", store.display_path(request.workflow_path())),
+    ];
+    if request.kind() == SignoffKind::Build {
+        entries.insert(1, ("target", request.target().to_string()));
+    }
     ViewBuilder::new()
         .title(format!("rapport context signoff {command}"))
-        .section("Signoff", |b| {
-            b.entries([
-                ("target", request.target().to_string()),
-                ("status", format!("signoff: {}", request.qualified_target())),
-                ("context", store.display_path(context_file)),
-                ("workflow", store.display_path(request.workflow_path())),
-            ])
-        })
+        .section("Signoff", |b| b.entries(entries))
         .next_actions(nonempty![RunHint::new("rapport doctor")])
         .build()
 }
@@ -1836,6 +2352,27 @@ fn render_entries(
     }
 }
 
+fn render_signoffs(
+    store: &ProjectContextStore,
+    signoffs: &[EffectiveSignoff],
+    empty_message: &str,
+) -> Vec<String> {
+    if signoffs.is_empty() {
+        vec![empty_message.to_string()]
+    } else {
+        signoffs
+            .iter()
+            .map(|signoff| {
+                format!(
+                    "{} ({})",
+                    signoff.declaration.display(),
+                    store.display_path(&signoff.source)
+                )
+            })
+            .collect()
+    }
+}
+
 fn render_rules(store: &ProjectContextStore, rules: &[ApplicableRule]) -> Vec<String> {
     if rules.is_empty() {
         return vec![String::from("No applicable benchmarks.")];
@@ -1880,13 +2417,35 @@ fn render_context_file(document: &ProjectContextFile) -> String {
     let _ = writeln!(&mut output);
     let _ = writeln!(&mut output, "purpose = {}", toml_string(&document.purpose));
     let _ = writeln!(&mut output);
-    push_string_array(&mut output, "signoffs", &document.signoffs);
-    let _ = writeln!(&mut output);
+    if document.signoffs.is_empty() {
+        push_string_array(&mut output, "signoffs", &[]);
+        let _ = writeln!(&mut output);
+    }
     push_string_array(&mut output, "rule_includes", &document.rule_includes);
     let _ = writeln!(&mut output);
     let _ = writeln!(&mut output, "[ownership]");
     push_string_array(&mut output, "owns", &document.ownership.owns);
     push_string_array(&mut output, "boundaries", &document.ownership.boundaries);
+
+    for signoff in &document.signoffs {
+        let _ = writeln!(&mut output);
+        let _ = writeln!(&mut output, "[[signoffs]]");
+        let _ = writeln!(
+            &mut output,
+            "kind = {}",
+            toml_string(&signoff.kind().to_string())
+        );
+        if let Some(target) = signoff.target() {
+            let _ = writeln!(&mut output, "target = {}", toml_string(target));
+        }
+        if let Some(minimum_grade) = signoff.minimum_grade() {
+            let _ = writeln!(
+                &mut output,
+                "minimum_grade = {}",
+                toml_string(&minimum_grade.to_string())
+            );
+        }
+    }
 
     for rule in &document.rules {
         let _ = writeln!(&mut output);
@@ -2024,9 +2583,9 @@ text = "Keep core boring."
             effective
                 .signoffs
                 .iter()
-                .map(|signoff| signoff.value.as_str())
+                .map(|signoff| signoff.declaration.target())
                 .collect::<Vec<_>>(),
-            vec!["shared", "apple"]
+            vec![Some("shared"), Some("apple")]
         );
         assert_eq!(
             effective
@@ -2066,7 +2625,56 @@ text = "Keep core boring."
         )
         .unwrap();
 
-        assert_eq!(required, vec!["root-shared", "apple-ci", "windows-ci"]);
+        assert_eq!(
+            required,
+            vec!["root-build-shared", "apple-build-ci", "windows-build-ci"]
+        );
+    }
+
+    #[test]
+    fn typed_signoffs_inherit_build_and_child_review_with_distinct_paths() {
+        let mut fs = repo_fs();
+        fs.add_file("/repo/app/apple/something/else/file.rs");
+        fs.write_string(
+            "/repo/app/apple/context.toml",
+            r#"version = 1
+purpose = "Apple"
+
+[[signoffs]]
+kind = "build"
+target = "ci"
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/app/apple/something/else/context.toml",
+            r#"version = 1
+purpose = "Nested Apple"
+
+[[signoffs]]
+kind = "review"
+minimum_grade = "A-"
+"#,
+        )
+        .unwrap();
+
+        let requirements = required_signoff_requirements_for_paths(
+            &fs,
+            Utf8Path::new("/repo"),
+            &[String::from("app/apple/something/else/file.rs")],
+        )
+        .unwrap();
+
+        assert_eq!(requirements.len(), 2);
+        assert_eq!(
+            requirements[0].request.qualified_target(),
+            "app-apple-build-ci"
+        );
+        assert_eq!(
+            requirements[1].request.qualified_target(),
+            "app-apple-something-else-review"
+        );
+        assert_eq!(requirements[0].paths, requirements[1].paths);
     }
 
     #[test]
@@ -2216,6 +2824,47 @@ text = "Use rustfmt."
                 .to_string()
                 .contains("unsupported rules schema version `2`")
         );
+    }
+
+    #[test]
+    fn resolved_rule_debug_redacts_repository_authored_content() {
+        let rule = ResolvedContextRule {
+            id: String::from("PRIVATE-RULE-ID"),
+            text: String::from("private rule text"),
+            rationale: Some(String::from("private rationale")),
+            references: vec![String::from("private reference")],
+            source: String::from("private/rules.toml"),
+        };
+
+        let debug = format!("{rule:?}");
+
+        for private_value in [
+            "PRIVATE-RULE-ID",
+            "private rule text",
+            "private rationale",
+            "private reference",
+            "private/rules.toml",
+        ] {
+            assert!(!debug.contains(private_value));
+        }
+        assert!(debug.contains("<redacted;"));
+        assert!(debug.contains("reference_count: 1"));
+
+        let requirement = SignoffRequirement {
+            request: SignoffRequest::new(
+                Utf8Path::new("/repo"),
+                Utf8Path::new("/repo/private/component"),
+                SignoffKind::Build,
+                "private-target",
+                None,
+            )
+            .unwrap(),
+            paths: vec![String::from("private/component/file.rs")],
+        };
+        let requirement_debug = format!("{requirement:?}");
+        assert!(!requirement_debug.contains("private/component"));
+        assert!(!requirement_debug.contains("private-target"));
+        assert!(requirement_debug.contains("path_count: 1"));
     }
 
     fn repo_fs() -> InMemoryFileSystem {

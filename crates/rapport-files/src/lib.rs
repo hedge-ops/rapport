@@ -9,6 +9,26 @@ pub trait FileSystem {
 
     fn is_file(&self, path: impl AsRef<Utf8Path>) -> bool;
 
+    /// Return the Git file mode for a regular working-tree file.
+    ///
+    /// In-memory and non-Unix implementations default to a non-executable
+    /// regular file. Production Unix filesystems preserve the executable bit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::NotFound`] when the file does not exist.
+    fn git_file_mode(&self, path: impl AsRef<Utf8Path>) -> io::Result<u32> {
+        let path = path.as_ref();
+        if self.is_file(path) {
+            Ok(0o100_644)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{path} not found"),
+            ))
+        }
+    }
+
     /// Read a UTF-8 file from the filesystem.
     ///
     /// # Errors
@@ -70,6 +90,24 @@ impl FileSystem for RealFileSystem {
 
     fn is_file(&self, path: impl AsRef<Utf8Path>) -> bool {
         path.as_ref().is_file()
+    }
+
+    fn git_file_mode(&self, path: impl AsRef<Utf8Path>) -> io::Result<u32> {
+        let metadata = std::fs::metadata(path.as_ref())?;
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a regular file", path.as_ref()),
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            if metadata.permissions().mode() & 0o111 != 0 {
+                return Ok(0o100_755);
+            }
+        }
+        Ok(0o100_644)
     }
 
     fn read_to_string(&self, path: impl AsRef<Utf8Path>) -> io::Result<String> {
