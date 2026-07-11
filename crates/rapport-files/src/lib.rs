@@ -9,6 +9,23 @@ pub trait FileSystem {
 
     fn is_file(&self, path: impl AsRef<Utf8Path>) -> bool;
 
+    /// Resolve symlinks and return an absolute canonical path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the path does not exist or cannot be canonicalized.
+    fn canonicalize(&self, path: impl AsRef<Utf8Path>) -> io::Result<Utf8PathBuf> {
+        let path = path.as_ref();
+        if self.exists(path) {
+            Ok(path.to_path_buf())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{path} not found"),
+            ))
+        }
+    }
+
     /// Return the Git file mode for a regular working-tree file.
     ///
     /// In-memory and non-Unix implementations default to a non-executable
@@ -90,6 +107,16 @@ impl FileSystem for RealFileSystem {
 
     fn is_file(&self, path: impl AsRef<Utf8Path>) -> bool {
         path.as_ref().is_file()
+    }
+
+    fn canonicalize(&self, path: impl AsRef<Utf8Path>) -> io::Result<Utf8PathBuf> {
+        let path = std::fs::canonicalize(path.as_ref())?;
+        Utf8PathBuf::from_path_buf(path).map_err(|path| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("canonical path is not UTF-8: {}", path.display()),
+            )
+        })
     }
 
     fn git_file_mode(&self, path: impl AsRef<Utf8Path>) -> io::Result<u32> {

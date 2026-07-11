@@ -1,4 +1,4 @@
-use crate::cli::{RulesCommand, RulesIncludeCommand, RulesRuleCommand};
+use crate::cli::{RulesCommand, RulesIncludeCommand, RulesReferenceCommand, RulesRuleCommand};
 use crate::context::{Clock, CommandContext};
 use crate::repository_files::find_named_files;
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryWriter};
@@ -40,7 +40,150 @@ pub(crate) struct RuleDefinition {
     #[serde(default)]
     pub(crate) rationale: Option<String>,
     #[serde(default)]
-    pub(crate) references: Vec<String>,
+    pub(crate) references: Vec<RuleReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuleReference {
+    pub(crate) kind: RuleReferenceKind,
+    pub(crate) target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) label: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for RuleReference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Input {
+            Typed {
+                kind: RuleReferenceKind,
+                target: String,
+                #[serde(default)]
+                label: Option<String>,
+            },
+            Legacy(String),
+        }
+        match Input::deserialize(deserializer)? {
+            Input::Typed {
+                kind,
+                target,
+                label,
+            } => Ok(Self {
+                kind,
+                target,
+                label,
+            }),
+            Input::Legacy(target)
+                if target.starts_with("http://") || target.starts_with("https://") =>
+            {
+                Ok(Self {
+                    kind: RuleReferenceKind::External,
+                    target,
+                    label: None,
+                })
+            }
+            Input::Legacy(target) => Ok(Self {
+                kind: RuleReferenceKind::Repository,
+                target: format!("/{}", target.trim_start_matches('/')),
+                label: None,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum RuleReferenceKind {
+    Repository,
+    External,
+}
+
+impl fmt::Display for RuleReferenceKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Repository => "repository",
+            Self::External => "external",
+        })
+    }
+}
+
+impl RuleReference {
+    pub(crate) fn display(&self) -> String {
+        self.label.as_ref().map_or_else(
+            || format!("{}: {}", self.kind, self.target),
+            |label| format!("{}: {} ({})", self.kind, label, self.target),
+        )
+    }
+}
+
+pub(crate) fn migrate_reference(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    value: &str,
+) -> Result<RuleReference, RulesetError> {
+    let target = value.trim();
+    if target.is_empty() || target.starts_with("legacy:") {
+        return Err(RulesetError::InvalidReference(value.to_string()));
+    }
+    if target.starts_with("http://") || target.starts_with("https://") {
+        let authority = target
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        let host = authority.split(['/', '?', '#']).next().unwrap_or_default();
+        if host.is_empty() || host.contains(char::is_whitespace) {
+            return Err(RulesetError::InvalidReference(value.to_string()));
+        }
+        return Ok(RuleReference {
+            kind: RuleReferenceKind::External,
+            target: target.to_string(),
+            label: None,
+        });
+    }
+    let relative = target.trim_start_matches('/');
+    let relative = Utf8Path::new(relative);
+    if relative.as_str().is_empty()
+        || relative.is_absolute()
+        || relative.as_str().split('/').any(|part| part == "..")
+    {
+        return Err(RulesetError::InvalidReference(value.to_string()));
+    }
+    let path = repo_root.join(relative);
+    if !fs.is_file(&path) {
+        return Err(RulesetError::MissingReference(path));
+    }
+    validate_repository_boundary(fs, repo_root, &path)?;
+    Ok(RuleReference {
+        kind: RuleReferenceKind::Repository,
+        target: format!("/{relative}"),
+        label: None,
+    })
+}
+
+fn validate_repository_boundary(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    path: &Utf8Path,
+) -> Result<(), RulesetError> {
+    let canonical_root = fs
+        .canonicalize(repo_root)
+        .map_err(|source| RulesetError::Io {
+            path: repo_root.to_path_buf(),
+            source,
+        })?;
+    let canonical_path = fs.canonicalize(path).map_err(|source| RulesetError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(RulesetError::EscapingReference(path.to_path_buf()));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +230,7 @@ impl Catalog {
         if has_embedded && let Some(source) = catalog.legacy_sources.first() {
             return Err(RulesetError::MixedLegacySources(source.clone()));
         }
+        catalog.validate_references(fs, repo_root)?;
         catalog.validate()?;
         Ok(catalog)
     }
@@ -169,6 +313,27 @@ impl Catalog {
 
     pub(crate) fn validate(&self) -> Result<(), RulesetError> {
         self.validate_graph()
+    }
+
+    fn validate_references(
+        &self,
+        fs: &impl FileSystem,
+        repo_root: &Utf8Path,
+    ) -> Result<(), RulesetError> {
+        for entry in self.entries.values() {
+            for rule in &entry.document.rules {
+                for reference in &rule.references {
+                    if reference.kind == RuleReferenceKind::Repository {
+                        let path = repo_root.join(reference.target.trim_start_matches('/'));
+                        if !fs.is_file(&path) {
+                            return Err(RulesetError::MissingReference(path));
+                        }
+                        validate_repository_boundary(fs, repo_root, &path)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn resolve(&self, id: &str) -> Result<Vec<ResolvedRule>, RulesetError> {
@@ -275,6 +440,31 @@ pub(crate) fn validate_local(
     }
     let mut separator = None;
     for rule in rules {
+        let mut targets = BTreeSet::new();
+        for reference in &rule.references {
+            if !targets.insert(&reference.target) {
+                return Err(RulesetError::DuplicateReference(reference.target.clone()));
+            }
+            let valid = match reference.kind {
+                RuleReferenceKind::External => {
+                    (reference.target.starts_with("http://")
+                        || reference.target.starts_with("https://"))
+                        && reference.target.split_once("://").is_some_and(|(_, rest)| {
+                            rest.split(['/', '?', '#']).next().is_some_and(|host| {
+                                !host.is_empty() && !host.contains(char::is_whitespace)
+                            })
+                        })
+                }
+                RuleReferenceKind::Repository => {
+                    reference.target.starts_with('/')
+                        && reference.target.len() > 1
+                        && !reference.target.split('/').any(|part| part == "..")
+                }
+            };
+            if !valid {
+                return Err(RulesetError::InvalidReference(reference.target.clone()));
+            }
+        }
         let suffix = rule
             .id
             .strip_prefix(ruleset_id)
@@ -364,6 +554,10 @@ where
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the command dispatcher keeps all rules CLI routing visible together"
+)]
 fn execute<F, C, O, E>(
     command: &RulesCommand,
     context: &mut CommandContext<'_, F, C, O, E>,
@@ -472,7 +666,33 @@ where
             ))
         }
         RulesCommand::Include(args) => mutate(command, args.command.ruleset(), context),
-        RulesCommand::Rule(args) => mutate(command, args.command.ruleset(), context),
+        RulesCommand::Rule(args) => match &args.command {
+            RulesRuleCommand::Reference(reference) => match &reference.command {
+                RulesReferenceCommand::List { ruleset, id } => {
+                    let catalog = Catalog::discover_repository(context.fs, &context.repo_root)?;
+                    let rule = catalog
+                        .get(ruleset)
+                        .ok_or_else(|| RulesetError::Unknown(ruleset.clone()))?
+                        .document
+                        .rules
+                        .iter()
+                        .find(|rule| rule.id == *id)
+                        .ok_or_else(|| RulesetError::UnknownRule(id.clone()))?;
+                    let items = if rule.references.is_empty() {
+                        String::from("- No references.")
+                    } else {
+                        rule.references
+                            .iter()
+                            .map(|reference| format!("- {}", reference.display()))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    };
+                    Ok(format!("# rapport rules rule reference list\n\n{items}"))
+                }
+                _ => mutate(command, args.command.ruleset(), context),
+            },
+            _ => mutate(command, args.command.ruleset(), context),
+        },
     }
 }
 
@@ -492,10 +712,19 @@ impl TargetRuleset for RulesRuleCommand {
             Self::Add(args) => &args.ruleset,
             Self::Update(args) => &args.ruleset,
             Self::Remove { ruleset, .. } => ruleset,
+            Self::Reference(args) => match &args.command {
+                RulesReferenceCommand::List { ruleset, .. }
+                | RulesReferenceCommand::Remove { ruleset, .. } => ruleset,
+                RulesReferenceCommand::Add(args) => &args.ruleset,
+            },
         }
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "ruleset mutations share one validate-before-write transaction"
+)]
 fn mutate<F, C, O, E>(
     command: &RulesCommand,
     id: &str,
@@ -543,7 +772,13 @@ where
                     id: args.id.clone(),
                     text: args.text.clone(),
                     rationale: args.rationale.clone(),
-                    references: args.references.clone(),
+                    references: args
+                        .references
+                        .iter()
+                        .map(|reference| {
+                            migrate_reference(context.fs, &context.repo_root, reference)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
                 });
             }
             RulesRuleCommand::Update(args) => {
@@ -561,7 +796,13 @@ where
                     rule.rationale = None;
                 }
                 if !args.references.is_empty() {
-                    rule.references.clone_from(&args.references);
+                    rule.references = args
+                        .references
+                        .iter()
+                        .map(|reference| {
+                            migrate_reference(context.fs, &context.repo_root, reference)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
                 } else if args.clear_references {
                     rule.references.clear();
                 }
@@ -573,6 +814,49 @@ where
                     return Err(RulesetError::UnknownRule(id.clone()));
                 }
             }
+            RulesRuleCommand::Reference(args) => match &args.command {
+                RulesReferenceCommand::List { .. } => unreachable!(),
+                RulesReferenceCommand::Add(args) => {
+                    let rule = document
+                        .rules
+                        .iter_mut()
+                        .find(|rule| rule.id == args.id)
+                        .ok_or_else(|| RulesetError::UnknownRule(args.id.clone()))?;
+                    let source = args
+                        .repository
+                        .as_deref()
+                        .or(args.external.as_deref())
+                        .ok_or_else(|| RulesetError::InvalidReference(String::new()))?;
+                    let mut reference = migrate_reference(context.fs, &context.repo_root, source)?;
+                    if args.repository.is_some() && reference.kind != RuleReferenceKind::Repository
+                        || args.external.is_some() && reference.kind != RuleReferenceKind::External
+                    {
+                        return Err(RulesetError::InvalidReference(source.to_string()));
+                    }
+                    reference.label.clone_from(&args.label);
+                    if rule
+                        .references
+                        .iter()
+                        .any(|existing| existing.target == reference.target)
+                    {
+                        return Err(RulesetError::DuplicateReference(reference.target));
+                    }
+                    rule.references.push(reference);
+                }
+                RulesReferenceCommand::Remove { id, target, .. } => {
+                    let rule = document
+                        .rules
+                        .iter_mut()
+                        .find(|rule| rule.id == *id)
+                        .ok_or_else(|| RulesetError::UnknownRule(id.clone()))?;
+                    let before = rule.references.len();
+                    rule.references
+                        .retain(|reference| reference.target != *target);
+                    if before == rule.references.len() {
+                        return Err(RulesetError::UnknownReference(target.clone()));
+                    }
+                }
+            },
         },
         _ => unreachable!(),
     }
@@ -680,6 +964,11 @@ pub(crate) enum RulesetError {
     InvalidPath(Utf8PathBuf),
     EmbeddedMutation(String),
     MixedLegacySources(Utf8PathBuf),
+    InvalidReference(String),
+    MissingReference(Utf8PathBuf),
+    DuplicateReference(String),
+    UnknownReference(String),
+    EscapingReference(Utf8PathBuf),
 }
 
 impl fmt::Display for RulesetError {
@@ -727,6 +1016,23 @@ impl fmt::Display for RulesetError {
             Self::MixedLegacySources(path) => write!(
                 f,
                 "legacy rule sources in `{path}` cannot coexist with embedded rulesets; convert the context before resolving repository rules"
+            ),
+            Self::InvalidReference(target) => write!(
+                f,
+                "rule reference `{target}` must be an HTTP(S) URL or an existing repository file"
+            ),
+            Self::MissingReference(path) => {
+                write!(f, "rule reference file `{path}` does not exist")
+            }
+            Self::DuplicateReference(target) => {
+                write!(f, "rule reference target `{target}` already exists")
+            }
+            Self::UnknownReference(target) => {
+                write!(f, "rule reference target `{target}` was not found")
+            }
+            Self::EscapingReference(path) => write!(
+                f,
+                "rule reference file `{path}` resolves outside the repository"
             ),
         }
     }
@@ -820,5 +1126,52 @@ mod tests {
                 .to_string()
                 .contains("must begin with `RUST-` or `RUST_`")
         );
+    }
+
+    #[test]
+    fn legacy_external_reference_migrates_to_typed_record() {
+        let document: RulesetDocument = toml::from_str(
+            "version = 1\nid = \"RUST\"\nincludes = []\n[[rules]]\nid = \"RUST-001\"\ntext = \"Text\"\nreferences = [\"https://example.com/source\"]\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            document.rules[0].references[0].kind,
+            RuleReferenceKind::External
+        );
+        assert_eq!(
+            document.rules[0].references[0].target,
+            "https://example.com/source"
+        );
+    }
+
+    #[test]
+    fn repository_reference_migration_requires_an_existing_file() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.write_string("/repo/docs/decision.md", "decision")
+            .unwrap();
+
+        let reference = migrate_reference(&fs, Utf8Path::new("/repo"), "docs/decision.md").unwrap();
+        assert_eq!(reference.kind, RuleReferenceKind::Repository);
+        assert_eq!(reference.target, "/docs/decision.md");
+        assert!(migrate_reference(&fs, Utf8Path::new("/repo"), "docs/missing.md").is_err());
+        assert!(migrate_reference(&fs, Utf8Path::new("/repo"), "../outside.md").is_err());
+    }
+
+    #[test]
+    fn validation_rejects_malformed_and_duplicate_reference_targets() {
+        let reference = RuleReference {
+            kind: RuleReferenceKind::External,
+            target: String::from("https:///missing-host"),
+            label: None,
+        };
+        let rule = RuleDefinition {
+            id: String::from("RUST-001"),
+            text: String::from("Text"),
+            rationale: None,
+            references: vec![reference.clone(), reference],
+        };
+
+        assert!(validate_local("RUST", &[rule], Utf8Path::new("rules.toml")).is_err());
     }
 }

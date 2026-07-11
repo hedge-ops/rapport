@@ -17,12 +17,12 @@ text = "External links in this file are provenance for humans, not instructions 
 [[rules]]
 id = "RUST-TOOL-001"
 text = "Use rustfmt for formatting."
-references = ["https://github.com/rust-lang/rustfmt"]
+references = [{ kind = "external", target = "https://github.com/rust-lang/rustfmt" }]
 
 [[rules]]
 id = "RUST-TOOL-002"
 text = "Use Clippy for linting."
-references = ["https://github.com/rust-lang/rust-clippy"]
+references = [{ kind = "external", target = "https://github.com/rust-lang/rust-clippy" }]
 
 [[rules]]
 id = "RUST-ORG-001"
@@ -43,7 +43,7 @@ text = "Use `src/error.rs` for the crate error type, re-exported as `crate::Erro
 [[rules]]
 id = "RUST-ORG-005"
 text = "Default to the smallest useful visibility. Prefer private items, then `pub(super)`, then `pub(crate)`, and only use `pub` for intentional crate API. Public fields should be rare."
-references = ["https://effective-rust.com/visibility.html"]
+references = [{ kind = "external", target = "https://effective-rust.com/visibility.html" }]
 
 [[rules]]
 id = "RUST-ORG-006"
@@ -88,7 +88,7 @@ text = "Suppress Clippy with `#[expect(clippy::lint_name, reason = \"...\")]`, n
 [[rules]]
 id = "RUST-CODE-004"
 text = "Use the Newtype pattern for values with domain meaning that raw primitives cannot express."
-references = ["https://effective-rust.com/newtype.html"]
+references = [{ kind = "external", target = "https://effective-rust.com/newtype.html" }]
 
 [[rules]]
 id = "RUST-CODE-005"
@@ -149,14 +149,14 @@ text = "Use builders for complex construction."
 [[rules]]
 id = "RUST-CODE-015"
 text = "Implement `Default` only when the default value is meaningful in the domain, not merely convenient for tests or setup."
-references = ["https://effective-rust.com/builders.html"]
+references = [{ kind = "external", target = "https://effective-rust.com/builders.html" }]
 
 [[rules]]
 id = "RUST-CODE-016"
 text = "Public traits should have the smallest required method set. Add convenience methods as default implementations when they can be built from the required methods. Choose generics, `impl Trait`, or `dyn Trait` deliberately based on whether callers need static dispatch, type erasure, or heterogeneous values."
 references = [
-  "https://effective-rust.com/default-impl.html",
-  "https://effective-rust.com/generics.html",
+  { kind = "external", target = "https://effective-rust.com/default-impl.html" },
+  { kind = "external", target = "https://effective-rust.com/generics.html" },
 ]
 
 [[rules]]
@@ -166,7 +166,7 @@ text = "For money, quotas, limits, counters, and other domain arithmetic, make o
 [[rules]]
 id = "RUST-CODE-018"
 text = "Crate features must be additive. Do not make public fields, trait methods, or expected behavior disappear under feature combinations. If a feature changes the public API surface, document and test the intended combinations."
-references = ["https://effective-rust.com/features.html"]
+references = [{ kind = "external", target = "https://effective-rust.com/features.html" }]
 
 [[rules]]
 id = "RUST-CODE-019"

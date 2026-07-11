@@ -754,6 +754,25 @@ text = "Second rule."
         );
         assert_eq!(
             run_with_fs(
+                &[
+                    "rules",
+                    "rule",
+                    "reference",
+                    "add",
+                    "BASE",
+                    "BASE-001",
+                    "--external",
+                    "https://example.com/typed",
+                    "--label",
+                    "Typed source"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
                 &["context", "rule", "include", "add", ".", "COMPOSITE"],
                 &mut fs
             )
@@ -778,8 +797,36 @@ text = "Second rule."
             ExitCode::SUCCESS
         );
 
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "context",
+                    "rule",
+                    "reference",
+                    "add",
+                    ".",
+                    "ROOT-001",
+                    "--external",
+                    "https://example.com/root",
+                    "--label",
+                    "Root source"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+
         let (_, list, _) = run_with_fs(&["rules", "list"], &mut fs);
         let (_, show, _) = run_with_fs(&["rules", "show", "ROOT"], &mut fs);
+        let (_, base_references, _) = run_with_fs(
+            &["rules", "rule", "reference", "list", "BASE", "BASE-001"],
+            &mut fs,
+        );
+        let (_, root_references, _) = run_with_fs(
+            &["context", "rule", "reference", "list", ".", "ROOT-001"],
+            &mut fs,
+        );
         let context = fs.read_to_string("/repo/context.toml").unwrap();
         let base = fs
             .read_to_string("/repo/.rapport/rules/shared/base.toml")
@@ -789,6 +836,41 @@ text = "Second rule."
         assert!(show.contains("ROOT-001"));
         assert!(context.contains("[ruleset]") && context.contains("COMPOSITE"));
         assert!(base.contains("Updated base rule.") && base.contains("https://example.com/base"));
+        assert!(base_references.contains("Typed source"));
+        assert!(root_references.contains("Root source"));
+
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "rules",
+                    "rule",
+                    "reference",
+                    "remove",
+                    "BASE",
+                    "BASE-001",
+                    "https://example.com/typed"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "context",
+                    "rule",
+                    "reference",
+                    "remove",
+                    ".",
+                    "ROOT-001",
+                    "https://example.com/root"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
 
         assert_eq!(
             run_with_fs(&["context", "rule", "remove", ".", "ROOT-001"], &mut fs).0,

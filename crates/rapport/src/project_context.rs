@@ -1,7 +1,8 @@
 use crate::cli::{
     ContextCommand, ContextInitArgs, ContextListCommand, ContextOwnershipCommand,
-    ContextPurposeCommand, ContextRuleAddArgs, ContextRuleCommand, ContextRuleUpdateArgs,
-    ContextRulesetCommand, ContextRulesetIdCommand, ContextSignoffCommand, SignoffKindArg,
+    ContextPurposeCommand, ContextReferenceCommand, ContextRuleAddArgs, ContextRuleCommand,
+    ContextRuleUpdateArgs, ContextRulesetCommand, ContextRulesetIdCommand, ContextSignoffCommand,
+    SignoffKindArg,
 };
 use crate::context::{Clock, CommandContext};
 use crate::repository_files::find_named_files;
@@ -85,6 +86,20 @@ where
             ContextRuleCommand::Remove { path, id } => {
                 ("context rule remove", remove_rule(path, id, context))
             }
+            ContextRuleCommand::Reference(args) => match &args.command {
+                ContextReferenceCommand::List { path, id } => (
+                    "context rule reference list",
+                    list_rule_references(path, id, context),
+                ),
+                ContextReferenceCommand::Add(args) => (
+                    "context rule reference add",
+                    add_rule_reference(args, context),
+                ),
+                ContextReferenceCommand::Remove { path, id, target } => (
+                    "context rule reference remove",
+                    remove_rule_reference(path, id, target, context),
+                ),
+            },
         },
         ContextCommand::Ruleset(args) => match &args.command {
             ContextRulesetCommand::Id(args) => match &args.command {
@@ -328,7 +343,7 @@ pub(crate) struct ResolvedContextRule {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) rationale: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) references: Vec<String>,
+    pub(crate) references: Vec<crate::ruleset::RuleReference>,
     pub(crate) source: String,
 }
 
@@ -1032,7 +1047,7 @@ where
             return CommandResult::failure();
         }
     };
-    let references = match validate_references(&args.references) {
+    let references = match validate_references(context.fs, &context.repo_root, &args.references) {
         Ok(references) => references,
         Err(error) => {
             let _ = writeln!(
@@ -1207,7 +1222,7 @@ where
         .as_deref()
         .and_then(|value| required_text("rationale", value).ok())
         .map(ToString::to_string);
-    let references = match validate_references(&args.references) {
+    let references = match validate_references(context.fs, &context.repo_root, &args.references) {
         Ok(references) => references,
         Err(error) => {
             let _ = writeln!(
@@ -1330,6 +1345,217 @@ where
             CommandResult::failure()
         }
     }
+}
+
+fn list_rule_references<F, C, O, E>(
+    path: &Utf8Path,
+    id: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = ProjectContextStore::new(context.repo_root.clone());
+    let requested = requested_path_from_cwd(Some(&path.to_path_buf()), &context.cwd);
+    let result = (|| -> Result<Vec<crate::ruleset::RuleReference>, ProjectContextError> {
+        let context_file = store.context_file_for_path(context.fs, &requested)?;
+        let document = ProjectContextStore::load_context_file(context.fs, &context_file)?;
+        let references = if let Some(ruleset) = document.ruleset {
+            ruleset
+                .rules
+                .into_iter()
+                .find(|rule| rule.id == id)
+                .map(|rule| rule.references)
+        } else {
+            document
+                .rules
+                .into_iter()
+                .find(|rule| rule.id == id)
+                .map(|rule| rule.references)
+        };
+        references.ok_or_else(|| ProjectContextError::MissingInlineRule { id: id.to_string() })
+    })();
+    match result {
+        Ok(references) => {
+            let items = if references.is_empty() {
+                String::from("- No references.")
+            } else {
+                references
+                    .iter()
+                    .map(|reference| format!("- {}", reference.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            let _ = writeln!(
+                context.out,
+                "# rapport context rule reference list\n\n{items}"
+            );
+            CommandResult::success()
+        }
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    "rule reference list",
+                    "Could not list rule references.",
+                    &error
+                )
+            );
+            CommandResult::failure()
+        }
+    }
+}
+
+fn add_rule_reference<F, C, O, E>(
+    args: &crate::cli::ContextReferenceAddArgs,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let Some(source) = args.repository.as_deref().or(args.external.as_deref()) else {
+        let error = crate::ruleset::RulesetError::InvalidReference(String::new()).into();
+        return reference_error("add", &error, context);
+    };
+    let mut reference =
+        match crate::ruleset::migrate_reference(context.fs, &context.repo_root, source) {
+            Ok(reference) => reference,
+            Err(error) => return reference_error("add", &error.into(), context),
+        };
+    if args.repository.is_some() && reference.kind != crate::ruleset::RuleReferenceKind::Repository
+        || args.external.is_some() && reference.kind != crate::ruleset::RuleReferenceKind::External
+    {
+        return reference_error(
+            "add",
+            &crate::ruleset::RulesetError::InvalidReference(source.to_string()).into(),
+            context,
+        );
+    }
+    reference.label.clone_from(&args.label);
+    let store = ProjectContextStore::new(context.repo_root.clone());
+    let requested = requested_path_from_cwd(Some(&args.path), &context.cwd);
+    let result = store.mutate(context.fs, &requested, |document| {
+        let references = if let Some(ruleset) = &mut document.ruleset {
+            &mut ruleset
+                .rules
+                .iter_mut()
+                .find(|rule| rule.id == args.id)
+                .ok_or_else(|| ProjectContextError::MissingInlineRule {
+                    id: args.id.clone(),
+                })?
+                .references
+        } else {
+            &mut document
+                .rules
+                .iter_mut()
+                .find(|rule| rule.id == args.id)
+                .ok_or_else(|| ProjectContextError::MissingInlineRule {
+                    id: args.id.clone(),
+                })?
+                .references
+        };
+        if references
+            .iter()
+            .any(|existing| existing.target == reference.target)
+        {
+            return Err(
+                crate::ruleset::RulesetError::DuplicateReference(reference.target.clone()).into(),
+            );
+        }
+        references.push(reference);
+        Ok(EditStatus::Added)
+    });
+    match result {
+        Ok(report) => {
+            let _ = writeln!(
+                context.out,
+                "{}",
+                render_edit("rule reference add", &store, &report)
+            );
+            CommandResult::success()
+        }
+        Err(error) => reference_error("add", &error, context),
+    }
+}
+
+fn remove_rule_reference<F, C, O, E>(
+    path: &Utf8Path,
+    id: &str,
+    target: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = ProjectContextStore::new(context.repo_root.clone());
+    let requested = requested_path_from_cwd(Some(&path.to_path_buf()), &context.cwd);
+    let result = store.mutate(context.fs, &requested, |document| {
+        let references = if let Some(ruleset) = &mut document.ruleset {
+            &mut ruleset
+                .rules
+                .iter_mut()
+                .find(|rule| rule.id == id)
+                .ok_or_else(|| ProjectContextError::MissingInlineRule { id: id.to_string() })?
+                .references
+        } else {
+            &mut document
+                .rules
+                .iter_mut()
+                .find(|rule| rule.id == id)
+                .ok_or_else(|| ProjectContextError::MissingInlineRule { id: id.to_string() })?
+                .references
+        };
+        let before = references.len();
+        references.retain(|reference| reference.target != target);
+        if before == references.len() {
+            return Err(crate::ruleset::RulesetError::UnknownReference(target.to_string()).into());
+        }
+        Ok(EditStatus::Removed)
+    });
+    match result {
+        Ok(report) => {
+            let _ = writeln!(
+                context.out,
+                "{}",
+                render_edit("rule reference remove", &store, &report)
+            );
+            CommandResult::success()
+        }
+        Err(error) => reference_error("remove", &error, context),
+    }
+}
+
+fn reference_error<F, C, O, E>(
+    command: &str,
+    error: &ProjectContextError,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let _ = writeln!(
+        context.err,
+        "{}",
+        render_context_error(
+            &format!("rule reference {command}"),
+            "Could not update rule references.",
+            error
+        )
+    );
+    CommandResult::failure()
 }
 
 fn doctor<F, C, O, E>(
@@ -1845,7 +2071,7 @@ struct ApplicableRule {
     id: String,
     text: String,
     rationale: Option<String>,
-    references: Vec<String>,
+    references: Vec<crate::ruleset::RuleReference>,
     source: Utf8PathBuf,
 }
 
@@ -2101,7 +2327,7 @@ struct ContextRuleDefinition {
     #[serde(default)]
     rationale: Option<String>,
     #[serde(default)]
-    references: Vec<String>,
+    references: Vec<crate::ruleset::RuleReference>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2367,10 +2593,16 @@ fn required_text<'value>(
     }
 }
 
-fn validate_references(references: &[String]) -> Result<Vec<String>, ProjectContextError> {
+fn validate_references(
+    fs: &impl FileSystem,
+    repo_root: &Utf8Path,
+    references: &[String],
+) -> Result<Vec<crate::ruleset::RuleReference>, ProjectContextError> {
     references
         .iter()
-        .map(|reference| required_text("reference", reference).map(ToString::to_string))
+        .map(|reference| {
+            crate::ruleset::migrate_reference(fs, repo_root, reference).map_err(Into::into)
+        })
         .collect()
 }
 
@@ -2637,7 +2869,14 @@ fn render_rules(store: &ProjectContextStore, rules: &[ApplicableRule]) -> Vec<St
             }
             if !rule.references.is_empty() {
                 line.push_str("; references: ");
-                line.push_str(&rule.references.join(", "));
+                line.push_str(
+                    &rule
+                        .references
+                        .iter()
+                        .map(crate::ruleset::RuleReference::display)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
             }
             line
         })
@@ -2721,7 +2960,7 @@ fn rebuild_structural_tables(output: &mut toml_edit::DocumentMut, document: &Pro
                 }
                 let mut references = toml_edit::Array::new();
                 for reference in &rule.references {
-                    references.push(reference);
+                    references.push(reference_value(reference));
                 }
                 rule_table["references"] = toml_edit::value(references);
                 rules.push(rule_table);
@@ -2743,13 +2982,23 @@ fn rebuild_structural_tables(output: &mut toml_edit::DocumentMut, document: &Pro
             }
             let mut references = toml_edit::Array::new();
             for reference in &rule.references {
-                references.push(reference);
+                references.push(reference_value(reference));
             }
             table["references"] = toml_edit::value(references);
             rules.push(table);
         }
         output["rules"] = toml_edit::Item::ArrayOfTables(rules);
     }
+}
+
+fn reference_value(reference: &crate::ruleset::RuleReference) -> toml_edit::Value {
+    let mut table = toml_edit::InlineTable::new();
+    table.insert("kind", reference.kind.to_string().into());
+    table.insert("target", reference.target.clone().into());
+    if let Some(label) = &reference.label {
+        table.insert("label", label.clone().into());
+    }
+    toml_edit::Value::InlineTable(table)
 }
 
 fn canonical_context_file(document: &ProjectContextFile) -> ProjectContextFile {
@@ -2946,9 +3195,11 @@ mod tests {
             rationale: Some(String::from(
                 "Readable context makes Git diffs useful to reviewers without asking agents to edit Rapport-owned files directly.",
             )),
-            references: vec![String::from(
-                "https://example.com/an/indivisible/reference/that/is/allowed/to/exceed/the/formatter/line/width",
-            )],
+            references: vec![crate::ruleset::RuleReference {
+                kind: crate::ruleset::RuleReferenceKind::External,
+                target: String::from("https://example.com/an/indivisible/reference/that/is/allowed/to/exceed/the/formatter/line/width"),
+                label: None,
+            }],
         });
 
         let rendered = render_context_file(&document).unwrap();
@@ -3306,7 +3557,11 @@ text = "Use rustfmt."
             id: String::from("PRIVATE-RULE-ID"),
             text: String::from("private rule text"),
             rationale: Some(String::from("private rationale")),
-            references: vec![String::from("private reference")],
+            references: vec![crate::ruleset::RuleReference {
+                kind: crate::ruleset::RuleReferenceKind::External,
+                target: String::from("https://example.com/private-reference"),
+                label: None,
+            }],
             source: String::from("private/rules.toml"),
         };
 

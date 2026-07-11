@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added typed repository and external rule references with optional labels,
+  offline validation, CLI list/add/remove operations, and migration from valid
+  legacy string references.
 - Added repository-owned standalone and composite rulesets under
   `.rapport/rules/**/*.toml`, embedded context rulesets, ID-based transitive
   includes, repository-wide validation, and CLI-managed ruleset mutations.
