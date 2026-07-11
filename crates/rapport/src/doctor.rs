@@ -12,6 +12,7 @@ use std::process::ExitCode;
 const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
 const PROJECT_CONTEXT_CHECK: &str = "Project Context";
+const RULE_PACK_CHECK: &str = "Rule packs";
 
 pub fn run<F, C, O, E>(
     arguments: Vec<String>,
@@ -92,6 +93,14 @@ where
     }
 
     checks.extend(project_context_checks(context));
+    checks.push(
+        match crate::builtin_rules::validate_installation(context.fs, context.paths.repo_root()) {
+            Ok(count) => {
+                DoctorCheck::pass(RULE_PACK_CHECK, format!("validated {count} locked pack(s)"))
+            }
+            Err(error) => DoctorCheck::fail(RULE_PACK_CHECK, error.to_string()),
+        },
+    );
 
     DoctorReport { checks }
 }

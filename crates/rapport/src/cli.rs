@@ -72,6 +72,10 @@ pub struct RulesArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RulesCommand {
+    /// List Michael's built-in versioned rules packs.
+    Catalog,
+    /// Install a built-in rules pack into .rapport/rules.
+    Add { pack: String },
     /// List every discovered repository ruleset.
     List,
     /// Show one ruleset and its declared rules.
@@ -175,6 +179,14 @@ pub struct RulesRuleAddArgs {
     pub text: String,
     #[arg(long)]
     pub rationale: Option<String>,
+    #[arg(long)]
+    pub avoid_language: String,
+    #[arg(long)]
+    pub avoid: String,
+    #[arg(long)]
+    pub prefer_language: String,
+    #[arg(long)]
+    pub prefer: String,
     #[arg(long = "reference")]
     pub references: Vec<String>,
 }
@@ -195,6 +207,14 @@ pub struct RulesRuleUpdateArgs {
     /// Remove all existing references.
     #[arg(long, conflicts_with = "references")]
     pub clear_references: bool,
+    #[arg(long, requires = "avoid")]
+    pub avoid_language: Option<String>,
+    #[arg(long, requires = "avoid_language")]
+    pub avoid: Option<String>,
+    #[arg(long, requires = "prefer")]
+    pub prefer_language: Option<String>,
+    #[arg(long, requires = "prefer_language")]
+    pub prefer: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -458,6 +478,14 @@ pub struct ContextRuleAddArgs {
     /// Why the benchmark exists.
     #[arg(long)]
     pub rationale: Option<String>,
+    #[arg(long)]
+    pub avoid_language: String,
+    #[arg(long)]
+    pub avoid: String,
+    #[arg(long)]
+    pub prefer_language: String,
+    #[arg(long)]
+    pub prefer: String,
     /// Provenance such as docs, ADRs, issues, or external references.
     #[arg(long = "reference")]
     pub references: Vec<String>,
@@ -484,6 +512,14 @@ pub struct ContextRuleUpdateArgs {
     /// Remove all existing references.
     #[arg(long, conflicts_with = "references")]
     pub clear_references: bool,
+    #[arg(long, requires = "avoid")]
+    pub avoid_language: Option<String>,
+    #[arg(long, requires = "avoid_language")]
+    pub avoid: Option<String>,
+    #[arg(long, requires = "prefer")]
+    pub prefer_language: Option<String>,
+    #[arg(long, requires = "prefer_language")]
+    pub prefer: Option<String>,
 }
 
 #[derive(Debug, Args)]

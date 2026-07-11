@@ -1,0 +1,12 @@
+version = 1
+purpose = "Owns testable filesystem primitives for Rapport workflow code."
+signoffs = []
+rule_includes = []
+
+[ownership]
+owns = ["Filesystem abstractions shared by Rapport crates."]
+boundaries = []
+
+[ruleset]
+id = "CRATES_RAPPORT_FILES"
+includes = ["RUST_CRATE"]

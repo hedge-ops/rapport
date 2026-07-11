@@ -1,0 +1,12 @@
+version = 1
+purpose = "Owns human- and agent-facing Markdown presentation."
+signoffs = []
+rule_includes = []
+
+[ownership]
+owns = ["Markdown prose formatting and presentation primitives."]
+boundaries = []
+
+[ruleset]
+id = "CRATES_RAPPORT_PROSE"
+includes = ["RUST_CRATE"]

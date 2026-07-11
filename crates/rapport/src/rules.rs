@@ -222,6 +222,8 @@ impl RuleResolver {
                 text: rule.text,
                 rationale: rule.rationale,
                 references: rule.references,
+                avoid: rule.avoid,
+                prefer: rule.prefer,
                 source: Utf8PathBuf::from(rule.source),
             })
             .collect();
@@ -323,6 +325,8 @@ pub struct Rule {
     pub text: String,
     pub rationale: Option<String>,
     pub(crate) references: Vec<crate::ruleset::RuleReference>,
+    pub(crate) avoid: crate::ruleset::RuleExample,
+    pub(crate) prefer: crate::ruleset::RuleExample,
     pub source: Utf8PathBuf,
 }
 
@@ -504,6 +508,18 @@ fn render_rule_show(resolver: &RuleResolver, rule: &Rule) -> String {
     if let Some(rationale) = &rule.rationale {
         builder = builder.section("Rationale", |b| b.items([rationale.clone()]));
     }
+    builder = builder.section("Avoid", |b| {
+        b.items([format!(
+            "```{}\n{}\n```",
+            rule.avoid.language, rule.avoid.text
+        )])
+    });
+    builder = builder.section("Prefer", |b| {
+        b.items([format!(
+            "```{}\n{}\n```",
+            rule.prefer.language, rule.prefer.text
+        )])
+    });
     builder
         .next_actions(nonempty![RunHint::new("rapport work rules list")])
         .build()

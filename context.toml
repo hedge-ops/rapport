@@ -4,7 +4,7 @@ purpose = "Owns repository-wide Rapport workflow."
 
 [ruleset]
 id = "RAPPORT"
-includes = ["RUST", "TEST"]
+includes = []
 
 [ownership]
 owns = []

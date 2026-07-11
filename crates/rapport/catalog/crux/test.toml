@@ -1,0 +1,113 @@
+version = 1
+id = "CRUX_TEST"
+includes = []
+
+[rules.CRUX_TEST_001]
+text = "Use generated fluent command assertions from `EffectTestExt` so tests describe command intent in effect vocabulary."
+
+[rules.CRUX_TEST_001.avoid]
+language = "text"
+text = "collecting effects and matching variants manually"
+
+[rules.CRUX_TEST_001.prefer]
+language = "text"
+text = "`command.expect_only_render()`"
+
+[rules.CRUX_TEST_002]
+text = "Use `expect_only_*` when the asserted effect must exhaust the command. After a sequence, call `expect_done()` to prove no effects or events remain."
+
+[rules.CRUX_TEST_002.avoid]
+language = "text"
+text = "`command.expect_http()` with trailing effects ignored"
+
+[rules.CRUX_TEST_002.prefer]
+language = "text"
+text = "a fluent chain ending in `expect_only_render()` or `expect_done()`"
+
+[rules.CRUX_TEST_003]
+text = "Assert operation payloads with `_with` for every non-render effect whose inputs are part of the behavior."
+
+[rules.CRUX_TEST_003.avoid]
+language = "text"
+text = "`command.expect_only_storage()`"
+
+[rules.CRUX_TEST_003.prefer]
+language = "text"
+text = "`expect_only_storage_with(|op| op.assert_write_to(path))`"
+
+[rules.CRUX_TEST_004]
+text = "Move repeated operation-payload checks into small assertion helpers owned by the effect's testing support."
+
+[rules.CRUX_TEST_004.avoid]
+language = "text"
+text = "repeating request method, path, and ID field assertions"
+
+[rules.CRUX_TEST_004.prefer]
+language = "text"
+text = "`request.assert_client_refresh(workspace_id)`"
+
+[rules.CRUX_TEST_005]
+text = "Use `resolve_*` helpers when subsequent model state depends on the shell response. Feed the resulting event back into the model and assert the full cycle."
+
+[rules.CRUX_TEST_005.avoid]
+language = "text"
+text = "calling `model.update(Event::Loaded(fake_response()))` directly"
+
+[rules.CRUX_TEST_005.prefer]
+language = "text"
+text = "resolve the command, expect its event, then update the model"
+
+[rules.CRUX_TEST_006]
+text = "A helper that resolves or consumes several effects must prove that no trailing effects or events remain."
+
+[rules.CRUX_TEST_006.avoid]
+language = "text"
+text = "a resolution helper silently ignoring extra effects"
+
+[rules.CRUX_TEST_006.prefer]
+language = "text"
+text = "a helper ending in `expect_done()`"
+
+[rules.CRUX_TEST_007]
+text = "Extract only the part of an outcome the test asserts: `into_value()` for state, `into_command()` for effects, and `into_parts()` only for both."
+
+[rules.CRUX_TEST_007.avoid]
+language = "text"
+text = "binding `_command` only to discard it"
+
+[rules.CRUX_TEST_007.prefer]
+language = "text"
+text = "`let state = outcome.into_value()`"
+
+[rules.CRUX_TEST_008]
+text = "Give model tests a short business-level doc comment describing the behavior being pinned. Do not narrate command extraction or setup mechanics."
+
+[rules.CRUX_TEST_008.avoid]
+language = "text"
+text = "`/// Calls start and gets the command.`"
+
+[rules.CRUX_TEST_008.prefer]
+language = "text"
+text = "`/// Starting the model enters initialization and requests boot context.`"
+
+[rules.CRUX_TEST_009]
+text = "Use fluent effect assertions in new and touched model tests. Keep lower-level effect pulling inside generated assertion infrastructure, legacy tests, or exceptional debugging code."
+
+[rules.CRUX_TEST_009.avoid]
+language = "text"
+text = "manual iteration over `command.effects()`"
+
+[rules.CRUX_TEST_009.prefer]
+language = "text"
+text = "`command.expect_only_http_with(...)`"
+
+[rules.CRUX_TEST_010]
+text = "Test models through their state-owning update contract: `model.update(event)`. Do not pass model state separately when the application model owns it."
+
+[rules.CRUX_TEST_010.avoid]
+language = "text"
+text = "`app.update(event, &mut model)`"
+
+[rules.CRUX_TEST_010.prefer]
+language = "text"
+text = "`model.update(event)`"
