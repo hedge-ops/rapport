@@ -730,6 +730,46 @@ text = "Second rule."
     }
 
     #[test]
+    fn context_init_wraps_markdown_without_changing_fenced_code() {
+        let mut fs = InMemoryFileSystem::default();
+        let purpose = "The shared client-facing view of the domain, serialized between the app and the API. This is the API contract, and it remains distinct from persistence concerns.\n\n```rust\nlet deliberately_long_identifier = something_that_must_not_be_wrapped();\n```";
+
+        let (code, _, err) = run_with_fs(
+            &["context", "init", "app/core/domain", "--purpose", purpose],
+            &mut fs,
+        );
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(err, "");
+        let context = fs
+            .read_to_string("/repo/app/core/domain/context.toml")
+            .unwrap();
+        let document: toml::Value = toml::from_str(&context).unwrap();
+        let canonical_purpose = document["purpose"].as_str().unwrap();
+        assert!(context.contains("purpose = '''\n"));
+        assert!(canonical_purpose.contains(
+            "```rust\nlet deliberately_long_identifier = something_that_must_not_be_wrapped();\n```"
+        ));
+        let (rewrite_code, _, rewrite_err) = run_with_fs(
+            &[
+                "context",
+                "purpose",
+                "set",
+                "app/core/domain",
+                canonical_purpose,
+            ],
+            &mut fs,
+        );
+        assert_eq!(rewrite_code, ExitCode::SUCCESS);
+        assert_eq!(rewrite_err, "");
+        assert_eq!(
+            fs.read_to_string("/repo/app/core/domain/context.toml")
+                .unwrap(),
+            context
+        );
+    }
+
+    #[test]
     fn context_editing_commands_update_context_toml() {
         let mut fs = InMemoryFileSystem::default();
         add_editable_context(&mut fs);
