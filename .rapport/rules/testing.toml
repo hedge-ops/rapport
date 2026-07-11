@@ -1,4 +1,6 @@
 version = 1
+id = "TEST"
+includes = []
 
 [[rules]]
 id = "TEST-SEM-001"

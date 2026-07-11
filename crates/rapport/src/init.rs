@@ -13,6 +13,9 @@ const FAILURE: u8 = 2;
 const AGENTS_FILE: &str = "AGENTS.md";
 const START_MARKER: &str = "<!-- rapport:init:start -->";
 const END_MARKER: &str = "<!-- rapport:init:end -->";
+const GITIGNORE_FILE: &str = ".gitignore";
+const RULES_START_MARKER: &str = "# rapport:init-rules:start";
+const RULES_END_MARKER: &str = "# rapport:init-rules:end";
 
 pub fn run<F, C, O, E>(
     arguments: Vec<String>,
@@ -32,6 +35,17 @@ where
                 Ok(()) => {
                     match signoff_contract::write_shared(context.fs, context.paths.repo_root()) {
                         Ok(()) => {
+                            if let Err(error) =
+                                write_rules_gitignore(context.fs, context.paths.repo_root())
+                            {
+                                let _ = writeln!(context.err, "{}", render_init_error(&error));
+                                return finish(
+                                    "init",
+                                    arguments,
+                                    context,
+                                    CommandResult::failure(),
+                                );
+                            }
                             let status = if existing.is_some() {
                                 "updated"
                             } else {
@@ -58,6 +72,56 @@ where
         }
     };
     finish("init", arguments, context, result)
+}
+
+fn write_rules_gitignore(
+    fs: &mut impl FileSystem,
+    repo_root: &rapport_files::Utf8Path,
+) -> io::Result<()> {
+    let path = repo_root.join(GITIGNORE_FILE);
+    let existing = if fs.is_file(&path) {
+        Some(fs.read_to_string(&path)?)
+    } else {
+        None
+    };
+    fs.write_string(&path, upsert_rules_ignore(existing.as_deref()))
+}
+
+fn upsert_rules_ignore(existing: Option<&str>) -> String {
+    let section = format!(
+        "{RULES_START_MARKER}\n.rapport/**\n!.rapport/\n!.rapport/rules/\n!.rapport/rules/**\n{RULES_END_MARKER}\n"
+    );
+    match existing {
+        Some(contents)
+            if contents.contains(RULES_START_MARKER) && contents.contains(RULES_END_MARKER) =>
+        {
+            replace_marked(contents, &section, RULES_START_MARKER, RULES_END_MARKER)
+        }
+        Some(contents) if !contents.trim().is_empty() => {
+            format!("{}\n\n{section}", contents.trim_end())
+        }
+        _ => section,
+    }
+}
+
+fn replace_marked(contents: &str, section: &str, start_marker: &str, end_marker: &str) -> String {
+    let Some(start) = contents.find(start_marker) else {
+        return contents.to_string();
+    };
+    let Some(end) = contents
+        .find(end_marker)
+        .map(|index| index + end_marker.len())
+    else {
+        return contents.to_string();
+    };
+    let before = contents[..start].trim_end();
+    let after = contents[end..].trim_start();
+    match (before.is_empty(), after.is_empty()) {
+        (true, true) => section.to_string(),
+        (false, true) => format!("{before}\n\n{section}"),
+        (true, false) => format!("{}\n\n{after}", section.trim_end()),
+        (false, false) => format!("{before}\n\n{}\n\n{after}", section.trim_end()),
+    }
 }
 
 fn load_agents(
@@ -233,5 +297,15 @@ mod tests {
         assert!(updated.contains("rapport prime"));
         assert!(!updated.contains("\nold\n"));
         assert_eq!(updated.matches(START_MARKER).count(), 1);
+    }
+
+    #[test]
+    fn rules_gitignore_is_idempotent_and_preserves_unrelated_content() {
+        let once = upsert_rules_ignore(Some("target/\n"));
+        let twice = upsert_rules_ignore(Some(&once));
+        assert_eq!(once, twice);
+        assert!(once.starts_with("target/"));
+        assert_eq!(once.matches(RULES_START_MARKER).count(), 1);
+        assert!(once.contains("!.rapport/rules/**"));
     }
 }

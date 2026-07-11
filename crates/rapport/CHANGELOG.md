@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added repository-owned standalone and composite rulesets under
+  `.rapport/rules/**/*.toml`, embedded context rulesets, ID-based transitive
+  includes, repository-wide validation, and CLI-managed ruleset mutations.
+- Added idempotent `rapport init` management that ignores Rapport runtime state
+  while keeping checked-in rulesets trackable.
+
+### Changed
+
+- Changed context, work, review, integration, and doctor rule resolution to use
+  the shared repository ruleset catalog and stable ruleset IDs.
+
 ## [0.4.2] - 2026-07-10
 
 ### Added

@@ -1,4 +1,6 @@
 version = 1
+id = "RUST"
+includes = []
 
 [[rules]]
 id = "RUST-SEM-001"

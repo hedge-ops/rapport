@@ -2,10 +2,9 @@ version = 1
 
 purpose = "Owns repository-wide Rapport workflow."
 
-rule_includes = [
-  "/rules/rust.toml",
-  "/rules/testing.toml",
-]
+[ruleset]
+id = "RAPPORT"
+includes = ["RUST", "TEST"]
 
 [ownership]
 owns = []

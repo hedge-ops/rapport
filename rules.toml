@@ -1,6 +1,0 @@
-version = 1
-
-includes = [
-  "/rules/rust.toml",
-  "/rules/testing.toml",
-]
