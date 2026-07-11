@@ -116,10 +116,18 @@ where
         return vec![DoctorCheck::pass(
             PROJECT_CONTEXT_CHECK,
             format!(
-                "validated {}, {}, and {}",
+                "validated {}, {}, {}, {}, and {}",
                 file_count(context_validation.context_file_count(), "context.toml file"),
+                file_count(
+                    context_validation.embedded_ruleset_count(),
+                    "embedded ruleset"
+                ),
                 file_count(context_validation.signoff_count(), "signoff declaration"),
-                file_count(rule_validation.rule_file_count(), "rules.toml file")
+                file_count(rule_validation.rule_file_count(), "standalone ruleset"),
+                file_count(
+                    context_validation.local_rule_count() + rule_validation.local_rule_count(),
+                    "locally declared rule"
+                )
             ),
         )];
     }

@@ -1,22 +1,19 @@
 use crate::context::{Clock, CommandContext};
 use crate::paths::RapportPaths;
 use crate::project_context::{ProjectContextError, resolved_rules_for_paths};
-use crate::repository_files::find_named_files;
 use crate::state::{WorkStateError, WorkStateStore};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
-use serde::Deserialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::Write;
 use std::process::ExitCode;
 
 const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
-const RULE_SCHEMA_VERSION: u16 = 1;
 
 pub fn list<F, C, O, E>(
     path: Option<&Utf8PathBuf>,
@@ -120,37 +117,39 @@ pub(crate) fn validate_repository(
     fs: &impl FileSystem,
     paths: &RapportPaths,
 ) -> RuleRepositoryValidation {
-    let rule_files = match find_named_files(fs, paths.repo_root(), "rules.toml") {
-        Ok(rule_files) => rule_files,
-        Err(source) => {
-            return RuleRepositoryValidation {
-                rule_files: Vec::new(),
-                problems: vec![RuleValidationProblem {
-                    detail: format!(
-                        "could not scan repository for `rules.toml` files at `{}`: {source}",
-                        paths.repo_root()
-                    ),
+    let (rule_files, local_rule_count, mut problems) =
+        match crate::ruleset::Catalog::discover_documents(fs, paths.repo_root()) {
+            Ok(catalog) => (
+                catalog
+                    .entries()
+                    .map(|entry| entry.source.clone())
+                    .collect(),
+                catalog
+                    .entries()
+                    .map(|entry| entry.document.rules.len())
+                    .sum(),
+                Vec::new(),
+            ),
+            Err(error) => (
+                Vec::new(),
+                0,
+                vec![RuleValidationProblem {
+                    detail: normalize_problem_detail(&error.to_string()),
                 }],
-            };
-        }
-    };
-
-    let mut seen_problems = BTreeSet::new();
-    let mut problems = Vec::new();
-    for rule_file in &rule_files {
-        match RuleResolver::load_document(fs, rule_file) {
-            Ok(_) => {}
-            Err(error) => {
-                let detail = normalize_problem_detail(&error.to_string());
-                if seen_problems.insert(detail.clone()) {
-                    problems.push(RuleValidationProblem { detail });
-                }
-            }
+            ),
+        };
+    if !rule_files.is_empty() {
+        let gitignore = paths.repo_root().join(".gitignore");
+        match fs.read_to_string(&gitignore) {
+            Ok(contents) if contents.contains(".rapport/**") && contents.contains("!.rapport/rules/**") => {}
+            Ok(_) => problems.push(RuleValidationProblem { detail: String::from(".gitignore does not preserve .rapport/rules/** as checked-in repository state; run `rapport init`") }),
+            Err(source) => problems.push(RuleValidationProblem { detail: format!("could not validate ruleset .gitignore contract at `{gitignore}`: {source}") }),
         }
     }
 
     RuleRepositoryValidation {
         rule_files,
+        local_rule_count,
         problems,
     }
 }
@@ -158,12 +157,17 @@ pub(crate) fn validate_repository(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuleRepositoryValidation {
     rule_files: Vec<Utf8PathBuf>,
+    local_rule_count: usize,
     problems: Vec<RuleValidationProblem>,
 }
 
 impl RuleRepositoryValidation {
     pub(crate) fn rule_file_count(&self) -> usize {
         self.rule_files.len()
+    }
+
+    pub(crate) fn local_rule_count(&self) -> usize {
+        self.local_rule_count
     }
 
     pub(crate) fn problem_details(&self) -> impl Iterator<Item = &str> {
@@ -269,29 +273,6 @@ impl RuleResolver {
         }
     }
 
-    fn load_document(fs: &impl FileSystem, path: &Utf8Path) -> Result<RuleDocument, RulesError> {
-        let contents = fs.read_to_string(path).map_err(|source| RulesError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let document =
-            toml::from_str::<RuleDocument>(&contents).map_err(|source| RulesError::Decode {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        if document.version != RULE_SCHEMA_VERSION {
-            return Err(RulesError::UnsupportedSchemaVersion {
-                path: path.to_path_buf(),
-                version: document.version,
-            });
-        }
-        let _ = document.includes.len();
-        for rule in &document.rules {
-            let _ = (&rule.id, &rule.text, rule.references.len());
-        }
-        Ok(document)
-    }
-
     fn validate_unique_rule_ids(resolutions: &[PathRules]) -> Result<(), RulesError> {
         let mut seen_ids: BTreeMap<String, Utf8PathBuf> = BTreeMap::new();
         for rule in resolutions.iter().flat_map(|resolution| &resolution.rules) {
@@ -366,18 +347,6 @@ pub enum RulesError {
         first_source: Utf8PathBuf,
         second_source: Utf8PathBuf,
     },
-    Io {
-        path: Utf8PathBuf,
-        source: io::Error,
-    },
-    Decode {
-        path: Utf8PathBuf,
-        source: toml::de::Error,
-    },
-    UnsupportedSchemaVersion {
-        path: Utf8PathBuf,
-        version: u16,
-    },
 }
 
 impl fmt::Display for RulesError {
@@ -392,16 +361,6 @@ impl fmt::Display for RulesError {
                 f,
                 "duplicate rule id `{id}` in `{first_source}` and `{second_source}`"
             ),
-            Self::Io { path, source } => {
-                write!(f, "rules filesystem error at `{path}`: {source}")
-            }
-            Self::Decode { path, source } => {
-                write!(f, "rules parse error at `{path}`: {source}")
-            }
-            Self::UnsupportedSchemaVersion { path, version } => write!(
-                f,
-                "unsupported rules schema version `{version}` at `{path}`; supported version is `{RULE_SCHEMA_VERSION}`"
-            ),
         }
     }
 }
@@ -410,9 +369,7 @@ impl Error for RulesError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Context(source) => Some(source),
-            Self::Io { source, .. } => Some(source),
-            Self::Decode { source, .. } => Some(source),
-            Self::DuplicateRuleId { .. } | Self::UnsupportedSchemaVersion { .. } => None,
+            Self::DuplicateRuleId { .. } => None,
         }
     }
 }
@@ -421,25 +378,6 @@ impl From<ProjectContextError> for RulesError {
     fn from(source: ProjectContextError) -> Self {
         Self::Context(source)
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuleDocument {
-    version: u16,
-    #[serde(default)]
-    includes: Vec<String>,
-    #[serde(default)]
-    rules: Vec<RuleDefinition>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuleDefinition {
-    id: String,
-    text: String,
-    #[serde(default)]
-    references: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]

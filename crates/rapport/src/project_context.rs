@@ -1,7 +1,7 @@
 use crate::cli::{
     ContextCommand, ContextInitArgs, ContextListCommand, ContextOwnershipCommand,
     ContextPurposeCommand, ContextRuleAddArgs, ContextRuleCommand, ContextRuleUpdateArgs,
-    ContextSignoffCommand, SignoffKindArg,
+    ContextRulesetCommand, ContextRulesetIdCommand, ContextSignoffCommand, SignoffKindArg,
 };
 use crate::context::{Clock, CommandContext};
 use crate::repository_files::find_named_files;
@@ -86,6 +86,13 @@ where
                 ("context rule remove", remove_rule(path, id, context))
             }
         },
+        ContextCommand::Ruleset(args) => match &args.command {
+            ContextRulesetCommand::Id(args) => match &args.command {
+                ContextRulesetIdCommand::Set { path, id } => {
+                    ("context ruleset id set", set_ruleset_id(path, id, context))
+                }
+            },
+        },
         ContextCommand::Signoff(args) => match &args.command {
             ContextSignoffCommand::Add {
                 path,
@@ -126,6 +133,8 @@ pub(crate) fn validate_repository(
             return ProjectContextRepositoryValidation {
                 context_files: Vec::new(),
                 signoff_count: 0,
+                embedded_ruleset_count: 0,
+                local_rule_count: 0,
                 problems: vec![ProjectContextValidationProblem {
                     detail: format!(
                         "could not scan repository for `{CONTEXT_FILE}` files at `{repo_root}`: {source}"
@@ -151,11 +160,19 @@ pub(crate) fn validate_repository(
     }
 
     let mut requests = Vec::new();
+    let mut embedded_ruleset_count = 0;
+    let mut local_rule_count = 0;
     for context_file in &context_files {
         let Ok(document) = ProjectContextStore::load_context_file(fs, context_file) else {
             continue;
         };
         let directory = context_file.parent().unwrap_or(repo_root);
+        if let Some(ruleset) = &document.ruleset {
+            embedded_ruleset_count += 1;
+            local_rule_count += ruleset.rules.len();
+        } else {
+            local_rule_count += document.rules.len();
+        }
         for declaration in document.signoffs {
             match declaration.to_request(repo_root, directory) {
                 Ok(request) => requests.push(request),
@@ -181,6 +198,8 @@ pub(crate) fn validate_repository(
     ProjectContextRepositoryValidation {
         context_files,
         signoff_count: requests.len(),
+        embedded_ruleset_count,
+        local_rule_count,
         problems,
     }
 }
@@ -337,6 +356,8 @@ impl fmt::Debug for RedactedContextText<'_> {
 pub(crate) struct ProjectContextRepositoryValidation {
     context_files: Vec<Utf8PathBuf>,
     signoff_count: usize,
+    embedded_ruleset_count: usize,
+    local_rule_count: usize,
     problems: Vec<ProjectContextValidationProblem>,
 }
 
@@ -347,6 +368,14 @@ impl ProjectContextRepositoryValidation {
 
     pub(crate) fn signoff_count(&self) -> usize {
         self.signoff_count
+    }
+
+    pub(crate) fn embedded_ruleset_count(&self) -> usize {
+        self.embedded_ruleset_count
+    }
+
+    pub(crate) fn local_rule_count(&self) -> usize {
+        self.local_rule_count
     }
 
     pub(crate) fn problem_details(&self) -> impl Iterator<Item = &str> {
@@ -1022,15 +1051,32 @@ where
     let store = ProjectContextStore::new(context.repo_root.clone());
     let requested_path = requested_path_from_cwd(Some(&args.path), &context.cwd);
     match store.mutate(context.fs, &requested_path, |document| {
-        if document.rules.iter().any(|rule| rule.id == id) {
-            return Err(ProjectContextError::DuplicateLocalRuleId { id: id.to_string() });
+        match &mut document.ruleset {
+            Some(ruleset) => {
+                if ruleset.rules.iter().any(|rule| rule.id == id) {
+                    return Err(ProjectContextError::DuplicateLocalRuleId { id: id.to_string() });
+                }
+                ruleset.rules.push(crate::ruleset::RuleDefinition {
+                    id: id.to_string(),
+                    text: text.to_string(),
+                    rationale: rationale.clone(),
+                    references: references.clone(),
+                });
+                crate::ruleset::validate_local(
+                    &ruleset.id,
+                    &ruleset.rules,
+                    Utf8Path::new(CONTEXT_FILE),
+                )?;
+            }
+            None => {
+                document.rules.push(ContextRuleDefinition {
+                    id: id.to_string(),
+                    text: text.to_string(),
+                    rationale: rationale.clone(),
+                    references: references.clone(),
+                });
+            }
         }
-        document.rules.push(ContextRuleDefinition {
-            id: id.to_string(),
-            text: text.to_string(),
-            rationale: rationale.clone(),
-            references: references.clone(),
-        });
         Ok(EditStatus::Added)
     }) {
         Ok(report) => {
@@ -1046,6 +1092,82 @@ where
             CommandResult::failure()
         }
     }
+}
+
+fn set_ruleset_id<F, C, O, E>(
+    path: &Utf8Path,
+    id: &str,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> CommandResult
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let id = match required_text("id", id) {
+        Ok(id) => id,
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    "ruleset id set",
+                    "Could not update project context.",
+                    &error
+                )
+            );
+            return CommandResult::failure();
+        }
+    };
+    let store = ProjectContextStore::new(context.repo_root.clone());
+    let requested_path = requested_path_from_cwd(Some(&path.to_path_buf()), &context.cwd);
+    match store.mutate(context.fs, &requested_path, |document| {
+        match &mut document.ruleset {
+            Some(ruleset) => ruleset.id = id.to_string(),
+            None => {
+                ruleset_migrate_legacy(document, id);
+            }
+        }
+        Ok(EditStatus::Updated)
+    }) {
+        Ok(report) => {
+            let _ = writeln!(
+                context.out,
+                "{}",
+                render_edit("ruleset id set", &store, &report)
+            );
+            CommandResult::success()
+        }
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error(
+                    "ruleset id set",
+                    "Could not update project context.",
+                    &error
+                )
+            );
+            CommandResult::failure()
+        }
+    }
+}
+
+fn ruleset_migrate_legacy(document: &mut ProjectContextFile, id: &str) {
+    document.ruleset = Some(crate::ruleset::EmbeddedRuleset {
+        id: id.to_string(),
+        includes: std::mem::take(&mut document.rule_includes),
+        rules: std::mem::take(&mut document.rules)
+            .into_iter()
+            .map(|rule| crate::ruleset::RuleDefinition {
+                id: rule.id,
+                text: rule.text,
+                rationale: rule.rationale,
+                references: rule.references,
+            })
+            .collect(),
+    });
 }
 
 fn update_rule<F, C, O, E>(
@@ -1085,15 +1207,50 @@ where
         .as_deref()
         .and_then(|value| required_text("rationale", value).ok())
         .map(ToString::to_string);
+    let references = match validate_references(&args.references) {
+        Ok(references) => references,
+        Err(error) => {
+            let _ = writeln!(
+                context.err,
+                "{}",
+                render_context_error("rule update", "Could not update project context.", &error)
+            );
+            return CommandResult::failure();
+        }
+    };
     let store = ProjectContextStore::new(context.repo_root.clone());
     let requested_path = requested_path_from_cwd(Some(&args.path), &context.cwd);
     match store.mutate(context.fs, &requested_path, |document| {
-        let Some(rule) = document.rules.iter_mut().find(|rule| rule.id == id) else {
-            return Err(ProjectContextError::MissingInlineRule { id: id.to_string() });
-        };
-        rule.text = text.to_string();
-        if let Some(rationale) = &rationale {
-            rule.rationale = Some(rationale.clone());
+        if let Some(ruleset) = &mut document.ruleset {
+            let Some(rule) = ruleset.rules.iter_mut().find(|rule| rule.id == id) else {
+                return Err(ProjectContextError::MissingInlineRule { id: id.to_string() });
+            };
+            rule.text = text.to_string();
+            if let Some(rationale) = &rationale {
+                rule.rationale = Some(rationale.clone());
+            } else if args.clear_rationale {
+                rule.rationale = None;
+            }
+            if !references.is_empty() {
+                rule.references.clone_from(&references);
+            } else if args.clear_references {
+                rule.references.clear();
+            }
+        } else {
+            let Some(rule) = document.rules.iter_mut().find(|rule| rule.id == id) else {
+                return Err(ProjectContextError::MissingInlineRule { id: id.to_string() });
+            };
+            rule.text = text.to_string();
+            if let Some(rationale) = &rationale {
+                rule.rationale = Some(rationale.clone());
+            } else if args.clear_rationale {
+                rule.rationale = None;
+            }
+            if !references.is_empty() {
+                rule.references.clone_from(&references);
+            } else if args.clear_references {
+                rule.references.clear();
+            }
         }
         Ok(EditStatus::Updated)
     }) {
@@ -1141,9 +1298,16 @@ where
     let store = ProjectContextStore::new(context.repo_root.clone());
     let requested_path = requested_path_from_cwd(Some(&path.to_path_buf()), &context.cwd);
     match store.mutate(context.fs, &requested_path, |document| {
-        let original_len = document.rules.len();
-        document.rules.retain(|rule| rule.id != id);
-        if document.rules.len() == original_len {
+        let rules_len = if let Some(ruleset) = &mut document.ruleset {
+            let original = ruleset.rules.len();
+            ruleset.rules.retain(|rule| rule.id != id);
+            (original, ruleset.rules.len())
+        } else {
+            let original = document.rules.len();
+            document.rules.retain(|rule| rule.id != id);
+            (original, document.rules.len())
+        };
+        if rules_len.0 == rules_len.1 {
             Err(ProjectContextError::MissingInlineRule { id: id.to_string() })
         } else {
             Ok(EditStatus::Removed)
@@ -1221,7 +1385,33 @@ impl ProjectContextStore {
         if fs.is_file(&context_file) {
             return Err(ProjectContextError::ContextAlreadyExists { path: context_file });
         }
-        let document = ProjectContextFile::new(purpose);
+        let directory = context_file.parent().unwrap_or(&self.repo_root);
+        let relative = directory.strip_prefix(&self.repo_root).unwrap_or(directory);
+        let id = if relative.as_str().is_empty() {
+            String::from("ROOT")
+        } else {
+            relative
+                .as_str()
+                .chars()
+                .map(|character| {
+                    if character.is_ascii_alphanumeric() {
+                        character.to_ascii_uppercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect()
+        };
+        let ruleset = crate::ruleset::EmbeddedRuleset {
+            id,
+            includes: Vec::new(),
+            rules: Vec::new(),
+        };
+        let mut document = ProjectContextFile::new(purpose);
+        document.ruleset = Some(ruleset.clone());
+        let mut catalog = crate::ruleset::Catalog::discover_repository(fs, &self.repo_root)?;
+        catalog.insert_embedded(ruleset, context_file.clone())?;
+        catalog.validate()?;
         Self::save_context_file(fs, &context_file, &document)?;
         Ok(EditReport {
             context_file,
@@ -1252,6 +1442,10 @@ impl ProjectContextStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let status = mutation(&mut document)?;
+        if let Some(ruleset) = &document.ruleset {
+            let mut catalog = crate::ruleset::Catalog::discover_repository(fs, &self.repo_root)?;
+            catalog.replace_embedded(ruleset.clone(), context_file.clone())?;
+        }
         ensure_context_signoff_identities_available(fs, &self.repo_root, &context_file, &document)?;
         Self::save_context_file(fs, &context_file, &document)?;
         for request in legacy_requests {
@@ -1381,7 +1575,6 @@ impl ProjectContextStore {
                 |parent| parent.join(include),
             )
         };
-
         if resolved.strip_prefix(&self.repo_root).is_err() {
             return Err(ProjectContextError::IncludeOutsideRepository {
                 include: include.to_string(),
@@ -1453,8 +1646,12 @@ impl ProjectContextResolver {
         let target_directory = self.store.context_directory(fs, path)?;
         let mut effective = EffectiveProjectContext::new(target_directory.clone());
         let context_files = self.store.context_files_to_directory(&target_directory)?;
-        let mut loaded_rule_libraries = BTreeSet::new();
         let mut seen_rule_ids = BTreeMap::new();
+        let catalog = crate::ruleset::Catalog::discover_repository(fs, &self.store.repo_root)?;
+        let repository_uses_rulesets = catalog
+            .entries()
+            .any(|entry| entry.source.file_name() == Some(CONTEXT_FILE));
+        let mut loaded_rule_libraries = BTreeSet::new();
 
         for context_file in context_files {
             if !fs.is_file(&context_file) {
@@ -1489,38 +1686,62 @@ impl ProjectContextResolver {
                         }),
                 );
 
-            for include in document.rule_includes {
-                effective
-                    .rule_includes
-                    .push(ContextEntry::new(include.clone(), context_file.clone()));
-                self.collect_rule_library(
-                    fs,
-                    &context_file,
-                    &include,
-                    &mut loaded_rule_libraries,
-                    &mut seen_rule_ids,
-                    &mut effective.rules,
-                )?;
+            if let Some(ruleset) = document.ruleset {
+                for include in &ruleset.includes {
+                    effective
+                        .rule_includes
+                        .push(ContextEntry::new(include.clone(), context_file.clone()));
+                }
+                for resolved in catalog.resolve(&ruleset.id)? {
+                    insert_applicable_rule(
+                        ApplicableRule::from_definition(
+                            ContextRuleDefinition {
+                                id: resolved.rule.id,
+                                text: resolved.rule.text,
+                                rationale: resolved.rule.rationale,
+                                references: resolved.rule.references,
+                            },
+                            resolved.source,
+                        ),
+                        &mut seen_rule_ids,
+                        &mut effective.rules,
+                    )?;
+                }
             }
-            for rule in document.rules {
-                insert_applicable_rule(
-                    ApplicableRule::from_definition(rule, context_file.clone()),
-                    &mut seen_rule_ids,
-                    &mut effective.rules,
-                )?;
+            if !repository_uses_rulesets {
+                for include in document.rule_includes {
+                    effective
+                        .rule_includes
+                        .push(ContextEntry::new(include.clone(), context_file.clone()));
+                    self.collect_legacy_rule_library(
+                        fs,
+                        &context_file,
+                        &include,
+                        &mut loaded_rule_libraries,
+                        &mut seen_rule_ids,
+                        &mut effective.rules,
+                    )?;
+                }
+                for rule in document.rules {
+                    insert_applicable_rule(
+                        ApplicableRule::from_definition(rule, context_file.clone()),
+                        &mut seen_rule_ids,
+                        &mut effective.rules,
+                    )?;
+                }
             }
         }
 
         Ok(effective)
     }
 
-    fn collect_rule_library(
+    fn collect_legacy_rule_library(
         &self,
         fs: &impl FileSystem,
         source: &Utf8Path,
         include: &str,
-        loaded_rule_libraries: &mut BTreeSet<Utf8PathBuf>,
-        seen_rule_ids: &mut BTreeMap<String, Utf8PathBuf>,
+        loaded: &mut BTreeSet<Utf8PathBuf>,
+        seen: &mut BTreeMap<String, Utf8PathBuf>,
         rules: &mut Vec<ApplicableRule>,
     ) -> Result<(), ProjectContextError> {
         let path = self.store.resolve_include(source, include)?;
@@ -1531,42 +1752,33 @@ impl ProjectContextResolver {
                 resolved: path,
             });
         }
-        if !loaded_rule_libraries.insert(path.clone()) {
+        if !loaded.insert(path.clone()) {
             return Ok(());
         }
-
         let contents = fs
             .read_to_string(&path)
             .map_err(|source| ProjectContextError::Io {
                 path: path.clone(),
                 source,
             })?;
-        let document = toml::from_str::<RuleLibraryDocument>(&contents).map_err(|source| {
-            ProjectContextError::RuleDecode {
+        let document: RuleLibraryDocument =
+            toml::from_str(&contents).map_err(|source| ProjectContextError::RuleDecode {
                 path: path.clone(),
                 source,
-            }
-        })?;
+            })?;
         if document.version != RULE_SCHEMA_VERSION {
             return Err(ProjectContextError::UnsupportedRuleSchemaVersion {
                 path,
                 version: document.version,
             });
         }
-        for nested_include in document.includes {
-            self.collect_rule_library(
-                fs,
-                &path,
-                &nested_include,
-                loaded_rule_libraries,
-                seen_rule_ids,
-                rules,
-            )?;
+        for nested in document.includes {
+            self.collect_legacy_rule_library(fs, &path, &nested, loaded, seen, rules)?;
         }
         for rule in document.rules {
             insert_applicable_rule(
                 ApplicableRule::from_definition(rule, path.clone()),
-                seen_rule_ids,
+                seen,
                 rules,
             )?;
         }
@@ -1661,7 +1873,10 @@ impl ContextListTarget {
         match self {
             Self::Owns => &mut document.ownership.owns,
             Self::Boundary => &mut document.ownership.boundaries,
-            Self::RuleInclude => &mut document.rule_includes,
+            Self::RuleInclude => match &mut document.ruleset {
+                Some(ruleset) => &mut ruleset.includes,
+                None => &mut document.rule_includes,
+            },
         }
     }
 
@@ -1724,6 +1939,8 @@ struct ProjectContextFile {
     purpose: String,
     #[serde(default)]
     signoffs: Vec<ContextSignoffDeclaration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ruleset: Option<crate::ruleset::EmbeddedRuleset>,
     #[serde(default)]
     rule_includes: Vec<String>,
     #[serde(default)]
@@ -1852,6 +2069,7 @@ impl ProjectContextFile {
             version: CONTEXT_SCHEMA_VERSION,
             purpose: purpose.to_string(),
             signoffs: Vec::new(),
+            ruleset: None,
             rule_includes: Vec::new(),
             ownership: ContextOwnership::default(),
             rules: Vec::new(),
@@ -1898,6 +2116,7 @@ struct RuleLibraryDocument {
 
 #[derive(Debug)]
 pub(crate) enum ProjectContextError {
+    Ruleset(crate::ruleset::RulesetError),
     Io {
         path: Utf8PathBuf,
         source: io::Error,
@@ -1976,6 +2195,7 @@ pub(crate) enum ProjectContextError {
 impl fmt::Display for ProjectContextError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Ruleset(source) => write!(f, "repository ruleset error: {source}"),
             Self::Io { path, source } => {
                 write!(f, "context filesystem error at `{path}`: {source}")
             }
@@ -2072,6 +2292,7 @@ impl fmt::Display for ProjectContextError {
 impl Error for ProjectContextError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Ruleset(source) => Some(source),
             Self::Io { source, .. } => Some(source),
             Self::Decode { source, .. } | Self::RuleDecode { source, .. } => Some(source),
             Self::Encode { source } => Some(source),
@@ -2094,6 +2315,12 @@ impl Error for ProjectContextError {
             | Self::OutsideRepository { .. }
             | Self::EmptyField { .. } => None,
         }
+    }
+}
+
+impl From<crate::ruleset::RulesetError> for ProjectContextError {
+    fn from(source: crate::ruleset::RulesetError) -> Self {
+        Self::Ruleset(source)
     }
 }
 
@@ -2474,6 +2701,36 @@ fn rebuild_structural_tables(output: &mut toml_edit::DocumentMut, document: &Pro
         output["signoffs"] = toml_edit::Item::ArrayOfTables(signoffs);
     }
 
+    output.as_table_mut().remove("ruleset");
+    if let Some(ruleset) = &document.ruleset {
+        let mut table = toml_edit::Table::new();
+        table["id"] = toml_edit::value(&ruleset.id);
+        let mut includes = toml_edit::Array::new();
+        for included in &ruleset.includes {
+            includes.push(included);
+        }
+        table["includes"] = toml_edit::value(includes);
+        if !ruleset.rules.is_empty() {
+            let mut rules = toml_edit::ArrayOfTables::new();
+            for rule in &ruleset.rules {
+                let mut rule_table = toml_edit::Table::new();
+                rule_table["id"] = toml_edit::value(&rule.id);
+                rule_table["text"] = toml_edit::value(&rule.text);
+                if let Some(rationale) = &rule.rationale {
+                    rule_table["rationale"] = toml_edit::value(rationale);
+                }
+                let mut references = toml_edit::Array::new();
+                for reference in &rule.references {
+                    references.push(reference);
+                }
+                rule_table["references"] = toml_edit::value(references);
+                rules.push(rule_table);
+            }
+            table["rules"] = toml_edit::Item::ArrayOfTables(rules);
+        }
+        output["ruleset"] = toml_edit::Item::Table(table);
+    }
+
     output.as_table_mut().remove("rules");
     if !document.rules.is_empty() {
         let mut rules = toml_edit::ArrayOfTables::new();
@@ -2655,7 +2912,7 @@ mod tests {
         assert_eq!(
             fs.read_to_string("/repo/app/core/domain/context.toml")
                 .unwrap(),
-            "version = 1\npurpose = \"Owns workspace rules.\"\nsignoffs = []\nrule_includes = []\n\n[ownership]\nowns = []\nboundaries = []\n"
+            "version = 1\npurpose = \"Owns workspace rules.\"\nsignoffs = []\nrule_includes = []\n\n[ownership]\nowns = []\nboundaries = []\n\n[ruleset]\nid = \"APP_CORE_DOMAIN\"\nincludes = []\n"
         );
     }
 

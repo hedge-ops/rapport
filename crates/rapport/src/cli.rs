@@ -43,6 +43,8 @@ pub enum Command {
     Doctor,
     /// Record Rapport usage in repository agent instructions.
     Init,
+    /// Manage repository-owned standalone and embedded rulesets.
+    Rules(RulesArgs),
     /// Manage active local work state.
     Work(WorkArgs),
     /// Manage folder-local structured project context.
@@ -59,6 +61,94 @@ pub enum Command {
     Review(ReviewArgs),
     /// Turn validated local work into Git/GitHub integration state.
     Integrate(IntegrateArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct RulesArgs {
+    #[command(subcommand)]
+    pub command: RulesCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RulesCommand {
+    /// List every discovered repository ruleset.
+    List,
+    /// Show one ruleset and its declared rules.
+    Show { id: String },
+    /// Create a standalone ruleset under .rapport/rules.
+    Init(RulesInitArgs),
+    /// Edit ruleset includes.
+    Include(RulesIncludeArgs),
+    /// Edit rules declared by a ruleset.
+    Rule(RulesRuleArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RulesInitArgs {
+    /// Organizational path below .rapport/rules, with or without .toml.
+    pub path: Utf8PathBuf,
+    /// Stable repository-unique ruleset id.
+    #[arg(long)]
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct RulesIncludeArgs {
+    #[command(subcommand)]
+    pub command: RulesIncludeCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RulesIncludeCommand {
+    Add { ruleset: String, included: String },
+    Remove { ruleset: String, included: String },
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct RulesRuleArgs {
+    #[command(subcommand)]
+    pub command: RulesRuleCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RulesRuleCommand {
+    Add(RulesRuleAddArgs),
+    Update(RulesRuleUpdateArgs),
+    Remove { ruleset: String, id: String },
+}
+
+#[derive(Debug, Args)]
+pub struct RulesRuleAddArgs {
+    pub ruleset: String,
+    #[arg(long)]
+    pub id: String,
+    #[arg(long)]
+    pub text: String,
+    #[arg(long)]
+    pub rationale: Option<String>,
+    #[arg(long = "reference")]
+    pub references: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RulesRuleUpdateArgs {
+    pub ruleset: String,
+    pub id: String,
+    #[arg(long)]
+    pub text: Option<String>,
+    #[arg(long)]
+    pub rationale: Option<String>,
+    /// Remove the existing rationale.
+    #[arg(long, conflicts_with = "rationale")]
+    pub clear_rationale: bool,
+    #[arg(long = "reference")]
+    pub references: Vec<String>,
+    /// Remove all existing references.
+    #[arg(long, conflicts_with = "references")]
+    pub clear_references: bool,
 }
 
 #[derive(Debug, Args)]
@@ -83,6 +173,8 @@ pub enum ContextCommand {
     Ownership(ContextOwnershipArgs),
     /// Edit reusable rule includes and inline benchmarks.
     Rule(ContextRuleArgs),
+    /// Manage the context's embedded ruleset identity.
+    Ruleset(ContextRulesetArgs),
     /// Manage signoffs and their generated GitHub request workflows.
     Signoff(ContextSignoffArgs),
     /// Validate applicable context.toml files, signoff workflows, and rule includes.
@@ -235,6 +327,30 @@ pub enum ContextRuleCommand {
 
 #[derive(Debug, Args)]
 #[command(arg_required_else_help = true)]
+pub struct ContextRulesetArgs {
+    #[command(subcommand)]
+    pub command: ContextRulesetCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContextRulesetCommand {
+    Id(ContextRulesetIdArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct ContextRulesetIdArgs {
+    #[command(subcommand)]
+    pub command: ContextRulesetIdCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContextRulesetIdCommand {
+    Set { path: Utf8PathBuf, id: String },
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
 pub struct ContextRuleIncludeArgs {
     #[command(subcommand)]
     pub command: ContextListCommand,
@@ -270,6 +386,15 @@ pub struct ContextRuleUpdateArgs {
     /// Replacement rationale. Omitted values preserve the existing rationale.
     #[arg(long)]
     pub rationale: Option<String>,
+    /// Remove the existing rationale.
+    #[arg(long, conflicts_with = "rationale")]
+    pub clear_rationale: bool,
+    /// Replacement references. Omitted values preserve existing references.
+    #[arg(long = "reference")]
+    pub references: Vec<String>,
+    /// Remove all existing references.
+    #[arg(long, conflicts_with = "references")]
+    pub clear_references: bool,
 }
 
 #[derive(Debug, Args)]

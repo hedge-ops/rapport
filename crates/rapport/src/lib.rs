@@ -10,6 +10,7 @@ mod project_context;
 mod repository_files;
 mod review;
 mod rules;
+mod ruleset;
 mod runner;
 mod signoff_contract;
 mod snapshot;
@@ -119,6 +120,7 @@ where
         Command::Prime => prime::run(argv, context),
         Command::Doctor => doctor::run(argv, context),
         Command::Init => init::run(argv, context),
+        Command::Rules(rules_args) => ruleset::run(&rules_args.command, argv, context),
         Command::Work(work_args) => match &work_args.command {
             WorkCommand::Status => work::status(argv, context),
             WorkCommand::Start(start_args) => work::start(start_args, argv, context),
@@ -438,7 +440,7 @@ boundaries = []
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("Project Context"));
         assert!(out.contains(
-            "validated 1 context.toml file, 0 signoff declarations, and 1 rules.toml file"
+            "validated 1 context.toml file, 0 embedded rulesets, 0 signoff declarations, 0 standalone rulesets, and 0 locally declared rules"
         ));
         assert_eq!(err, "");
     }
@@ -664,18 +666,150 @@ text = "Second rule."
     }
 
     #[test]
-    fn doctor_rejects_unsupported_rules_toml_version() {
+    fn doctor_rejects_unsupported_ruleset_version() {
         let mut fs = InMemoryFileSystem::default();
-        fs.write_string("/repo/rules.toml", "version = 2\n")
+        fs.write_string("/repo/.gitignore", ".rapport/**\n!.rapport/rules/**\n")
             .unwrap();
+        fs.write_string(
+            "/repo/.rapport/rules/bad.toml",
+            "version = 2\nid = \"BAD\"\n",
+        )
+        .unwrap();
         let runner = FakeRunner::successful("git@github.com:hedge-ops/rapport.git\n");
 
         let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
 
         assert_eq!(code, ExitCode::from(2));
         assert_eq!(out, "");
-        assert!(err.contains("unsupported rules schema version `2`"));
-        assert!(err.contains("/repo/rules.toml"));
+        assert!(err.contains("unsupported ruleset schema version `2`"));
+        assert!(err.contains("/repo/.rapport/rules/bad.toml"));
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the end-to-end CLI contract is clearer as one sequential lifecycle"
+    )]
+    fn ruleset_cli_manages_standalone_and_embedded_rulesets() {
+        let mut fs = InMemoryFileSystem::default();
+
+        assert_eq!(
+            run_with_fs(
+                &["context", "init", ".", "--purpose", "Root context."],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(&["rules", "init", "shared/base", "--id", "BASE"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &["rules", "init", "composite", "--id", "COMPOSITE"],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(&["rules", "include", "add", "COMPOSITE", "BASE"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "rules",
+                    "rule",
+                    "add",
+                    "BASE",
+                    "--id",
+                    "BASE-001",
+                    "--text",
+                    "Base rule."
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "rules",
+                    "rule",
+                    "update",
+                    "BASE",
+                    "BASE-001",
+                    "--text",
+                    "Updated base rule.",
+                    "--reference",
+                    "https://example.com/base"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &["context", "rule", "include", "add", ".", "COMPOSITE"],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "context",
+                    "rule",
+                    "add",
+                    ".",
+                    "--id",
+                    "ROOT-001",
+                    "--text",
+                    "Root rule."
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+
+        let (_, list, _) = run_with_fs(&["rules", "list"], &mut fs);
+        let (_, show, _) = run_with_fs(&["rules", "show", "ROOT"], &mut fs);
+        let context = fs.read_to_string("/repo/context.toml").unwrap();
+        let base = fs
+            .read_to_string("/repo/.rapport/rules/shared/base.toml")
+            .unwrap();
+
+        assert!(list.contains("`BASE`") && list.contains("`ROOT`"));
+        assert!(show.contains("ROOT-001"));
+        assert!(context.contains("[ruleset]") && context.contains("COMPOSITE"));
+        assert!(base.contains("Updated base rule.") && base.contains("https://example.com/base"));
+
+        assert_eq!(
+            run_with_fs(&["context", "rule", "remove", ".", "ROOT-001"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(&["rules", "rule", "remove", "BASE", "BASE-001"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &["rules", "include", "remove", "COMPOSITE", "BASE"],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(&["context", "ruleset", "id", "set", ".", "REPO"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
     }
 
     #[test]
