@@ -117,7 +117,53 @@ pub struct RulesRuleArgs {
 pub enum RulesRuleCommand {
     Add(RulesRuleAddArgs),
     Update(RulesRuleUpdateArgs),
-    Remove { ruleset: String, id: String },
+    Remove {
+        ruleset: String,
+        id: String,
+    },
+    /// Manage typed provenance references for a rule.
+    Reference(RulesReferenceArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct RulesReferenceArgs {
+    #[command(subcommand)]
+    pub command: RulesReferenceCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RulesReferenceCommand {
+    List {
+        ruleset: String,
+        id: String,
+    },
+    Add(RulesReferenceAddArgs),
+    Remove {
+        ruleset: String,
+        id: String,
+        target: String,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct RulesReferenceAddArgs {
+    pub ruleset: String,
+    pub id: String,
+    #[arg(
+        long,
+        conflicts_with = "external",
+        required_unless_present = "external"
+    )]
+    pub repository: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "repository",
+        required_unless_present = "repository"
+    )]
+    pub external: Option<String>,
+    #[arg(long)]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -323,6 +369,49 @@ pub enum ContextRuleCommand {
         /// Rule id to remove.
         id: String,
     },
+    /// Manage typed provenance references for a rule.
+    Reference(ContextReferenceArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(arg_required_else_help = true)]
+pub struct ContextReferenceArgs {
+    #[command(subcommand)]
+    pub command: ContextReferenceCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContextReferenceCommand {
+    List {
+        path: Utf8PathBuf,
+        id: String,
+    },
+    Add(ContextReferenceAddArgs),
+    Remove {
+        path: Utf8PathBuf,
+        id: String,
+        target: String,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct ContextReferenceAddArgs {
+    pub path: Utf8PathBuf,
+    pub id: String,
+    #[arg(
+        long,
+        conflicts_with = "external",
+        required_unless_present = "external"
+    )]
+    pub repository: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "repository",
+        required_unless_present = "repository"
+    )]
+    pub external: Option<String>,
+    #[arg(long)]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Args)]

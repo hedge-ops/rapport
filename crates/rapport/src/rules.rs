@@ -322,7 +322,7 @@ pub struct Rule {
     pub id: String,
     pub text: String,
     pub rationale: Option<String>,
-    pub references: Vec<String>,
+    pub(crate) references: Vec<crate::ruleset::RuleReference>,
     pub source: Utf8PathBuf,
 }
 
@@ -488,7 +488,14 @@ fn render_rule_show(resolver: &RuleResolver, rule: &Rule) -> String {
         ("source", resolver.display_path(&rule.source)),
     ];
     if !rule.references.is_empty() {
-        details.push(("references", rule.references.join(", ")));
+        details.push((
+            "references",
+            rule.references
+                .iter()
+                .map(crate::ruleset::RuleReference::display)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
     }
     let mut builder = ViewBuilder::new()
         .title("rapport work rules show")
