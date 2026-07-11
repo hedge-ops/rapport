@@ -284,6 +284,15 @@ mod tests {
     }
 
     #[test]
+    fn version_flag_renders_package_version() {
+        let (code, out, err) = run_with(&["--version"]);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(out, format!("rapport {}\n", env!("CARGO_PKG_VERSION")));
+        assert_eq!(err, "");
+    }
+
+    #[test]
     fn prime_help_exists() {
         let (code, out, err) = run_with(&["prime", "--help"]);
 

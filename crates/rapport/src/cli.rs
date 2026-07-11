@@ -27,7 +27,8 @@ schema evolution stay consistent.";
     long_about = ROOT_LONG_ABOUT,
     after_help = ROOT_AFTER_HELP,
     after_long_help = ROOT_AFTER_HELP,
-    arg_required_else_help = true
+    arg_required_else_help = true,
+    version
 )]
 pub struct Cli {
     #[command(subcommand)]
