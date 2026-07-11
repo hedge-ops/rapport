@@ -1,0 +1,223 @@
+version = 1
+id = "RUST_COMMENT"
+includes = []
+
+[rules]
+
+[rules.RUST_COMMENT_001]
+text = "Use API documentation to explain ownership and intent that signatures and types do not fully express. Do not use method-body comments for ordinary narration."
+
+[rules.RUST_COMMENT_001.avoid]
+language = "rust"
+text = """
+/// Processes the event.
+pub fn update(&mut self, event: Event);"""
+
+[rules.RUST_COMMENT_001.prefer]
+language = "rust"
+text = """
+/// Applies an event while preserving parent-owned workspace state.
+pub fn update(&mut self, event: Event);"""
+
+[rules.RUST_COMMENT_002]
+text = "Begin module documentation with a brief description. In a separate paragraph, explain what the module owns and, when useful, what it deliberately does not own."
+
+[rules.RUST_COMMENT_002.avoid]
+language = "text"
+text = """
+//! Owns readiness, scheduling, task ordering, effect construction, checkpoint
+//! resolution, and transition coordination, but does not own transport or persistence."""
+
+[rules.RUST_COMMENT_002.prefer]
+language = "text"
+text = """
+//! Schedules workspace synchronization.
+//!
+//! Owns readiness and task ordering. Transport and persistence remain effect
+//! responsibilities."""
+
+[rules.RUST_COMMENT_003]
+text = "Use API documentation to preserve important responsibilities, collaborators, transitions, invariants, compatibility constraints, and accepted tradeoffs."
+
+[rules.RUST_COMMENT_003.avoid]
+language = "rust"
+text = """
+/// The loading state.
+pub struct Loading;"""
+
+[rules.RUST_COMMENT_003.prefer]
+language = "rust"
+text = """
+/// Owns loading until storage and service responses are ready, then resolves
+/// into an initialized workspace.
+pub struct Loading;"""
+
+[rules.RUST_COMMENT_004]
+text = "Keep public item documentation to one concise contract sentence by default. Add more only when callers need a real behavioral, error, or safety contract."
+
+[rules.RUST_COMMENT_004.avoid]
+language = "rust"
+text = """
+/// This function takes an identifier and looks up the person.
+///
+/// It returns a person if one can be found.
+pub fn person(identifier: PersonId) -> Option<&Person>;"""
+
+[rules.RUST_COMMENT_004.prefer]
+language = "rust"
+text = """
+/// Returns the person with the given identifier.
+pub fn person(identifier: PersonId) -> Option<&Person>;"""
+
+[rules.RUST_COMMENT_005]
+text = "As an exception to avoiding method-body comments, place a comment immediately before code whose non-obvious reason, invariant, compatibility constraint, or tradeoff cannot be expressed through code shape."
+
+[rules.RUST_COMMENT_005.avoid]
+language = "rust"
+text = """
+retry();
+// Retry the operation."""
+
+[rules.RUST_COMMENT_005.prefer]
+language = "rust"
+text = """
+// Authentication refresh is idempotent, so a single retry is safe.
+retry();"""
+
+[rules.RUST_COMMENT_006]
+text = "Avoid narrative tours that walk through an implementation."
+
+[rules.RUST_COMMENT_006.avoid]
+language = "text"
+text = """
+/// First this creates the request, then sends it, and finally processes the
+/// response."""
+
+[rules.RUST_COMMENT_006.prefer]
+language = "text"
+text = "/// Refreshes the authenticated client from the authoritative service."
+
+[rules.RUST_COMMENT_007]
+text = "Avoid documentation that inventories every dependency or collaborator."
+
+[rules.RUST_COMMENT_007.avoid]
+language = "text"
+text = "/// Uses HttpClient, TokenStore, Clock, Runtime, and ClientRepository."
+
+[rules.RUST_COMMENT_007.prefer]
+language = "text"
+text = "/// Owns authenticated client refresh across the service and local store."
+
+[rules.RUST_COMMENT_008]
+text = "Avoid backstory, marketing language, and agent-style summaries."
+
+[rules.RUST_COMMENT_008.avoid]
+language = "text"
+text = """
+/// This robust and comprehensive implementation elegantly handles every
+/// synchronization scenario."""
+
+[rules.RUST_COMMENT_008.prefer]
+language = "text"
+text = "/// Coordinates synchronization until every required child is ready."
+
+[rules.RUST_COMMENT_009]
+text = "Avoid documentation that repeats the signature, type name, or obvious control flow."
+
+[rules.RUST_COMMENT_009.avoid]
+language = "rust"
+text = """
+/// Returns true if the workspace is ready.
+pub fn is_ready(&self) -> bool;"""
+
+[rules.RUST_COMMENT_009.prefer]
+language = "rust"
+text = """
+/// Reports whether every required sync input has resolved.
+pub fn is_ready(&self) -> bool;"""
+
+[rules.RUST_COMMENT_010]
+text = "Do not use documentation to compensate for unclear names or poor structure. Fix the code shape so the documentation can state a concise contract."
+
+[rules.RUST_COMMENT_010.avoid]
+language = "rust"
+text = """
+/// Processes x by checking whether y is present and then updating z.
+fn process(x: X, y: Option<Y>, z: &mut Z);"""
+
+[rules.RUST_COMMENT_010.prefer]
+language = "rust"
+text = """
+/// Applies the resolved identity to the workspace.
+fn apply_identity(identity: Identity, workspace: &mut Workspace);"""
+
+[rules.RUST_COMMENT_011]
+text = "Write documentation for maintainers and future agents working in the repository. Optimize for quick orientation rather than public-library completeness."
+
+[rules.RUST_COMMENT_011.avoid]
+language = "text"
+text = """
+/// This structure can be used in a wide variety of applications where
+/// synchronization of arbitrary data may be desired."""
+
+[rules.RUST_COMMENT_011.prefer]
+language = "text"
+text = "/// Owns synchronization progress for one workspace."
+
+[rules.RUST_COMMENT_012]
+text = "Include only the context needed to understand what enters, what leaves, what changes, who collaborates, or what must remain true."
+
+[rules.RUST_COMMENT_012.avoid]
+language = "text"
+text = """
+/// Receives an event, matches the current state, calls the child update
+/// method, maps its command, and returns the resulting outcome."""
+
+[rules.RUST_COMMENT_012.prefer]
+language = "text"
+text = "/// Routes child events while preserving parent-owned workspace state."
+
+[rules.RUST_COMMENT_013]
+text = "Avoid section banners and prose headings inside source files. Let modules, types, functions, and their ordering provide structure."
+
+[rules.RUST_COMMENT_013.avoid]
+language = "rust"
+text = """
+// =========================================================================
+// Event handling
+// ========================================================================="""
+
+[rules.RUST_COMMENT_013.prefer]
+language = "rust"
+text = """
+impl Model {
+    pub fn update(&mut self, event: Event) -> Command<Effect, Event> {
+        // ...
+    }
+}"""
+
+[rules.RUST_COMMENT_014]
+text = "Use structured logs for runtime narration. Documentation describes ownership and contracts; logs describe what a running operation is doing."
+
+[rules.RUST_COMMENT_014.avoid]
+language = "rust"
+text = """
+// Fetch the latest workspace from the service.
+let workspace = client.fetch().await?;"""
+
+[rules.RUST_COMMENT_014.prefer]
+language = "rust"
+text = """
+tracing::debug!(%workspace_id, "fetching workspace");
+let workspace = client.fetch().await?;"""
+
+[rules.RUST_COMMENT_015]
+text = "Use current domain vocabulary consistently. When documentation uses stale or generic terminology, correct the vocabulary instead of adding more explanation."
+
+[rules.RUST_COMMENT_015.avoid]
+language = "text"
+text = "/// Finishes processing the data object."
+
+[rules.RUST_COMMENT_015.prefer]
+language = "text"
+text = "/// Resolves the workspace checkpoint after every asset becomes ready."

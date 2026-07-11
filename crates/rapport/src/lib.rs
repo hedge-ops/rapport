@@ -1,4 +1,5 @@
 mod build;
+mod builtin_rules;
 mod cli;
 mod context;
 mod doctor;
@@ -417,6 +418,8 @@ version = 1
 [[rules]]
 id = "RUST-001"
 text = "Use rustfmt."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -539,6 +542,8 @@ version = 2
 [[rules]]
 id = "RUST-001"
 text = "Use rustfmt."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -640,6 +645,8 @@ version = 1
 [[rules]]
 id = "DUP-001"
 text = "First rule."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -651,6 +658,8 @@ version = 1
 [[rules]]
 id = "DUP-001"
 text = "Second rule."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -727,7 +736,15 @@ text = "Second rule."
                     "--id",
                     "BASE-001",
                     "--text",
-                    "Base rule."
+                    "Base rule.",
+                    "--avoid-language",
+                    "rust",
+                    "--avoid",
+                    "avoid",
+                    "--prefer-language",
+                    "rust",
+                    "--prefer",
+                    "prefer"
                 ],
                 &mut fs
             )
@@ -789,7 +806,15 @@ text = "Second rule."
                     "--id",
                     "ROOT-001",
                     "--text",
-                    "Root rule."
+                    "Root rule.",
+                    "--avoid-language",
+                    "rust",
+                    "--avoid",
+                    "avoid",
+                    "--prefer-language",
+                    "rust",
+                    "--prefer",
+                    "prefer"
                 ],
                 &mut fs
             )
@@ -1047,6 +1072,14 @@ text = "Second rule."
                 "The domain owns relationship and work invariants.",
                 "--reference",
                 "https://github.com/hedge-ops/rapport/issues/78",
+                "--avoid-language",
+                "rust",
+                "--avoid",
+                "avoid",
+                "--prefer-language",
+                "rust",
+                "--prefer",
+                "prefer",
             ],
             &mut fs,
         );
@@ -1628,6 +1661,8 @@ version = 1
 [[rules]]
 id = "RUST-001"
 text = "Use rustfmt."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -1658,6 +1693,8 @@ boundaries = ["Persistence lives elsewhere."]
 [[rules]]
 id = "CORE-001"
 text = "Keep core boring."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -2148,6 +2185,8 @@ version = 1
 [[rules]]
 id = "RUST-ORG-003"
 text = "Keep lib.rs small."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -2188,6 +2227,8 @@ version = 1
 [[rules]]
 id = "TEST-CORE-001"
 text = "Treat tests as specifications."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -2235,6 +2276,8 @@ version = 1
 [[rules]]
 id = "RUST-ORG-003"
 text = "Keep lib.rs small."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -2260,6 +2303,8 @@ purpose = "Repository"
 [[rules]]
 id = "ROOT-001"
 text = "Follow the repository contract."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 rationale = "Keeps shared behavior consistent."
 "#,
         )
@@ -2281,6 +2326,8 @@ version = 1
 [[rules]]
 id = "RUST-001"
 text = "Keep Rust changes idiomatic."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -2337,6 +2384,8 @@ version = 1
 [[rules]]
 id = "RUST-ORG-003"
 text = "Keep lib.rs small."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -4318,6 +4367,8 @@ version = 1
 [[rules]]
 id = "RUST-001"
 text = "Use rustfmt."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -4608,6 +4659,8 @@ minimum_grade = "A-"
 [[rules]]
 id = "APP-001"
 text = "Preserve the application invariant."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 references = []
 "#,
         )
@@ -4632,6 +4685,8 @@ minimum_grade = "A-"
 [[rules]]
 id = "{rule_id}"
 text = "Review {purpose} behavior."
+avoid = {{ language = "rust", text = "avoid" }}
+prefer = {{ language = "rust", text = "prefer" }}
 references = []
 "#
                 ),

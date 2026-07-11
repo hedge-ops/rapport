@@ -324,6 +324,8 @@ pub(crate) fn resolved_rules_for_paths(
                 text: rule.text,
                 rationale: rule.rationale,
                 references: rule.references,
+                avoid: rule.avoid,
+                prefer: rule.prefer,
                 source: rule
                     .source
                     .strip_prefix(repo_root)
@@ -344,6 +346,8 @@ pub(crate) struct ResolvedContextRule {
     pub(crate) rationale: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) references: Vec<crate::ruleset::RuleReference>,
+    pub(crate) avoid: crate::ruleset::RuleExample,
+    pub(crate) prefer: crate::ruleset::RuleExample,
     pub(crate) source: String,
 }
 
@@ -354,6 +358,11 @@ impl fmt::Debug for ResolvedContextRule {
             .field("text", &RedactedContextText(&self.text))
             .field("has_rationale", &self.rationale.is_some())
             .field("reference_count", &self.references.len())
+            .field("avoid_language", &RedactedContextText(&self.avoid.language))
+            .field(
+                "prefer_language",
+                &RedactedContextText(&self.prefer.language),
+            )
             .field("source", &RedactedContextText(&self.source))
             .finish()
     }
@@ -1076,6 +1085,14 @@ where
                     text: text.to_string(),
                     rationale: rationale.clone(),
                     references: references.clone(),
+                    avoid: crate::ruleset::RuleExample {
+                        language: args.avoid_language.clone(),
+                        text: args.avoid.clone(),
+                    },
+                    prefer: crate::ruleset::RuleExample {
+                        language: args.prefer_language.clone(),
+                        text: args.prefer.clone(),
+                    },
                 });
                 crate::ruleset::validate_local(
                     &ruleset.id,
@@ -1089,6 +1106,14 @@ where
                     text: text.to_string(),
                     rationale: rationale.clone(),
                     references: references.clone(),
+                    avoid: crate::ruleset::RuleExample {
+                        language: args.avoid_language.clone(),
+                        text: args.avoid.clone(),
+                    },
+                    prefer: crate::ruleset::RuleExample {
+                        language: args.prefer_language.clone(),
+                        text: args.prefer.clone(),
+                    },
                 });
             }
         }
@@ -1170,21 +1195,28 @@ where
 }
 
 fn ruleset_migrate_legacy(document: &mut ProjectContextFile, id: &str) {
+    let rules = std::mem::take(&mut document.rules)
+        .into_iter()
+        .map(|rule| crate::ruleset::RuleDefinition {
+            id: rule.id,
+            text: rule.text,
+            rationale: rule.rationale,
+            references: rule.references,
+            avoid: rule.avoid,
+            prefer: rule.prefer,
+        })
+        .collect();
     document.ruleset = Some(crate::ruleset::EmbeddedRuleset {
         id: id.to_string(),
         includes: std::mem::take(&mut document.rule_includes),
-        rules: std::mem::take(&mut document.rules)
-            .into_iter()
-            .map(|rule| crate::ruleset::RuleDefinition {
-                id: rule.id,
-                text: rule.text,
-                rationale: rule.rationale,
-                references: rule.references,
-            })
-            .collect(),
+        rules,
     });
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "legacy and keyed context rules share one atomic update path"
+)]
 fn update_rule<F, C, O, E>(
     args: &ContextRuleUpdateArgs,
     context: &mut CommandContext<'_, F, C, O, E>,
@@ -1251,6 +1283,18 @@ where
             } else if args.clear_references {
                 rule.references.clear();
             }
+            if let (Some(language), Some(text)) = (&args.avoid_language, &args.avoid) {
+                rule.avoid = crate::ruleset::RuleExample {
+                    language: language.clone(),
+                    text: text.clone(),
+                };
+            }
+            if let (Some(language), Some(text)) = (&args.prefer_language, &args.prefer) {
+                rule.prefer = crate::ruleset::RuleExample {
+                    language: language.clone(),
+                    text: text.clone(),
+                };
+            }
         } else {
             let Some(rule) = document.rules.iter_mut().find(|rule| rule.id == id) else {
                 return Err(ProjectContextError::MissingInlineRule { id: id.to_string() });
@@ -1265,6 +1309,18 @@ where
                 rule.references.clone_from(&references);
             } else if args.clear_references {
                 rule.references.clear();
+            }
+            if let (Some(language), Some(text)) = (&args.avoid_language, &args.avoid) {
+                rule.avoid = crate::ruleset::RuleExample {
+                    language: language.clone(),
+                    text: text.clone(),
+                };
+            }
+            if let (Some(language), Some(text)) = (&args.prefer_language, &args.prefer) {
+                rule.prefer = crate::ruleset::RuleExample {
+                    language: language.clone(),
+                    text: text.clone(),
+                };
             }
         }
         Ok(EditStatus::Updated)
@@ -1926,6 +1982,8 @@ impl ProjectContextResolver {
                                 text: resolved.rule.text,
                                 rationale: resolved.rule.rationale,
                                 references: resolved.rule.references,
+                                avoid: resolved.rule.avoid,
+                                prefer: resolved.rule.prefer,
                             },
                             resolved.source,
                         ),
@@ -2072,6 +2130,8 @@ struct ApplicableRule {
     text: String,
     rationale: Option<String>,
     references: Vec<crate::ruleset::RuleReference>,
+    avoid: crate::ruleset::RuleExample,
+    prefer: crate::ruleset::RuleExample,
     source: Utf8PathBuf,
 }
 
@@ -2082,6 +2142,8 @@ impl ApplicableRule {
             text: rule.text,
             rationale: rule.rationale,
             references: rule.references,
+            avoid: rule.avoid,
+            prefer: rule.prefer,
             source,
         }
     }
@@ -2328,6 +2390,8 @@ struct ContextRuleDefinition {
     rationale: Option<String>,
     #[serde(default)]
     references: Vec<crate::ruleset::RuleReference>,
+    avoid: crate::ruleset::RuleExample,
+    prefer: crate::ruleset::RuleExample,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2878,6 +2942,16 @@ fn render_rules(store: &ProjectContextStore, rules: &[ApplicableRule]) -> Vec<St
                         .join(", "),
                 );
             }
+            line.push_str("\n\nAvoid\n\n```");
+            line.push_str(&rule.avoid.language);
+            line.push('\n');
+            line.push_str(&rule.avoid.text);
+            line.push_str("\n```");
+            line.push_str("\n\nPrefer\n\n```");
+            line.push_str(&rule.prefer.language);
+            line.push('\n');
+            line.push_str(&rule.prefer.text);
+            line.push_str("\n```");
             line
         })
         .collect()
@@ -2950,22 +3024,7 @@ fn rebuild_structural_tables(output: &mut toml_edit::DocumentMut, document: &Pro
         }
         table["includes"] = toml_edit::value(includes);
         if !ruleset.rules.is_empty() {
-            let mut rules = toml_edit::ArrayOfTables::new();
-            for rule in &ruleset.rules {
-                let mut rule_table = toml_edit::Table::new();
-                rule_table["id"] = toml_edit::value(&rule.id);
-                rule_table["text"] = toml_edit::value(&rule.text);
-                if let Some(rationale) = &rule.rationale {
-                    rule_table["rationale"] = toml_edit::value(rationale);
-                }
-                let mut references = toml_edit::Array::new();
-                for reference in &rule.references {
-                    references.push(reference_value(reference));
-                }
-                rule_table["references"] = toml_edit::value(references);
-                rules.push(rule_table);
-            }
-            table["rules"] = toml_edit::Item::ArrayOfTables(rules);
+            table["rules"] = toml_edit::Item::Table(keyed_rules_table(&ruleset.rules));
         }
         output["ruleset"] = toml_edit::Item::Table(table);
     }
@@ -2985,10 +3044,41 @@ fn rebuild_structural_tables(output: &mut toml_edit::DocumentMut, document: &Pro
                 references.push(reference_value(reference));
             }
             table["references"] = toml_edit::value(references);
+            table["avoid"] = toml_edit::Item::Table(example_table(&rule.avoid));
+            table["prefer"] = toml_edit::Item::Table(example_table(&rule.prefer));
             rules.push(table);
         }
         output["rules"] = toml_edit::Item::ArrayOfTables(rules);
     }
+}
+
+fn keyed_rules_table(rules: &[crate::ruleset::RuleDefinition]) -> toml_edit::Table {
+    let mut catalog_table = toml_edit::Table::new();
+    for rule in rules {
+        let mut rule_body = toml_edit::Table::new();
+        rule_body["text"] = toml_edit::value(&rule.text);
+        if let Some(rationale) = &rule.rationale {
+            rule_body["rationale"] = toml_edit::value(rationale);
+        }
+        if !rule.references.is_empty() {
+            let mut references = toml_edit::Array::new();
+            for reference in &rule.references {
+                references.push(reference_value(reference));
+            }
+            rule_body["references"] = toml_edit::value(references);
+        }
+        rule_body["avoid"] = toml_edit::Item::Table(example_table(&rule.avoid));
+        rule_body["prefer"] = toml_edit::Item::Table(example_table(&rule.prefer));
+        catalog_table[&rule.id] = toml_edit::Item::Table(rule_body);
+    }
+    catalog_table
+}
+
+fn example_table(example: &crate::ruleset::RuleExample) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    table["language"] = toml_edit::value(&example.language);
+    table["text"] = toml_edit::value(&example.text);
+    table
 }
 
 fn reference_value(reference: &crate::ruleset::RuleReference) -> toml_edit::Value {
@@ -3200,6 +3290,14 @@ mod tests {
                 target: String::from("https://example.com/an/indivisible/reference/that/is/allowed/to/exceed/the/formatter/line/width"),
                 label: None,
             }],
+            avoid: crate::ruleset::RuleExample {
+                language: String::from("rust"),
+                text: String::from("avoid"),
+            },
+            prefer: crate::ruleset::RuleExample {
+                language: String::from("rust"),
+                text: String::from("prefer"),
+            },
         });
 
         let rendered = render_context_file(&document).unwrap();
@@ -3255,6 +3353,8 @@ version = 1
 [[rules]]
 id = "RUST-001"
 text = "Use rustfmt."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -3287,6 +3387,8 @@ boundaries = ["Persistence lives elsewhere."]
 [[rules]]
 id = "CORE-001"
 text = "Keep core boring."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -3446,6 +3548,8 @@ boundaries = []
 [[rules]]
 id = "DUP-001"
 text = "First."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -3463,6 +3567,8 @@ boundaries = []
 [[rules]]
 id = "DUP-001"
 text = "Second."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -3500,6 +3606,8 @@ version = 1
 [[rules]]
 id = "RUST-001"
 text = "Use rustfmt."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -3536,6 +3644,8 @@ version = 2
 [[rules]]
 id = "RUST-001"
 text = "Use rustfmt."
+avoid = { language = "rust", text = "avoid" }
+prefer = { language = "rust", text = "prefer" }
 "#,
         )
         .unwrap();
@@ -3562,6 +3672,14 @@ text = "Use rustfmt."
                 target: String::from("https://example.com/private-reference"),
                 label: None,
             }],
+            avoid: crate::ruleset::RuleExample {
+                language: String::from("rust"),
+                text: String::from("private avoid example"),
+            },
+            prefer: crate::ruleset::RuleExample {
+                language: String::from("rust"),
+                text: String::from("private prefer example"),
+            },
             source: String::from("private/rules.toml"),
         };
 

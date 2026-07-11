@@ -1,0 +1,12 @@
+version = 1
+purpose = "Owns ergonomic temporal domain types and calculations."
+signoffs = []
+rule_includes = []
+
+[ownership]
+owns = ["Date, time, recurrence, interval, and relative-offset domain behavior."]
+boundaries = []
+
+[ruleset]
+id = "CRATES_RAPPORT_TEMPORAL"
+includes = ["RUST_CRATE"]

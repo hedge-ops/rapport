@@ -1,0 +1,364 @@
+version = 1
+id = "RUST_CODING"
+includes = []
+
+[rules]
+
+[rules.RUST_CODING_001]
+text = "Use rustfmt for formatting. Formatting style belongs to rustfmt rather than manual review."
+
+[rules.RUST_CODING_001.avoid]
+language = "text"
+text = "Review: “Please align these arguments differently.”"
+
+[rules.RUST_CODING_001.prefer]
+language = "shell"
+text = "cargo fmt --all"
+
+[rules.RUST_CODING_002]
+text = "Use Clippy for linting. When Clippy can enforce a Rust practice deterministically, configure the lint and let Clippy own the rule."
+
+[rules.RUST_CODING_002.avoid]
+language = "text"
+text = "Review: “Please remember not to unwrap.”"
+
+[rules.RUST_CODING_002.prefer]
+language = "toml"
+text = """
+[workspace.lints.clippy]
+unwrap_used = "deny""""
+
+[rules.RUST_CODING_003]
+text = 'Suppress Clippy with `#[expect(clippy::lint_name, reason = "...")]`, not `#[allow(...)]` or command-line lint disabling. The reason must explain the local invariant or compatibility constraint that makes the lint inapplicable.'
+
+[rules.RUST_CODING_003.avoid]
+language = "rust"
+text = "#[allow(clippy::too_many_arguments)]"
+
+[rules.RUST_CODING_003.prefer]
+language = "rust"
+text = '#[expect(clippy::too_many_arguments, reason = "the command mirrors the externally versioned wire contract")]'
+
+[rules.RUST_CODING_004]
+text = "Organize modules as a human-readable outline of the crate. Split a module when it owns unrelated behaviors or requires unrelated groups of tests."
+
+[rules.RUST_CODING_004.avoid]
+language = "text"
+text = "one `workspace.rs` owning storage, sync, billing, rendering, and commands."
+
+[rules.RUST_CODING_004.prefer]
+language = "text"
+text = """
+workspace/
+├── storage/
+├── synchronization/
+└── command/"""
+
+[rules.RUST_CODING_005]
+text = "Keep `lib.rs` focused on module declarations and intentional public API re-exports. Put implementation logic in owned modules."
+
+[rules.RUST_CODING_005.avoid]
+language = "text"
+text = "implementing `synchronize` in `lib.rs`."
+
+[rules.RUST_CODING_005.prefer]
+language = "rust"
+text = """
+mod synchronization;
+pub use synchronization::Synchronizer;"""
+
+[rules.RUST_CODING_006]
+text = "Use the `name/mod.rs` convention for modules containing submodules."
+
+[rules.RUST_CODING_006.avoid]
+language = "text"
+text = "`workspace.rs` beside `workspace/storage.rs`."
+
+[rules.RUST_CODING_006.prefer]
+language = "text"
+text = "`workspace/mod.rs` beside `workspace/storage.rs`."
+
+[rules.RUST_CODING_007]
+text = "Order a module by idea rather than item kind. Put the primary type first, followed by its inherent and trait implementations; then introduce supporting types with their implementations. Keep tests at the end."
+
+[rules.RUST_CODING_007.avoid]
+language = "text"
+text = "declaring every struct first and collecting unrelated impl blocks later."
+
+[rules.RUST_CODING_007.prefer]
+language = "text"
+text = "`Workspace`, its inherent impl, its trait impls, then the next supporting type and finally `mod tests`."
+
+[rules.RUST_CODING_008]
+text = "Default to the smallest useful visibility: private, then `pub(super)`, then `pub(crate)`, and finally `pub` for intentional public API. Public fields should be rare."
+
+[rules.RUST_CODING_008.avoid]
+language = "rust"
+text = "pub people: Vec<Person>"
+
+[rules.RUST_CODING_008.prefer]
+language = "text"
+text = "a private `people` field exposed through `pub fn people(&self) -> impl Iterator<Item = &Person>`."
+
+[rules.RUST_CODING_009]
+text = "Put the crate's primary error type in `src/error.rs` and intentionally re-export it as `crate::Error`."
+
+[rules.RUST_CODING_009.avoid]
+language = "text"
+text = "unrelated public error types scattered through `lib.rs` and service modules."
+
+[rules.RUST_CODING_009.prefer]
+language = "rust"
+text = """
+mod error;
+pub use error::Error;"""
+
+[rules.RUST_CODING_010]
+text = "Keep functions as small, readable units. Readability and single ownership determine the boundary, not a fixed line count."
+
+[rules.RUST_CODING_010.avoid]
+language = "text"
+text = "one function validating, encrypting, uploading, checkpointing, notifying, and rendering."
+
+[rules.RUST_CODING_010.prefer]
+language = "text"
+text = "named `encrypt`, `upload`, and `publish` operations composed by the owner."
+
+[rules.RUST_CODING_011]
+text = "Use a newtype when a value has domain meaning or invariants that a raw primitive cannot express."
+
+[rules.RUST_CODING_011.avoid]
+language = "rust"
+text = "fn load_workspace(identifier: String)"
+
+[rules.RUST_CODING_011.prefer]
+language = "rust"
+text = "fn load_workspace(identifier: WorkspaceId)"
+
+[rules.RUST_CODING_012]
+text = "Represent in-memory data with the strongest available domain type. Raw HTTP, storage, configuration, CLI, serialization, and third-party values may exist at boundaries, but validate and convert them before they enter core logic."
+
+[rules.RUST_CODING_012.avoid]
+language = "rust"
+text = """
+struct Person {
+    email: String,
+    admitted_at: String,
+}"""
+
+[rules.RUST_CODING_012.prefer]
+language = "rust"
+text = """
+struct Person {
+    email: EmailAddress,
+    admitted_at: Instant,
+}"""
+
+[rules.RUST_CODING_013]
+text = "Use `From<T>` only for infallible, context-free, single-input conversions. When construction needs multiple inputs, use a named constructor beginning with `from_` and name it after the dominant input. Use the corresponding `try_from_*` name when construction is fallible."
+
+[rules.RUST_CODING_013.avoid]
+language = "rust"
+text = "impl From<(Record, Clock, Workspace)> for Person"
+
+[rules.RUST_CODING_013.prefer]
+language = "rust"
+text = "Person::try_from_record(record, &clock, &workspace)"
+
+[rules.RUST_CODING_014]
+text = "Deserialize external formats into boundary DTOs only long enough to validate and convert them. Do not let loosely typed serialization structures leak into core code."
+
+[rules.RUST_CODING_014.avoid]
+language = "text"
+text = "passing `AdmitPersonRequest` into `domain::admit`."
+
+[rules.RUST_CODING_014.prefer]
+language = "text"
+text = "converting it with `NewPerson::try_from(request)?` at the boundary."
+
+[rules.RUST_CODING_015]
+text = "Prefer exhaustive enum matching. Avoid wildcard arms when naming every variant would make newly added states visible to the compiler."
+
+[rules.RUST_CODING_015.avoid]
+language = "rust"
+text = "Status::Ready => render_ready(), _ => render_pending()"
+
+[rules.RUST_CODING_015.prefer]
+language = "text"
+text = "explicit arms for `Pending`, `Ready`, and `Failed`."
+
+[rules.RUST_CODING_016]
+text = "Use `thiserror` for error types. Preserve error chains with `#[source]`, `#[from]`, or transparent variants. Do not stringify errors until presentation or logging."
+
+[rules.RUST_CODING_016.avoid]
+language = "rust"
+text = "Error::Storage(source.to_string())"
+
+[rules.RUST_CODING_016.prefer]
+language = "text"
+text = "a `#[derive(thiserror::Error)]` variant carrying `#[source] source: storage::Error`."
+
+[rules.RUST_CODING_017]
+text = "Prefer `derive_more` for straightforward `Display` implementations. Write a manual implementation when formatting requires privacy protection or meaningful presentation logic."
+
+[rules.RUST_CODING_017.avoid]
+language = "text"
+text = "a handwritten match that only maps enum variants to fixed strings."
+
+[rules.RUST_CODING_017.prefer]
+language = "text"
+text = "`#[derive(derive_more::Display)]` with explicit `#[display(...)]` attributes."
+
+[rules.RUST_CODING_018]
+text = "Use builders when optional, ordered, or related inputs make a positional constructor obscure intent or permit invalid combinations."
+
+[rules.RUST_CODING_018.avoid]
+language = "rust"
+text = "Person::new(identifier, name, None, true, false, Some(now))"
+
+[rules.RUST_CODING_018.prefer]
+language = "rust"
+text = "Person::builder(identifier, name).admitted_at(now).active().build()?"
+
+[rules.RUST_CODING_019]
+text = "Implement `Default` only when the default value is meaningful in the domain, not merely convenient for tests or setup."
+
+[rules.RUST_CODING_019.avoid]
+language = "text"
+text = "Default` delegating to `empty_for_testing"
+
+[rules.RUST_CODING_019.prefer]
+language = "rust"
+text = "WorkspaceBuilder::for_testing().build()"
+
+[rules.RUST_CODING_020]
+text = "Types containing secrets, credentials, tokens, private content, or user-authored text must not expose raw values through `Debug`, `Display`, logs, panic messages, assertion messages, or errors. Use redacted or structural summaries."
+
+[rules.RUST_CODING_020.avoid]
+language = "text"
+text = '`tracing::debug!(?token, ?private_note, "saving contact")`.'
+
+[rules.RUST_CODING_020.prefer]
+language = "text"
+text = "logging `token_status` and `note_length` fields without their values."
+
+[rules.RUST_CODING_021]
+text = "Do not derive `Debug` for a privacy-bearing type unless every field's output is already safe. Prefer a manual implementation reporting kind, state, length, status, or a redacted marker."
+
+[rules.RUST_CODING_021.avoid]
+language = "text"
+text = "`#[derive(Debug)] struct AccessToken(String);`."
+
+[rules.RUST_CODING_021.prefer]
+language = "text"
+text = 'a manual `Debug` implementation emitting `AccessToken { value: "[redacted]" }`.'
+
+[rules.RUST_CODING_022]
+text = "Do not introduce first-party `unsafe` code. If existing `unsafe` must be changed or new `unsafe` appears necessary, stop and obtain explicit approval."
+
+[rules.RUST_CODING_022.avoid]
+language = "rust"
+text = "let value = unsafe { pointer.read() };"
+
+[rules.RUST_CODING_022.prefer]
+language = "rust"
+text = "let value = safe_boundary.read()?;"
+
+[rules.RUST_CODING_023]
+text = "Treat third-party types as boundary representations rather than implicit domain types. Convert them into owned domain types before core logic. When the exact third-party type is intentionally part of a public contract, re-export it explicitly; otherwise wrap or convert it."
+
+[rules.RUST_CODING_023.avoid]
+language = "text"
+text = "a public domain field typed as `vendor::Uuid`."
+
+[rules.RUST_CODING_023.prefer]
+language = "text"
+text = "an owned `WorkspaceId` with an intentional boundary conversion."
+
+[rules.RUST_CODING_024]
+text = "Crate features must be additive. Do not make public fields, trait methods, or established behavior disappear under feature combinations. Document and test supported combinations."
+
+[rules.RUST_CODING_024.avoid]
+language = "text"
+text = 'placing a public trait method behind `#[cfg(feature = "remote")]`.'
+
+[rules.RUST_CODING_024.prefer]
+language = "text"
+text = "a stable trait contract with feature-selected implementations."
+
+[rules.RUST_CODING_025]
+text = "Public traits should expose the smallest required method set. Provide convenience behavior as default implementations when it can be derived from required methods."
+
+[rules.RUST_CODING_025.avoid]
+language = "text"
+text = "requiring `person`, `contains`, and `person_name` when the latter two derive from `person`."
+
+[rules.RUST_CODING_025.prefer]
+language = "text"
+text = "require `person` and implement `contains` as a default method."
+
+[rules.RUST_CODING_026]
+text = "Prefer generics, trait bounds, and `impl Trait` so relationships remain statically checked and dispatch remains explicit. Use `dyn Trait` only as a last resort when runtime type erasure or heterogeneous values are genuinely required."
+
+[rules.RUST_CODING_026.avoid]
+language = "rust"
+text = "fn synchronize(repository: &dyn Repository)"
+
+[rules.RUST_CODING_026.prefer]
+language = "rust"
+text = "fn synchronize(repository: &impl Repository)"
+
+[rules.RUST_CODING_027]
+text = "Prefer explicitly named saturating or clamping domain operations when extreme values have sensible boundaries. Prefer these total operations over fallible arithmetic that forces callers to handle reasonable extremes. Reserve `Result` for invalid inputs or impossible states."
+
+[rules.RUST_CODING_027.avoid]
+language = "rust"
+text = "fn checked_add_days(self, days: u64) -> Result<Date, Overflow>"
+
+[rules.RUST_CODING_027.prefer]
+language = "rust"
+text = "fn saturating_add_days(self, days: u64) -> Date"
+
+[rules.RUST_CODING_028]
+text = "Name lifetime parameters after what they borrow rather than using generic names such as `'a`."
+
+[rules.RUST_CODING_028.avoid]
+language = "rust"
+text = "struct Runner<'a> { repository: &'a Repository }"
+
+[rules.RUST_CODING_028.prefer]
+language = "rust"
+text = "struct Runner<'repository> { repository: &'repository Repository }"
+
+[rules.RUST_CODING_029]
+text = "Avoid abbreviations unless the abbreviation is an established domain term. Prefer names that reveal ownership and responsibility."
+
+[rules.RUST_CODING_029.avoid]
+language = "rust"
+text = "let ws_mgr = WsMgr::new();"
+
+[rules.RUST_CODING_029.prefer]
+language = "rust"
+text = "let workspace_manager = WorkspaceManager::new();"
+
+[rules.RUST_CODING_030]
+text = "Logs should tell the story of the operation or user journey. Write concise lowercase messages, usually beginning with an active gerund."
+
+[rules.RUST_CODING_030.avoid]
+language = "rust"
+text = 'tracing::debug!("Workspace fetch")'
+
+[rules.RUST_CODING_030.prefer]
+language = "rust"
+text = 'tracing::debug!("fetching workspace")'
+
+[rules.RUST_CODING_031]
+text = "Put searchable context in structured `tracing` fields rather than interpolating it into the message."
+
+[rules.RUST_CODING_031.avoid]
+language = "rust"
+text = 'tracing::debug!("fetching workspace {workspace_id}")'
+
+[rules.RUST_CODING_031.prefer]
+language = "rust"
+text = 'tracing::debug!(%workspace_id, "fetching workspace")'

@@ -47,6 +47,9 @@ rapport work status
 rapport work add path <path>
 rapport work rules list
 rapport work rules show <id>
+rapport rules catalog
+rapport rules add rust
+rapport rules add crux
 rapport rules list
 rapport rules show <ruleset-id>
 rapport rules init <path> --id <ruleset-id>
@@ -67,14 +70,16 @@ rapport integrate # retry signoff for the recorded PR
 Rapport should work with repository-owned conventions rather than replacing
 them:
 
-- checked-in standalone and composite rulesets in `.rapport/rules/**/*.toml`;
+- checked-in standalone and composite rulesets in `.rapport/rules/**/*.toml`,
+  including optional versioned built-in Rust and Crux packs;
+- exact installed pack versions and semantic digests in `.rapport/rules.lock`;
 - embedded rulesets in folder `context.toml` files;
 - conventional Just targets for project-specific validation;
 - Git and GitHub for commits, pull requests, and status checks;
 - inherited `signoffs` in folder `context.toml` files, fulfilled by matching
   GitHub Actions workflows;
-- ignored local state in `.rapport/work.toml`, while `.rapport/rules/**` remains
-  trackable;
+- ignored local state in `.rapport/work.toml`, while `.rapport/rules/**` and
+  `.rapport/rules.lock` remain trackable;
 - local command telemetry in `.rapport/events.jsonl`.
 
 Just remains the right home for installs, local servers, generated assets,

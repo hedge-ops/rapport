@@ -1,0 +1,223 @@
+version = 1
+id = "CRUX_MODEL"
+includes = []
+
+[rules.CRUX_MODEL_001]
+text = "Represent lifecycle, progress, failure, and transitions as explicit state-machine state. Do not hide stateful behavior behind stateless helpers."
+
+[rules.CRUX_MODEL_001.avoid]
+language = "rust"
+text = '''synchronize(event, retry_count)'''
+
+[rules.CRUX_MODEL_001.prefer]
+language = "text"
+text = '''explicit `Pending`, `Fetching`, `Applying`, and `Failed` states.'''
+
+[rules.CRUX_MODEL_002]
+text = "Use `new(...)` for pure state entry and `start(...) -> Start<Self, Event>` when entering the state emits commands."
+
+[rules.CRUX_MODEL_002.avoid]
+language = "rust"
+text = '''new() -> (Self, Command<...>)'''
+
+[rules.CRUX_MODEL_002.prefer]
+language = "text"
+text = '''pure `new` and effectful `start`.'''
+
+[rules.CRUX_MODEL_003]
+text = "Give each state-machine node one central `update(...)` method that owns mutation in response to its events."
+
+[rules.CRUX_MODEL_003.avoid]
+language = "text"
+text = '''unrelated public `handle_*` entry points.'''
+
+[rules.CRUX_MODEL_003.prefer]
+language = "text"
+text = '''one `update` matching the event enum.'''
+
+[rules.CRUX_MODEL_004]
+text = "Return `Outcome<Self, Transition, ParentEvent>` when a child may either continue or complete into a parent-owned transition."
+
+[rules.CRUX_MODEL_004.avoid]
+language = "text"
+text = '''returning `Option<ParentEvent>`.'''
+
+[rules.CRUX_MODEL_004.prefer]
+language = "text"
+text = '''an explicit `Outcome<Self, Transition, ParentEvent>`.'''
+
+[rules.CRUX_MODEL_005]
+text = "Represent meaningful terminal paths with explicit transition or completion types. Do not encode terminal outcomes as booleans, strings, or incidental effects."
+
+[rules.CRUX_MODEL_005.avoid]
+language = "rust"
+text = '''finish() -> bool'''
+
+[rules.CRUX_MODEL_005.prefer]
+language = "text"
+text = '''Transition::Completed(Workspace)` and `Transition::Cancelled'''
+
+[rules.CRUX_MODEL_006]
+text = "Parents own child routing. Parent state variants mirror child states, and parent event variants mirror child events."
+
+[rules.CRUX_MODEL_006.avoid]
+language = "text"
+text = '''a flat parent event mixing every child input.'''
+
+[rules.CRUX_MODEL_006.prefer]
+language = "text"
+text = '''ParentEvent::Loading(loading::Event)` and `::Editing(editing::Event)'''
+
+[rules.CRUX_MODEL_007]
+text = "Route parent events by matching the parent state and event together, then delegate matching pairs to the owning child."
+
+[rules.CRUX_MODEL_007.avoid]
+language = "text"
+text = '''extracting children through mutable accessors based only on the event.'''
+
+[rules.CRUX_MODEL_007.prefer]
+language = "text"
+text = '''`match (self, event)` with paired child arms.'''
+
+[rules.CRUX_MODEL_008]
+text = "Route wrong-state events through `route::invalid(...)`. Do not silently ignore them or reconstruct the parent merely to return it unchanged."
+
+[rules.CRUX_MODEL_008.avoid]
+language = "rust"
+text = '''_ => Command::done()'''
+
+[rules.CRUX_MODEL_008.prefer]
+language = "rust"
+text = '''(state, event) => route::invalid(state, event)'''
+
+[rules.CRUX_MODEL_009]
+text = "Use a newtype event when a state consumes exactly one input type and the wrapper exists for parent routing. Use an enum when the state accepts multiple inputs or the event set is expected to grow."
+
+[rules.CRUX_MODEL_009.avoid]
+language = "text"
+text = '''a one-variant `StorageReadEvent` enum.'''
+
+[rules.CRUX_MODEL_009.prefer]
+language = "rust"
+text = '''struct StorageReadEvent(StorageReadResponse)'''
+
+[rules.CRUX_MODEL_010]
+text = "Use `CompletingOutcome<Transition, ParentEvent>` when processing the event must terminate the child and no `Continue` path is possible."
+
+[rules.CRUX_MODEL_010.avoid]
+language = "text"
+text = '''an `Outcome<Self, ...>` whose continue arm is impossible.'''
+
+[rules.CRUX_MODEL_010.prefer]
+language = "text"
+text = '''CompletingOutcome<Transition, ParentEvent>'''
+
+[rules.CRUX_MODEL_011]
+text = "Screens own local input and render state. Input events remain local until a commit gesture produces a typed value for the parent."
+
+[rules.CRUX_MODEL_011.avoid]
+language = "text"
+text = '''forwarding every keystroke to a parent event.'''
+
+[rules.CRUX_MODEL_011.prefer]
+language = "text"
+text = '''mutate screen input locally and render.'''
+
+[rules.CRUX_MODEL_012]
+text = "Let the parent decide whether submitted screen values cause a transition or effects. Screens expose validation and hand submitted values to the parent."
+
+[rules.CRUX_MODEL_012.avoid]
+language = "text"
+text = '''a screen emitting workspace rename effects.'''
+
+[rules.CRUX_MODEL_012.prefer]
+language = "text"
+text = '''record a submitted name for the parent to consume.'''
+
+[rules.CRUX_MODEL_013]
+text = "When behavior recurs across unrelated states and has lifecycle, progress, or failure semantics, make it a reusable state machine rather than a stateless helper."
+
+[rules.CRUX_MODEL_013.avoid]
+language = "text"
+text = '''passing `pending` and `retry_count` into a helper.'''
+
+[rules.CRUX_MODEL_013.prefer]
+language = "text"
+text = '''a reusable `WorkspaceLoading` state machine.'''
+
+[rules.CRUX_MODEL_014]
+text = "Represent independent child readiness explicitly when a parent fans out work and can resolve only after every required child is ready."
+
+[rules.CRUX_MODEL_014.avoid]
+language = "text"
+text = '''unrelated `Option<T>` readiness fields.'''
+
+[rules.CRUX_MODEL_014.prefer]
+language = "text"
+text = '''`ReadinessSlot<Pending, Ready>` fields.'''
+
+[rules.CRUX_MODEL_015]
+text = "Use readiness vocabulary consistently: children become ready; parents resolve."
+
+[rules.CRUX_MODEL_015.avoid]
+language = "text"
+text = '''ChildTransition::Resolved` and `ParentTransition::Ready'''
+
+[rules.CRUX_MODEL_015.prefer]
+language = "text"
+text = '''ChildTransition::Ready` and `ParentTransition::Resolved'''
+
+[rules.CRUX_MODEL_016]
+text = "Consume readiness state when attempting completion so unresolved state can be returned without cloning."
+
+[rules.CRUX_MODEL_016.avoid]
+language = "text"
+text = '''`complete(&self)` cloning ready values.'''
+
+[rules.CRUX_MODEL_016.prefer]
+language = "rust"
+text = '''try_complete(self) -> Result<Resolved, Self>'''
+
+[rules.CRUX_MODEL_017]
+text = "Place a reusable cross-cutting state machine at the nearest common module of its users and re-export its public contract from that owner."
+
+[rules.CRUX_MODEL_017.avoid]
+language = "text"
+text = '''copies under `screen_a` and `screen_b`.'''
+
+[rules.CRUX_MODEL_017.prefer]
+language = "text"
+text = '''one sibling module at their common parent.'''
+
+[rules.CRUX_MODEL_018]
+text = "Use `From<Child>` for parent variants containing only that child. Use a named constructor when entering the variant also requires parent-owned state."
+
+[rules.CRUX_MODEL_018.avoid]
+language = "text"
+text = '''repeating multi-field variant construction.'''
+
+[rules.CRUX_MODEL_018.prefer]
+language = "text"
+text = '''`From<Loading>` for simple variants and `Parent::editing(...)` for parent state.'''
+
+[rules.CRUX_MODEL_019]
+text = "Use compact outcome mapping only when continuation and completion are pure mappings. Keep an explicit match when the parent must preserve state or make a transition decision."
+
+[rules.CRUX_MODEL_019.avoid]
+language = "text"
+text = '''`map_value` that loses parent-owned workspace state.'''
+
+[rules.CRUX_MODEL_019.prefer]
+language = "text"
+text = '''explicit continue and complete arms preserving ownership.'''
+
+[rules.CRUX_MODEL_020]
+text = "Document a state-machine type by saying what it owns, what it is waiting for, and where it can transition next."
+
+[rules.CRUX_MODEL_020.avoid]
+language = "text"
+text = '''The loading model.'''
+
+[rules.CRUX_MODEL_020.prefer]
+language = "text"
+text = '''Owns workspace loading while awaiting storage and service responses, then transitions to ready or failed.'''

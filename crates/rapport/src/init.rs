@@ -89,7 +89,7 @@ fn write_rules_gitignore(
 
 fn upsert_rules_ignore(existing: Option<&str>) -> String {
     let section = format!(
-        "{RULES_START_MARKER}\n.rapport/**\n!.rapport/\n!.rapport/rules/\n!.rapport/rules/**\n{RULES_END_MARKER}\n"
+        "{RULES_START_MARKER}\n.rapport/**\n!.rapport/\n!.rapport/rules/\n!.rapport/rules/**\n!.rapport/rules.lock\n{RULES_END_MARKER}\n"
     );
     match existing {
         Some(contents)

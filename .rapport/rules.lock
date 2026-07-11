@@ -1,0 +1,6 @@
+version = 1
+
+[[packs]]
+name = "rust"
+version = "1.0.0"
+digest = "f02b0bb10e8ef5af0b27e224e9cf9ddb00bca7260b3ed6f0e054f920142ce55b"

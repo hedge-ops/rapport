@@ -8,6 +8,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added Michael's versioned `rust` and `crux` rules packs, explicit installation
+  through `rapport rules add`, transitive Crux-to-Rust dependency installation,
+  and `.rapport/rules.lock` version and digest verification.
+- Added required language-tagged Avoid and Prefer examples to canonical keyed
+  rule definitions in standalone rulesets and embedded context rulesets.
 - Added typed repository and external rule references with optional labels,
   offline validation, CLI list/add/remove operations, and migration from valid
   legacy string references.

@@ -18,7 +18,11 @@ pub(crate) struct RulesetDocument {
     pub(crate) id: String,
     #[serde(default)]
     pub(crate) includes: Vec<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        serialize_with = "serialize_rules",
+        deserialize_with = "deserialize_rules"
+    )]
     pub(crate) rules: Vec<RuleDefinition>,
 }
 
@@ -28,7 +32,11 @@ pub(crate) struct EmbeddedRuleset {
     pub(crate) id: String,
     #[serde(default)]
     pub(crate) includes: Vec<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        serialize_with = "serialize_rules",
+        deserialize_with = "deserialize_rules"
+    )]
     pub(crate) rules: Vec<RuleDefinition>,
 }
 
@@ -41,6 +49,86 @@ pub(crate) struct RuleDefinition {
     pub(crate) rationale: Option<String>,
     #[serde(default)]
     pub(crate) references: Vec<RuleReference>,
+    pub(crate) avoid: RuleExample,
+    pub(crate) prefer: RuleExample,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuleExample {
+    pub(crate) language: String,
+    pub(crate) text: String,
+}
+
+#[derive(Serialize)]
+struct RuleBodyRef<'rule> {
+    text: &'rule str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rationale: &'rule Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    references: &'rule Vec<RuleReference>,
+    avoid: &'rule RuleExample,
+    prefer: &'rule RuleExample,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuleBody {
+    text: String,
+    #[serde(default)]
+    rationale: Option<String>,
+    #[serde(default)]
+    references: Vec<RuleReference>,
+    avoid: RuleExample,
+    prefer: RuleExample,
+}
+
+fn serialize_rules<S>(rules: &[RuleDefinition], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let map = rules
+        .iter()
+        .map(|rule| {
+            (
+                rule.id.as_str(),
+                RuleBodyRef {
+                    text: &rule.text,
+                    rationale: &rule.rationale,
+                    references: &rule.references,
+                    avoid: &rule.avoid,
+                    prefer: &rule.prefer,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    map.serialize(serializer)
+}
+
+fn deserialize_rules<'de, D>(deserializer: D) -> Result<Vec<RuleDefinition>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Input {
+        Keyed(BTreeMap<String, RuleBody>),
+        Legacy(Vec<RuleDefinition>),
+    }
+    match Input::deserialize(deserializer)? {
+        Input::Legacy(rules) => Ok(rules),
+        Input::Keyed(rules) => Ok(rules
+            .into_iter()
+            .map(|(id, body)| RuleDefinition {
+                id,
+                text: body.text,
+                rationale: body.rationale,
+                references: body.references,
+                avoid: body.avoid,
+                prefer: body.prefer,
+            })
+            .collect()),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -440,6 +528,25 @@ pub(crate) fn validate_local(
     }
     let mut separator = None;
     for rule in rules {
+        for (kind, example) in [("avoid", &rule.avoid), ("prefer", &rule.prefer)] {
+            if !matches!(
+                example.language.as_str(),
+                "rust" | "toml" | "shell" | "text"
+            ) || example.text.trim().is_empty()
+            {
+                return Err(RulesetError::InvalidExample {
+                    rule: rule.id.clone(),
+                    kind,
+                });
+            }
+            if example.language != "text" && example.text.contains('`') {
+                return Err(RulesetError::MarkdownExample {
+                    rule: rule.id.clone(),
+                    kind,
+                    language: example.language.clone(),
+                });
+            }
+        }
         let mut targets = BTreeSet::new();
         for reference in &rule.references {
             if !targets.insert(&reference.target) {
@@ -524,10 +631,47 @@ fn load(fs: &impl FileSystem, path: &Utf8Path) -> Result<RulesetDocument, Rulese
     Ok(document)
 }
 
-fn render(document: &RulesetDocument) -> Result<String, RulesetError> {
-    toml_edit::ser::to_document(document)
-        .map(|document| document.to_string())
-        .map_err(RulesetError::Encode)
+pub(crate) fn render(document: &RulesetDocument) -> Result<String, RulesetError> {
+    let mut output = toml_edit::ser::to_document(document).map_err(RulesetError::Encode)?;
+    output.as_table_mut().remove("rules");
+    if !document.rules.is_empty() {
+        let mut rules = toml_edit::Table::new();
+        for rule in &document.rules {
+            let mut body = toml_edit::Table::new();
+            body["text"] = toml_edit::value(&rule.text);
+            if let Some(rationale) = &rule.rationale {
+                body["rationale"] = toml_edit::value(rationale);
+            }
+            if !rule.references.is_empty() {
+                let references = rule
+                    .references
+                    .iter()
+                    .map(|reference| {
+                        let mut value = toml_edit::InlineTable::new();
+                        value.insert("kind", reference.kind.to_string().into());
+                        value.insert("target", reference.target.clone().into());
+                        if let Some(label) = &reference.label {
+                            value.insert("label", label.clone().into());
+                        }
+                        toml_edit::Value::InlineTable(value)
+                    })
+                    .collect::<toml_edit::Array>();
+                body["references"] = toml_edit::value(references);
+            }
+            body["avoid"] = toml_edit::Item::Table(render_example(&rule.avoid));
+            body["prefer"] = toml_edit::Item::Table(render_example(&rule.prefer));
+            rules[&rule.id] = toml_edit::Item::Table(body);
+        }
+        output["rules"] = toml_edit::Item::Table(rules);
+    }
+    Ok(output.to_string())
+}
+
+fn render_example(example: &RuleExample) -> toml_edit::Table {
+    let mut table = toml_edit::Table::new();
+    table["language"] = toml_edit::value(&example.language);
+    table["text"] = toml_edit::value(&example.text);
+    table
 }
 
 pub(crate) fn run<F, C, O, E>(
@@ -569,6 +713,11 @@ where
     E: Write,
 {
     match command {
+        RulesCommand::Catalog => Ok(crate::builtin_rules::catalog()),
+        RulesCommand::Add { pack } => {
+            crate::builtin_rules::install(context.fs, &context.repo_root, pack)
+                .map_err(RulesetError::Builtin)
+        }
         RulesCommand::List => {
             let catalog = Catalog::discover_repository(context.fs, &context.repo_root)?;
             let lines = catalog
@@ -599,7 +748,17 @@ where
                 .document
                 .rules
                 .iter()
-                .map(|rule| format!("- `{}` -- {}", rule.id, rule.text))
+                .map(|rule| {
+                    format!(
+                        "### `{}`\n\n{}\n\n#### Avoid\n\n```{}\n{}\n```\n\n#### Prefer\n\n```{}\n{}\n```",
+                        rule.id,
+                        rule.text,
+                        rule.avoid.language,
+                        rule.avoid.text,
+                        rule.prefer.language,
+                        rule.prefer.text
+                    )
+                })
                 .collect::<Vec<_>>();
             Ok(format!(
                 "# rapport rules show\n\n- `id` -- {}\n- `source` -- {}\n- `includes` -- {}\n\n## Rules\n\n{}",
@@ -779,6 +938,14 @@ where
                             migrate_reference(context.fs, &context.repo_root, reference)
                         })
                         .collect::<Result<Vec<_>, _>>()?,
+                    avoid: RuleExample {
+                        language: args.avoid_language.clone(),
+                        text: args.avoid.clone(),
+                    },
+                    prefer: RuleExample {
+                        language: args.prefer_language.clone(),
+                        text: args.prefer.clone(),
+                    },
                 });
             }
             RulesRuleCommand::Update(args) => {
@@ -805,6 +972,18 @@ where
                         .collect::<Result<Vec<_>, _>>()?;
                 } else if args.clear_references {
                     rule.references.clear();
+                }
+                if let (Some(language), Some(text)) = (&args.avoid_language, &args.avoid) {
+                    rule.avoid = RuleExample {
+                        language: language.clone(),
+                        text: text.clone(),
+                    };
+                }
+                if let (Some(language), Some(text)) = (&args.prefer_language, &args.prefer) {
+                    rule.prefer = RuleExample {
+                        language: language.clone(),
+                        text: text.clone(),
+                    };
                 }
             }
             RulesRuleCommand::Remove { id, .. } => {
@@ -964,11 +1143,21 @@ pub(crate) enum RulesetError {
     InvalidPath(Utf8PathBuf),
     EmbeddedMutation(String),
     MixedLegacySources(Utf8PathBuf),
+    Builtin(crate::builtin_rules::BuiltinRulesError),
     InvalidReference(String),
     MissingReference(Utf8PathBuf),
     DuplicateReference(String),
     UnknownReference(String),
     EscapingReference(Utf8PathBuf),
+    InvalidExample {
+        rule: String,
+        kind: &'static str,
+    },
+    MarkdownExample {
+        rule: String,
+        kind: &'static str,
+        language: String,
+    },
 }
 
 impl fmt::Display for RulesetError {
@@ -1017,6 +1206,7 @@ impl fmt::Display for RulesetError {
                 f,
                 "legacy rule sources in `{path}` cannot coexist with embedded rulesets; convert the context before resolving repository rules"
             ),
+            Self::Builtin(source) => source.fmt(f),
             Self::InvalidReference(target) => write!(
                 f,
                 "rule reference `{target}` must be an HTTP(S) URL or an existing repository file"
@@ -1034,6 +1224,18 @@ impl fmt::Display for RulesetError {
                 f,
                 "rule reference file `{path}` resolves outside the repository"
             ),
+            Self::InvalidExample { rule, kind } => write!(
+                f,
+                "rule `{rule}` requires a non-empty {kind} example with language rust, toml, shell, or text"
+            ),
+            Self::MarkdownExample {
+                rule,
+                kind,
+                language,
+            } => write!(
+                f,
+                "rule `{rule}` {kind} example is declared as {language} but contains Markdown backticks"
+            ),
         }
     }
 }
@@ -1044,6 +1246,7 @@ impl std::error::Error for RulesetError {
             Self::Io { source, .. } => Some(source),
             Self::Decode { source, .. } => Some(source),
             Self::Encode(source) => Some(source),
+            Self::Builtin(source) => Some(source),
             _ => None,
         }
     }
@@ -1062,7 +1265,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(", ");
         let rule = rule.map_or_else(String::new, |rule| {
-            format!("\n[[rules]]\nid = \"{rule}\"\ntext = \"Rule text.\"\n")
+            format!("\n[[rules]]\nid = \"{rule}\"\ntext = \"Rule text.\"\navoid = {{ language = \"rust\", text = \"avoid\" }}\nprefer = {{ language = \"rust\", text = \"prefer\" }}\n")
         });
         format!("version = 1\nid = \"{id}\"\nincludes = [{includes}]\n{rule}")
     }
@@ -1116,6 +1319,14 @@ mod tests {
                 text: String::from("Text"),
                 rationale: None,
                 references: Vec::new(),
+                avoid: RuleExample {
+                    language: String::from("rust"),
+                    text: String::from("avoid"),
+                },
+                prefer: RuleExample {
+                    language: String::from("rust"),
+                    text: String::from("prefer"),
+                },
             }],
             Utf8Path::new("/repo/.rapport/rules/rust.toml"),
         )
@@ -1131,7 +1342,7 @@ mod tests {
     #[test]
     fn legacy_external_reference_migrates_to_typed_record() {
         let document: RulesetDocument = toml::from_str(
-            "version = 1\nid = \"RUST\"\nincludes = []\n[[rules]]\nid = \"RUST-001\"\ntext = \"Text\"\nreferences = [\"https://example.com/source\"]\n",
+            "version = 1\nid = \"RUST\"\nincludes = []\n[[rules]]\nid = \"RUST-001\"\ntext = \"Text\"\nreferences = [\"https://example.com/source\"]\navoid = { language = \"rust\", text = \"avoid\" }\nprefer = { language = \"rust\", text = \"prefer\" }\n",
         )
         .unwrap();
 
@@ -1170,8 +1381,60 @@ mod tests {
             text: String::from("Text"),
             rationale: None,
             references: vec![reference.clone(), reference],
+            avoid: RuleExample {
+                language: String::from("rust"),
+                text: String::from("avoid"),
+            },
+            prefer: RuleExample {
+                language: String::from("rust"),
+                text: String::from("prefer"),
+            },
         };
 
         assert!(validate_local("RUST", &[rule], Utf8Path::new("rules.toml")).is_err());
+    }
+
+    #[test]
+    fn curated_comment_rules_use_keyed_avoid_prefer_format() {
+        let document: RulesetDocument =
+            toml::from_str(include_str!("../catalog/rust/comment.toml")).unwrap();
+
+        validate_local(
+            &document.id,
+            &document.rules,
+            Utf8Path::new("rust/comment.toml"),
+        )
+        .unwrap();
+        let rendered = render(&document).unwrap();
+
+        assert_eq!(document.rules.len(), 15);
+        assert!(rendered.contains("[rules.RUST_COMMENT_001]"), "{rendered}");
+        assert!(rendered.contains("[rules.RUST_COMMENT_001.avoid]"));
+        assert!(rendered.contains("[rules.RUST_COMMENT_001.prefer]"));
+    }
+
+    #[test]
+    fn curated_catalog_has_required_avoid_prefer_examples() {
+        let files = [
+            (include_str!("../catalog/rust/coding.toml"), 31),
+            (include_str!("../catalog/rust/test.toml"), 18),
+            (include_str!("../catalog/rust/comment.toml"), 15),
+            (include_str!("../catalog/crux/effects.toml"), 10),
+            (include_str!("../catalog/crux/model.toml"), 20),
+            (include_str!("../catalog/crux/view.toml"), 24),
+            (include_str!("../catalog/crux/test.toml"), 10),
+        ];
+
+        for (contents, expected_count) in files {
+            let document: RulesetDocument = toml::from_str(contents).unwrap();
+            validate_local(&document.id, &document.rules, Utf8Path::new("catalog.toml")).unwrap();
+            assert_eq!(document.rules.len(), expected_count);
+            assert!(document.rules.iter().all(|rule| {
+                !rule.avoid.language.is_empty()
+                    && !rule.avoid.text.is_empty()
+                    && !rule.prefer.language.is_empty()
+                    && !rule.prefer.text.is_empty()
+            }));
+        }
     }
 }

@@ -1,0 +1,3 @@
+version = 1
+id = "RUST_CRATE"
+includes = ["RUST_CODING", "RUST_TEST", "RUST_COMMENT"]

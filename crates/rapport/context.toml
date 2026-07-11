@@ -1,0 +1,12 @@
+version = 1
+purpose = "Owns the Rapport factory-workflow CLI and orchestration."
+signoffs = []
+rule_includes = []
+
+[ownership]
+owns = ["CLI commands and repository factory workflow orchestration."]
+boundaries = []
+
+[ruleset]
+id = "CRATES_RAPPORT"
+includes = ["RUST_CRATE"]

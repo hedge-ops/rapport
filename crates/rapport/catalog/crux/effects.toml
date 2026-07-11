@@ -1,0 +1,113 @@
+version = 1
+id = "CRUX_EFFECTS"
+includes = []
+
+[rules.CRUX_EFFECTS_001]
+text = "Effects declare what side effects the model needs; they do not execute those effects. The shell owns execution."
+
+[rules.CRUX_EFFECTS_001.avoid]
+language = "text"
+text = '''awaiting an HTTP client inside `update`.'''
+
+[rules.CRUX_EFFECTS_001.prefer]
+language = "rust"
+text = '''Effect::http(request).then_send(Event::HttpCompleted)'''
+
+[rules.CRUX_EFFECTS_002]
+text = "Each effect owns its operation types and command construction. Keep transport execution and platform integration in the shell."
+
+[rules.CRUX_EFFECTS_002.avoid]
+language = "text"
+text = '''putting a `reqwest::Client` in `HttpOperation`.'''
+
+[rules.CRUX_EFFECTS_002.prefer]
+language = "text"
+text = '''an operation containing only the request contract.'''
+
+[rules.CRUX_EFFECTS_003]
+text = "Each model returns `Command<Effect, ItsOwnEvent>`. The command's event type belongs to the state machine that produced it."
+
+[rules.CRUX_EFFECTS_003.avoid]
+language = "text"
+text = '''a child returning `Command<Effect, ParentEvent>`.'''
+
+[rules.CRUX_EFFECTS_003.prefer]
+language = "text"
+text = '''Command<Effect, Event>'''
+
+[rules.CRUX_EFFECTS_004]
+text = "Parents lift child commands into the parent event type with `map_event`. The `map_event` chain mirrors the model hierarchy."
+
+[rules.CRUX_EFFECTS_004.avoid]
+language = "text"
+text = '''manually rebuilding a child command.'''
+
+[rules.CRUX_EFFECTS_004.prefer]
+language = "rust"
+text = '''child.update(event).map_event(ParentEvent::Child)'''
+
+[rules.CRUX_EFFECTS_005]
+text = "Resolve asynchronous effect output into an event with `then_send`; combine independent commands explicitly with `and`."
+
+[rules.CRUX_EFFECTS_005.avoid]
+language = "text"
+text = '''executing and feeding an async response inside the model.'''
+
+[rules.CRUX_EFFECTS_005.prefer]
+language = "rust"
+text = '''Effect::http(operation).then_send(Event::Completed).and(render::render())'''
+
+[rules.CRUX_EFFECTS_006]
+text = "Give each effect its own module containing public operation types and command construction."
+
+[rules.CRUX_EFFECTS_006.avoid]
+language = "text"
+text = '''every operation and command in `effects/mod.rs`.'''
+
+[rules.CRUX_EFFECTS_006.prefer]
+language = "text"
+text = '''`http/{mod.rs,types.rs,command/mod.rs}`.'''
+
+[rules.CRUX_EFFECTS_007]
+text = "Group command builders by domain route or operation family. Callers import the owning command module instead of reconstructing requests."
+
+[rules.CRUX_EFFECTS_007.avoid]
+language = "text"
+text = '''constructing `/v2/client` at the call site.'''
+
+[rules.CRUX_EFFECTS_007.prefer]
+language = "text"
+text = '''use effects::http::command::client; client::refresh(context)'''
+
+[rules.CRUX_EFFECTS_008]
+text = "Keep shared command-construction details, such as URL construction and error mapping, private to the owning effect module."
+
+[rules.CRUX_EFFECTS_008.avoid]
+language = "text"
+text = '''public `build_url(base, path)`.'''
+
+[rules.CRUX_EFFECTS_008.prefer]
+language = "text"
+text = '''private `build_url(base, ClientRoute)`.'''
+
+[rules.CRUX_EFFECTS_009]
+text = "Include everything the shell needs to execute an effect in its operation payload. The shell must not consult model state to complete the request."
+
+[rules.CRUX_EFFECTS_009.avoid]
+language = "text"
+text = '''`SaveWorkspace` carrying only an ID.'''
+
+[rules.CRUX_EFFECTS_009.prefer]
+language = "text"
+text = '''carry the ID and `EncryptedWorkspace` payload.'''
+
+[rules.CRUX_EFFECTS_010]
+text = "Express operation payloads in shell-independent domain types. Do not embed platform clients, handles, or UI types."
+
+[rules.CRUX_EFFECTS_010.avoid]
+language = "rust"
+text = '''StoreSecret { keychain: SecItem, value: Vec<u8> }'''
+
+[rules.CRUX_EFFECTS_010.prefer]
+language = "rust"
+text = '''StoreSecret { key: SecretKey, value: SecretValue }'''

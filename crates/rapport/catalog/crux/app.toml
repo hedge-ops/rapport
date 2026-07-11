@@ -1,0 +1,3 @@
+version = 1
+id = "CRUX_APP"
+includes = ["RUST_CRATE", "CRUX_EFFECTS", "CRUX_MODEL", "CRUX_VIEW", "CRUX_TEST"]
