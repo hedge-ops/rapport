@@ -9,9 +9,13 @@ use crate::signoff_contract::{self, SignoffKind, SignoffRequest};
 use crate::state::{ReviewGrade, ReviewGradeError};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
+use dprint_plugin_markdown::{
+    configuration::{ConfigurationBuilder, TextWrap},
+    format_text,
+};
 use nonempty::nonempty;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -22,6 +26,7 @@ use std::process::ExitCode;
 const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
 const CONTEXT_FILE: &str = "context.toml";
+const CONTEXT_LINE_WIDTH: u32 = 100;
 const CONTEXT_SCHEMA_VERSION: u16 = 1;
 const RULE_SCHEMA_VERSION: u16 = 1;
 
@@ -1305,7 +1310,8 @@ impl ProjectContextStore {
         path: &Utf8Path,
         document: &ProjectContextFile,
     ) -> Result<(), ProjectContextError> {
-        fs.write_string(path, render_context_file(document))
+        let rendered = render_context_file(document)?;
+        fs.write_string(path, rendered)
             .map_err(|source| ProjectContextError::Io {
                 path: path.to_path_buf(),
                 source,
@@ -1711,7 +1717,7 @@ impl fmt::Display for EditStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectContextFile {
     version: u16,
@@ -1726,7 +1732,7 @@ struct ProjectContextFile {
     rules: Vec<ContextRuleDefinition>,
 }
 
-#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(untagged)]
 enum ContextSignoffDeclaration {
     LegacyBuild(String),
@@ -1820,7 +1826,7 @@ impl ContextSignoffDeclaration {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TypedContextSignoff {
     kind: SignoffKind,
@@ -1858,18 +1864,18 @@ impl ProjectContextFile {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ContextOwnership {
     #[serde(default)]
     owns: Vec<String>,
     #[serde(default)]
     boundaries: Vec<String>,
-    #[serde(default, rename = "rule_includes")]
+    #[serde(default, rename = "rule_includes", skip_serializing)]
     compat_rule_includes: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ContextRuleDefinition {
     id: String,
@@ -1903,6 +1909,12 @@ pub(crate) enum ProjectContextError {
     RuleDecode {
         path: Utf8PathBuf,
         source: toml::de::Error,
+    },
+    Encode {
+        source: toml_edit::ser::Error,
+    },
+    ValueRepresentation {
+        source: toml_edit::TomlError,
     },
     UnsupportedSchemaVersion {
         path: Utf8PathBuf,
@@ -1972,6 +1984,10 @@ impl fmt::Display for ProjectContextError {
             }
             Self::RuleDecode { path, source } => {
                 write!(f, "rules parse error at `{path}`: {source}")
+            }
+            Self::Encode { .. } => f.write_str("could not encode the context document as TOML"),
+            Self::ValueRepresentation { .. } => {
+                f.write_str("could not encode a context value as TOML")
             }
             Self::UnsupportedSchemaVersion { path, version } => write!(
                 f,
@@ -2058,6 +2074,8 @@ impl Error for ProjectContextError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Decode { source, .. } | Self::RuleDecode { source, .. } => Some(source),
+            Self::Encode { source } => Some(source),
+            Self::ValueRepresentation { source } => Some(source),
             Self::SignoffContract { source } => Some(source),
             Self::InvalidReviewGrade(source) => Some(source),
             Self::UnsupportedSchemaVersion { .. }
@@ -2411,66 +2429,188 @@ fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn render_context_file(document: &ProjectContextFile) -> String {
-    let mut output = String::new();
-    let _ = writeln!(&mut output, "version = {}", document.version);
-    let _ = writeln!(&mut output);
-    let _ = writeln!(&mut output, "purpose = {}", toml_string(&document.purpose));
-    let _ = writeln!(&mut output);
-    if document.signoffs.is_empty() {
-        push_string_array(&mut output, "signoffs", &[]);
-        let _ = writeln!(&mut output);
-    }
-    push_string_array(&mut output, "rule_includes", &document.rule_includes);
-    let _ = writeln!(&mut output);
-    let _ = writeln!(&mut output, "[ownership]");
-    push_string_array(&mut output, "owns", &document.ownership.owns);
-    push_string_array(&mut output, "boundaries", &document.ownership.boundaries);
-
-    for signoff in &document.signoffs {
-        let _ = writeln!(&mut output);
-        let _ = writeln!(&mut output, "[[signoffs]]");
-        let _ = writeln!(
-            &mut output,
-            "kind = {}",
-            toml_string(&signoff.kind().to_string())
-        );
-        if let Some(target) = signoff.target() {
-            let _ = writeln!(&mut output, "target = {}", toml_string(target));
-        }
-        if let Some(minimum_grade) = signoff.minimum_grade() {
-            let _ = writeln!(
-                &mut output,
-                "minimum_grade = {}",
-                toml_string(&minimum_grade.to_string())
-            );
+fn render_context_file(document: &ProjectContextFile) -> Result<String, ProjectContextError> {
+    let canonical = canonical_context_file(document);
+    let mut output = toml_edit::ser::to_document(&canonical)
+        .map_err(|source| ProjectContextError::Encode { source })?;
+    rebuild_structural_tables(&mut output, &canonical);
+    style_prose_item(&mut output["purpose"], "purpose", &canonical.purpose)?;
+    style_prose_array(&mut output["ownership"]["owns"], &canonical.ownership.owns)?;
+    style_prose_array(
+        &mut output["ownership"]["boundaries"],
+        &canonical.ownership.boundaries,
+    )?;
+    if let Some(rules) = output["rules"].as_array_of_tables_mut() {
+        for (table, rule) in rules.iter_mut().zip(&canonical.rules) {
+            style_prose_item(&mut table["text"], "text", &rule.text)?;
+            if let Some(rationale) = &rule.rationale {
+                style_prose_item(&mut table["rationale"], "rationale", rationale)?;
+            }
         }
     }
-
-    for rule in &document.rules {
-        let _ = writeln!(&mut output);
-        let _ = writeln!(&mut output, "[[rules]]");
-        let _ = writeln!(&mut output, "id = {}", toml_string(&rule.id));
-        let _ = writeln!(&mut output, "text = {}", toml_string(&rule.text));
-        if let Some(rationale) = &rule.rationale {
-            let _ = writeln!(&mut output, "rationale = {}", toml_string(rationale));
-        }
-        push_string_array(&mut output, "references", &rule.references);
-    }
-
-    output
+    Ok(output.to_string())
 }
 
-fn push_string_array(output: &mut String, key: &str, values: &[String]) {
-    if values.is_empty() {
-        let _ = writeln!(output, "{key} = []");
-        return;
+fn rebuild_structural_tables(output: &mut toml_edit::DocumentMut, document: &ProjectContextFile) {
+    if let Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(ownership))) =
+        output.as_table_mut().remove("ownership")
+    {
+        output["ownership"] = toml_edit::Item::Table(ownership.into_table());
     }
-    let _ = writeln!(output, "{key} = [");
-    for value in values {
-        let _ = writeln!(output, "  {},", toml_string(value));
+
+    if !document.signoffs.is_empty() {
+        let mut signoffs = toml_edit::ArrayOfTables::new();
+        for signoff in &document.signoffs {
+            let mut table = toml_edit::Table::new();
+            table["kind"] = toml_edit::value(signoff.kind().to_string());
+            if let Some(target) = signoff.target() {
+                table["target"] = toml_edit::value(target);
+            }
+            if let Some(minimum_grade) = signoff.minimum_grade() {
+                table["minimum_grade"] = toml_edit::value(minimum_grade.to_string());
+            }
+            signoffs.push(table);
+        }
+        output["signoffs"] = toml_edit::Item::ArrayOfTables(signoffs);
     }
-    let _ = writeln!(output, "]");
+
+    output.as_table_mut().remove("rules");
+    if !document.rules.is_empty() {
+        let mut rules = toml_edit::ArrayOfTables::new();
+        for rule in &document.rules {
+            let mut table = toml_edit::Table::new();
+            table["id"] = toml_edit::value(&rule.id);
+            table["text"] = toml_edit::value(&rule.text);
+            if let Some(rationale) = &rule.rationale {
+                table["rationale"] = toml_edit::value(rationale);
+            }
+            let mut references = toml_edit::Array::new();
+            for reference in &rule.references {
+                references.push(reference);
+            }
+            table["references"] = toml_edit::value(references);
+            rules.push(table);
+        }
+        output["rules"] = toml_edit::Item::ArrayOfTables(rules);
+    }
+}
+
+fn canonical_context_file(document: &ProjectContextFile) -> ProjectContextFile {
+    let mut canonical = document.clone();
+    canonical.purpose = format_markdown(&canonical.purpose, CONTEXT_LINE_WIDTH);
+    canonical.ownership.owns = canonical
+        .ownership
+        .owns
+        .iter()
+        .map(|value| format_markdown(value, CONTEXT_LINE_WIDTH - 2))
+        .collect();
+    canonical.ownership.boundaries = canonical
+        .ownership
+        .boundaries
+        .iter()
+        .map(|value| format_markdown(value, CONTEXT_LINE_WIDTH - 2))
+        .collect();
+    for rule in &mut canonical.rules {
+        rule.text = format_markdown(&rule.text, CONTEXT_LINE_WIDTH);
+        rule.rationale = rule
+            .rationale
+            .as_deref()
+            .map(|value| format_markdown(value, CONTEXT_LINE_WIDTH));
+    }
+    canonical
+}
+
+fn style_prose_item(
+    item: &mut toml_edit::Item,
+    key: &str,
+    value: &str,
+) -> Result<(), ProjectContextError> {
+    let inline = toml_string(value);
+    if !value.contains('\n') && key.len() + 3 + inline.len() <= CONTEXT_LINE_WIDTH as usize {
+        return Ok(());
+    }
+    let mut formatted = parse_toml_value(&toml_multiline_string(value))?;
+    formatted.decor_mut().set_prefix(" ");
+    *item = toml_edit::Item::Value(formatted);
+    Ok(())
+}
+
+fn style_prose_array(
+    item: &mut toml_edit::Item,
+    values: &[String],
+) -> Result<(), ProjectContextError> {
+    let Some(array) = item.as_array_mut() else {
+        return Ok(());
+    };
+    let expanded = values.iter().any(|value| {
+        value.contains('\n') || toml_string(value).len() + 3 > CONTEXT_LINE_WIDTH as usize
+    });
+    for (index, value) in values.iter().enumerate() {
+        let representation =
+            if value.contains('\n') || toml_string(value).len() + 3 > CONTEXT_LINE_WIDTH as usize {
+                toml_multiline_string(value)
+            } else {
+                toml_string(value)
+            };
+        let mut formatted = parse_toml_value(&representation)?;
+        if expanded {
+            formatted.decor_mut().set_prefix("\n  ");
+        }
+        array.replace_formatted(index, formatted);
+    }
+    if expanded {
+        array.set_trailing_comma(true);
+        array.set_trailing("\n");
+    }
+    Ok(())
+}
+
+fn parse_toml_value(representation: &str) -> Result<toml_edit::Value, ProjectContextError> {
+    representation
+        .parse()
+        .map_err(|source| ProjectContextError::ValueRepresentation { source })
+}
+
+fn format_markdown(value: &str, line_width: u32) -> String {
+    let configuration = ConfigurationBuilder::new()
+        .line_width(line_width)
+        .text_wrap(TextWrap::Always)
+        .build();
+    let formatted = match format_text(value, &configuration, |_, _, _| Ok(None)) {
+        Ok(Some(formatted)) => formatted,
+        Ok(None) | Err(_) => value.to_string(),
+    };
+    formatted
+        .strip_suffix('\n')
+        .unwrap_or(&formatted)
+        .to_string()
+}
+
+fn toml_multiline_string(value: &str) -> String {
+    if !value.contains("'''")
+        && value
+            .chars()
+            .all(|character| !character.is_control() || character == '\n' || character == '\t')
+    {
+        return format!("'''\n{value}'''");
+    }
+
+    let mut escaped = String::from("\"\"\"\n");
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push('\n'),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push('\t'),
+            character if character.is_control() => {
+                let _ = write!(&mut escaped, "\\u{:04X}", u32::from(character));
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped.push_str("\"\"\"");
+    escaped
 }
 
 fn toml_string(value: &str) -> String {
@@ -2515,7 +2655,84 @@ mod tests {
         assert_eq!(
             fs.read_to_string("/repo/app/core/domain/context.toml")
                 .unwrap(),
-            "version = 1\n\npurpose = \"Owns workspace rules.\"\n\nsignoffs = []\n\nrule_includes = []\n\n[ownership]\nowns = []\nboundaries = []\n"
+            "version = 1\npurpose = \"Owns workspace rules.\"\nsignoffs = []\nrule_includes = []\n\n[ownership]\nowns = []\nboundaries = []\n"
+        );
+    }
+
+    #[test]
+    fn format_markdown_should_wrap_prose_without_formatting_fenced_code() {
+        let source = "This paragraph contains enough ordinary prose that the Markdown formatter must wrap it across several lines while preserving its meaning.\n\n```rust\nlet deliberately_long_identifier = something_that_must_not_be_wrapped();\n```";
+
+        let formatted = format_markdown(source, 60);
+        let paragraph = formatted.split("\n\n").next().unwrap();
+
+        assert!(paragraph.lines().count() > 1);
+        assert!(paragraph.lines().all(|line| line.len() <= 60));
+        assert!(formatted.contains(
+            "```rust\nlet deliberately_long_identifier = something_that_must_not_be_wrapped();\n```"
+        ));
+        assert_eq!(format_markdown(&formatted, 60), formatted);
+    }
+
+    #[test]
+    fn render_context_file_should_write_readable_canonical_markdown() {
+        let purpose = "The shared client-facing view of the domain, serialized between the app and the API. This is the API contract; it is not the universal domain model for backend services or persistence.";
+        let mut document = ProjectContextFile::new(purpose);
+        document.ownership.owns.push(String::from(
+            "The public API contract, including `WorkspaceDocument`, and the behavior clients may rely on when exchanging domain data.",
+        ));
+        document.rules.push(ContextRuleDefinition {
+            id: String::from("CONTEXT-001"),
+            text: String::from(
+                "Keep fenced examples intact.\n\n```rust\nlet deliberately_long_identifier = something_that_must_not_be_wrapped();\n```",
+            ),
+            rationale: Some(String::from(
+                "Readable context makes Git diffs useful to reviewers without asking agents to edit Rapport-owned files directly.",
+            )),
+            references: vec![String::from(
+                "https://example.com/an/indivisible/reference/that/is/allowed/to/exceed/the/formatter/line/width",
+            )],
+        });
+
+        let rendered = render_context_file(&document).unwrap();
+        let decoded: ProjectContextFile = toml::from_str(&rendered).unwrap();
+        let rendered_again = render_context_file(&decoded).unwrap();
+
+        assert!(rendered.contains("purpose = '''\n"));
+        assert!(rendered.contains("```rust\nlet deliberately_long_identifier"));
+        assert_eq!(rendered_again, rendered);
+        assert_eq!(
+            decoded.purpose,
+            format_markdown(purpose, CONTEXT_LINE_WIDTH)
+        );
+        assert!(decoded.rules[0].text.contains("\n\n```rust\n"));
+        assert_eq!(
+            decoded.ownership.owns[0],
+            format_markdown(&document.ownership.owns[0], CONTEXT_LINE_WIDTH - 2)
+        );
+        for line in rendered.lines().filter(|line| {
+            !line.contains("something_that_must_not_be_wrapped")
+                && !line.contains("https://example.com/")
+        }) {
+            assert!(
+                line.len() <= CONTEXT_LINE_WIDTH as usize,
+                "expecting formatter-controlled line to fit: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_context_file_should_preserve_toml_sensitive_markdown() {
+        let purpose = "Use `code`, apostrophes, \"quotes\", and Windows paths such as `C:\\\\workspace`.\n\nA literal delimiter looks like ''' inside prose.";
+        let document = ProjectContextFile::new(purpose);
+
+        let rendered = render_context_file(&document).unwrap();
+        let decoded: ProjectContextFile = toml::from_str(&rendered).unwrap();
+
+        assert!(rendered.contains("purpose = \"\"\"\n"));
+        assert_eq!(
+            decoded.purpose,
+            format_markdown(purpose, CONTEXT_LINE_WIDTH)
         );
     }
 
