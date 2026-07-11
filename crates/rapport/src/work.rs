@@ -865,7 +865,7 @@ fn render_added_path(
             ])
         })
         .section("Current Work Paths", |b| b.items(state.paths.clone()))
-        .section("Rules", |b| {
+        .section("Benchmarks", |b| {
             b.items(render_path_rules(resolver, path_rules))
         })
         .next_actions(nonempty![RunHint::new("rapport work rules list")])
@@ -873,28 +873,22 @@ fn render_added_path(
 }
 
 fn render_path_rules(resolver: &RuleResolver, path_rules: &PathRules) -> Vec<String> {
-    match (&path_rules.owner, path_rules.unresolved) {
-        (Some(owner), None) => {
-            let mut lines = vec![format!("owner `{}`", resolver.display_path(owner))];
-            lines.extend(path_rules.rules.iter().map(|rule| {
-                format!(
-                    "`{}` -- {} ({})",
-                    rule.id,
-                    rule.text,
-                    resolver.display_path(&rule.source)
-                )
-            }));
-            lines
-        }
-        (None, Some(reason)) => vec![format!(
+    if let Some(reason) = path_rules.unresolved {
+        return vec![format!(
             "`{}` -- unresolved: {reason}",
             path_rules.requested_path
-        )],
-        _ => vec![format!(
-            "`{}` -- unresolved: invalid rule resolution",
-            path_rules.requested_path
-        )],
+        )];
     }
+    let mut lines = vec![format!("path `{}`", path_rules.requested_path)];
+    lines.extend(path_rules.rules.iter().map(|rule| {
+        format!(
+            "`{}` -- {} ({})",
+            rule.id,
+            rule.text,
+            resolver.display_path(&rule.source)
+        )
+    }));
+    lines
 }
 
 fn recent_facts(state: &WorkState) -> Vec<(&'static str, String)> {

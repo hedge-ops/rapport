@@ -1895,7 +1895,7 @@ text = "Keep lib.rs small."
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("RUST-ORG-003"));
         assert!(out.contains("Keep lib.rs small."));
-        assert!(out.contains("rules.toml"));
+        assert!(out.contains("rules/rust.toml"));
         assert_eq!(err, "");
         let event = first_event(&fs);
 
@@ -1936,7 +1936,7 @@ text = "Treat tests as specifications."
     }
 
     #[test]
-    fn work_rules_list_reports_unresolved_paths() {
+    fn work_rules_list_reports_paths_without_benchmarks() {
         let mut fs = InMemoryFileSystem::default();
 
         let (code, out, err) = run_with_fs(
@@ -1945,7 +1945,8 @@ text = "Treat tests as specifications."
         );
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("unresolved: no rules owner found"));
+        assert!(out.contains("path `crates/rapport/src/lib.rs`"));
+        assert!(!out.contains("unresolved"));
         assert_eq!(err, "");
     }
 
@@ -1978,6 +1979,58 @@ text = "Keep lib.rs small."
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("RUST-ORG-003"));
         assert!(out.contains("Keep lib.rs small."));
+        assert_eq!(err, "");
+    }
+
+    #[test]
+    fn work_rules_accumulate_ancestor_contexts_and_included_libraries() {
+        let mut fs = InMemoryFileSystem::default();
+        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
+        fs.write_string(
+            "/repo/context.toml",
+            r#"
+version = 1
+purpose = "Repository"
+
+[[rules]]
+id = "ROOT-001"
+text = "Follow the repository contract."
+rationale = "Keeps shared behavior consistent."
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/crates/rapport/context.toml",
+            r#"
+version = 1
+purpose = "Rapport CLI"
+rule_includes = ["/rules/rust.toml"]
+"#,
+        )
+        .unwrap();
+        fs.write_string(
+            "/repo/rules/rust.toml",
+            r#"
+version = 1
+
+[[rules]]
+id = "RUST-001"
+text = "Keep Rust changes idiomatic."
+"#,
+        )
+        .unwrap();
+
+        let (code, out, err) = run_with_fs(&["work", "rules", "list"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("ROOT-001"));
+        assert!(out.contains("RUST-001"));
+        assert_eq!(err, "");
+
+        let (code, out, err) = run_with_fs(&["work", "rules", "show", "ROOT-001"], &mut fs);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("Keeps shared behavior consistent."));
         assert_eq!(err, "");
     }
 
@@ -2032,7 +2085,7 @@ text = "Keep lib.rs small."
         assert!(out.contains("status` — added"));
         assert!(out.contains("crates/rapport/src/lib.rs"));
         assert!(out.contains("crates/rapport/src/work.rs"));
-        assert!(out.contains("owner `rules.toml`"));
+        assert!(out.contains("path `crates/rapport/src/work.rs`"));
         assert!(out.contains("RUST-ORG-003"));
         assert_eq!(err, "");
         let state = load_state(&fs);
@@ -2119,7 +2172,7 @@ text = "Keep lib.rs small."
     }
 
     #[test]
-    fn work_add_path_reports_unresolved_rules_for_paths_without_owner() {
+    fn work_add_path_reports_paths_without_benchmarks() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
         fs.add_file("/repo/crates/rapport/src/work.rs");
@@ -2130,7 +2183,8 @@ text = "Keep lib.rs small."
         );
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("unresolved: no rules owner found"));
+        assert!(out.contains("path `crates/rapport/src/work.rs`"));
+        assert!(!out.contains("unresolved"));
         assert_eq!(err, "");
         assert_eq!(
             load_state(&fs).paths,
@@ -3968,7 +4022,13 @@ signoffs = ["shared", "review"]
     }
 
     fn add_rule_owner(fs: &mut InMemoryFileSystem, contents: &str) {
-        fs.write_string("/repo/rules.toml", contents).unwrap();
+        fs.write_string(
+            "/repo/context.toml",
+            contents
+                .replace("version = 1", "version = 1\npurpose = \"Test context\"")
+                .replace("includes =", "rule_includes ="),
+        )
+        .unwrap();
     }
 
     fn add_editable_context(fs: &mut InMemoryFileSystem) {
