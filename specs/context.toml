@@ -1,0 +1,8 @@
+version = 1
+purpose = "Contains the canonical product requirements for Rapport."
+signoffs = []
+rule_includes = []
+
+[ownership]
+owns = ["Rapport lifecycle requirements, shared language, and known specification gaps."]
+boundaries = ["Implementation status and issue-specific plans remain outside requirement bodies."]
