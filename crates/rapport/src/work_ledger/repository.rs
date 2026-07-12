@@ -112,18 +112,58 @@ impl Store {
         work: &Work,
         task: &Task,
     ) -> Result<(), Error> {
+        self.save_work_and_tasks(fs, work, std::slice::from_ref(task))
+    }
+
+    pub(super) fn save_work_and_tasks(
+        &self,
+        fs: &mut impl FileSystem,
+        work: &Work,
+        tasks: &[Task],
+    ) -> Result<(), Error> {
         let work_path = self.work_path();
-        let task_path = self.task_path(&task.id);
         let work_before = read_optional(fs, &work_path)?;
-        let task_before = read_optional(fs, &task_path)?;
-        let result = self
-            .save_work(fs, work)
-            .and_then(|()| self.save_task(fs, task));
+        let task_paths = tasks
+            .iter()
+            .map(|task| self.task_path(&task.id))
+            .collect::<Vec<_>>();
+        let task_before = task_paths
+            .iter()
+            .map(|path| read_optional(fs, path).map(|contents| (path.clone(), contents)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = self.save_work(fs, work).and_then(|()| {
+            for task in tasks {
+                self.save_task(fs, task)?;
+            }
+            Ok(())
+        });
         if result.is_err() {
             restore(fs, &work_path, work_before.as_deref());
-            restore(fs, &task_path, task_before.as_deref());
+            for (path, contents) in task_before {
+                restore(fs, &path, contents.as_deref());
+            }
         }
         result
+    }
+
+    pub(super) fn save_tasks(&self, fs: &mut impl FileSystem, tasks: &[Task]) -> Result<(), Error> {
+        let task_paths = tasks
+            .iter()
+            .map(|task| self.task_path(&task.id))
+            .collect::<Vec<_>>();
+        let before = task_paths
+            .iter()
+            .map(|path| read_optional(fs, path).map(|contents| (path.clone(), contents)))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (index, task) in tasks.iter().enumerate() {
+            if let Err(error) = self.save_task(fs, task) {
+                for (path, contents) in before.into_iter().take(index + 1) {
+                    restore(fs, &path, contents.as_deref());
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn archive(

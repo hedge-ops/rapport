@@ -121,7 +121,7 @@ impl Drop for TemporaryRepository {
 }
 
 #[test]
-// WRK-001–WRK-005: the Phase 3 golden path keeps request, Git, Tasks, and proof readiness aligned.
+/// When Phase 3 runs end to end, request, Git, Tasks, and proof readiness remain aligned (WRK-001–WRK-005).
 fn phase_three_work_checkpoint_and_rebase_lifecycle() {
     let repository = TemporaryRepository::new();
 
@@ -201,7 +201,7 @@ fn phase_three_work_checkpoint_and_rebase_lifecycle() {
 }
 
 #[test]
-// WRK-004: dirty rebase preparation is durable corrective Work, not an implicit stash.
+/// When rebase starts dirty, corrective Work is durable and Git is never implicitly stashed (WRK-004).
 fn dirty_rebase_creates_one_corrective_action_and_resumes() {
     let repository = TemporaryRepository::new();
     repository.succeeds(&[
@@ -237,7 +237,7 @@ fn dirty_rebase_creates_one_corrective_action_and_resumes() {
 }
 
 #[test]
-// WRK-003: a checkpoint rejects content that changed after reconciliation began.
+/// When content changes during reconciliation, checkpoint completion refuses it (WRK-003).
 fn checkpoint_refuses_content_changed_after_reconciliation_started() {
     let repository = TemporaryRepository::new();
     repository.succeeds(&[
@@ -265,7 +265,7 @@ fn checkpoint_refuses_content_changed_after_reconciliation_started() {
 }
 
 #[test]
-// WRK-003: Git remains authoritative when a clean descendant commit is unambiguous.
+/// When Git contains an unambiguous clean descendant, checkpoint adopts it as authoritative (WRK-003).
 fn checkpoint_adopts_an_unambiguous_commit_created_directly_with_git() {
     let repository = TemporaryRepository::new();
     repository.succeeds(&[
@@ -297,7 +297,7 @@ fn checkpoint_adopts_an_unambiguous_commit_created_directly_with_git() {
 }
 
 #[test]
-// WRK-001, WRK-002: finalized Work preserves its request and complete Task ledger.
+/// When Work is archived, its request and complete Task ledger are preserved (WRK-001, WRK-002).
 fn archive_writes_global_history_before_removing_local_state() {
     let mut fs = InMemoryFileSystem::default();
     let store = Store::new("/repository");
@@ -345,7 +345,7 @@ fn archive_writes_global_history_before_removing_local_state() {
 }
 
 #[test]
-// WRK-001: Work begins from exactly one durable request source.
+/// When Work starts, exactly one durable request source is required (WRK-001).
 fn work_start_requires_exactly_one_request_source() {
     let repository = TemporaryRepository::new();
 
@@ -378,4 +378,256 @@ fn work_start_requires_exactly_one_request_source() {
     ]);
     assert_eq!(multiple_code, ExitCode::from(2));
     assert!(multiple_error.contains("cannot be used with"));
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "WRK-005 acceptance keeps ordering, transitions, checkpoint linkage, failure, and causal correction in one coherent journey"
+)]
+/// When Develop processes a request, stable IDs retain explicit order and causal correction (WRK-005, BLD-002, REV-001).
+fn develop_should_process_ordered_sequence_and_causal_correction() {
+    let repository = TemporaryRepository::new();
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Implement the ordered Develop workflow.",
+        "--title",
+        "Develop Work",
+        "--target",
+        "main",
+    ]);
+
+    let first = repository.succeeds(&[
+        "develop",
+        "task",
+        "add",
+        "--title",
+        "Implement domain",
+        "--description",
+        "Add the domain behavior.",
+    ]);
+    assert!(first.contains("TASK_001"));
+    let second = repository.succeeds(&[
+        "develop",
+        "task",
+        "add",
+        "--title",
+        "Add tests",
+        "--description",
+        "Cover the behavior.",
+    ]);
+    assert!(second.contains("TASK_002"));
+    let inserted = repository.succeeds(&[
+        "develop",
+        "task",
+        "add",
+        "--title",
+        "Wire command",
+        "--description",
+        "Expose the workflow through the CLI.",
+        "--before",
+        "TASK_002",
+    ]);
+    assert!(inserted.contains("TASK_003"));
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "update",
+        "TASK_002",
+        "--title",
+        "Add acceptance tests",
+    ]);
+    repository.succeeds(&[
+        "develop", "task", "move", "TASK_002", "--before", "TASK_001",
+    ]);
+
+    let ordered = repository.succeeds(&["develop", "task", "list"]);
+    let second_at = ordered.find("TASK_002").unwrap_or(usize::MAX);
+    let first_at = ordered.find("TASK_001").unwrap_or(usize::MAX);
+    let third_at = ordered.find("TASK_003").unwrap_or(usize::MAX);
+    assert!(second_at < first_at && first_at < third_at);
+    let next = repository.succeeds(&["work", "task", "next"]);
+    assert!(next.contains("TASK_002"));
+    assert!(next.contains("rapport develop task start TASK_002"));
+
+    repository.succeeds(&["develop", "task", "start", "TASK_002"]);
+    let (parallel_code, _, parallel_error) =
+        repository.run(&["develop", "task", "start", "TASK_001"]);
+    assert_eq!(parallel_code, ExitCode::from(2));
+    assert!(parallel_error.contains("already running"));
+    let no_file_result = repository.succeeds(&[
+        "develop",
+        "task",
+        "complete",
+        "TASK_002",
+        "--result",
+        "The existing coverage already proves the behavior.",
+    ]);
+    assert!(no_file_result.contains("status` — passed"));
+
+    repository.succeeds(&["develop", "task", "start", "TASK_001"]);
+    repository.write("src/develop.rs", "pub fn develop() {}\n");
+    let (dirty_code, _, dirty_error) = repository.run(&[
+        "develop",
+        "task",
+        "complete",
+        "TASK_001",
+        "--result",
+        "Not checkpointed yet.",
+    ]);
+    assert_eq!(dirty_code, ExitCode::from(2));
+    assert!(dirty_error.contains("clean worktree"));
+    repository.succeeds(&["work", "checkpoint", "start"]);
+    repository.git(["add", "src/develop.rs"]);
+    repository.succeeds(&["work", "checkpoint", "complete", "Implement Develop domain"]);
+    let completed = repository.succeeds(&[
+        "develop",
+        "task",
+        "complete",
+        "TASK_001",
+        "--result",
+        "Implemented the domain and checkpointed it.",
+    ]);
+    assert!(completed.contains("TASK_004"));
+    let action = repository.succeeds(&["develop", "task", "show", "TASK_001"]);
+    assert!(action.contains("TASK_004"));
+    assert!(action.contains("initial_head"));
+    assert!(action.contains("final_head"));
+
+    repository.succeeds(&["develop", "task", "start", "TASK_003"]);
+    let failed = repository.succeeds(&[
+        "develop",
+        "task",
+        "fail",
+        "TASK_003",
+        "--result",
+        "The command boundary needs a correction.",
+    ]);
+    assert!(failed.contains("status` — failed"));
+    let correction_hint = repository.succeeds(&["work", "task", "next"]);
+    assert!(correction_hint.contains("--caused-by TASK_003"));
+
+    let correction = repository.succeeds(&[
+        "develop",
+        "task",
+        "add",
+        "--title",
+        "Correct command boundary",
+        "--description",
+        "Address the failed command wiring.",
+        "--caused-by",
+        "TASK_003",
+    ]);
+    assert!(correction.contains("TASK_005"));
+    let caused = repository.succeeds(&["develop", "task", "show", "TASK_005"]);
+    assert!(caused.contains("TASK_003 failed action"));
+    assert!(caused.contains("The command boundary needs a correction."));
+    repository.succeeds(&["develop", "task", "start", "TASK_005"]);
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "complete",
+        "TASK_005",
+        "--result",
+        "The existing checkpoint contains the correction.",
+    ]);
+
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "add",
+        "--title",
+        "Obsolete follow-up",
+        "--description",
+        "This is no longer necessary.",
+    ]);
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "cancel",
+        "TASK_006",
+        "--reason",
+        "Superseded by the correction.",
+    ]);
+    let status = repository.succeeds(&["work", "status"]);
+    assert!(status.contains("Develop` — complete"));
+    assert!(status.contains("next` — `rapport build`"));
+
+    let (immutable_code, _, immutable_error) = repository.run(&[
+        "develop",
+        "task",
+        "update",
+        "TASK_001",
+        "--title",
+        "Rewrite history",
+    ]);
+    assert_eq!(immutable_code, ExitCode::from(2));
+    assert!(immutable_error.contains("not a pending Develop Action Task"));
+}
+
+#[test]
+/// When an Action fails, its immutable record blocks completion until causal Work is resolved (WRK-005).
+fn develop_should_preserve_failed_task_until_explicit_resolution() {
+    let repository = TemporaryRepository::new();
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Preserve failed development history.",
+        "--title",
+        "Failed Work",
+        "--target",
+        "main",
+    ]);
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "add",
+        "--title",
+        "Attempt risky change",
+        "--description",
+        "Record failure without rewriting it.",
+    ]);
+    repository.succeeds(&["develop", "task", "start", "TASK_001"]);
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "fail",
+        "TASK_001",
+        "--result",
+        "The approach is not viable.",
+    ]);
+    let failed_path = repository.root.join(".rapport/tasks/TASK_001.toml");
+    let before = assert_ok!(std::fs::read_to_string(&failed_path));
+
+    let (complete_code, _, complete_error) =
+        repository.run(&["work", "complete", "--result", "Should remain blocked."]);
+    assert_eq!(complete_code, ExitCode::from(2));
+    assert!(complete_error.contains("Develop is incomplete"));
+
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "add",
+        "--title",
+        "Alternative correction",
+        "--description",
+        "Try a safer approach.",
+        "--caused-by",
+        "TASK_001",
+    ]);
+    let after = assert_ok!(std::fs::read_to_string(&failed_path));
+    assert_eq!(after, before);
+    repository.succeeds(&[
+        "develop",
+        "task",
+        "cancel",
+        "TASK_002",
+        "--reason",
+        "The request no longer needs this change.",
+    ]);
+    let status = repository.succeeds(&["work", "status"]);
+    assert!(status.contains("Develop` — complete"));
 }

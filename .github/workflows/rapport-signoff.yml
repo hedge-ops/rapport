@@ -1,0 +1,33 @@
+name: Rapport signoff request (reusable)
+
+# Rapport owns this file byte-for-byte.
+# It requests SHA-bound local proof; it never runs repository build behavior.
+
+on:
+  workflow_call:
+    inputs:
+      identity:
+        description: "Stable Rapport signoff identity"
+        required: true
+        type: string
+
+permissions:
+  statuses: write
+
+jobs:
+  pending:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request local Rapport signoff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IDENTITY: ${{ inputs.identity }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api -X POST "repos/${REPO}/statuses/${SHA}" \
+            -f "context=${IDENTITY}" \
+            -f state=pending \
+            -f "description=run Rapport locally and publish proof" \
+            -f "target_url=${PR_URL}"

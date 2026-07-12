@@ -5,6 +5,43 @@ use super::domain::{BuildSignoff, ContextId};
 use crate::{CommandRunner, CommandSpec};
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 
+pub(super) const SHARED_PATH: &str = ".github/workflows/rapport-signoff.yml";
+
+const SHARED_CONTENTS: &str = r#"name: Rapport signoff request (reusable)
+
+# Rapport owns this file byte-for-byte.
+# It requests SHA-bound local proof; it never runs repository build behavior.
+
+on:
+  workflow_call:
+    inputs:
+      identity:
+        description: "Stable Rapport signoff identity"
+        required: true
+        type: string
+
+permissions:
+  statuses: write
+
+jobs:
+  pending:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request local Rapport signoff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IDENTITY: ${{ inputs.identity }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api -X POST "repos/${REPO}/statuses/${SHA}" \
+            -f "context=${IDENTITY}" \
+            -f state=pending \
+            -f "description=run Rapport locally and publish proof" \
+            -f "target_url=${PR_URL}"
+"#;
+
 pub(super) fn path(
     repo_root: &Utf8Path,
     context: &ContextId,
@@ -25,6 +62,14 @@ pub(super) fn check_name(context: &ContextId, signoff: &BuildSignoff) -> String 
         .collect::<Vec<_>>()
         .join(" ");
     format!("Rapport {context_name} Signoff {}", signoff.target())
+}
+
+pub(super) fn shared_path(repo_root: &Utf8Path) -> Utf8PathBuf {
+    repo_root.join(SHARED_PATH)
+}
+
+pub(super) fn shared_contents() -> &'static str {
+    SHARED_CONTENTS
 }
 
 fn title_case(value: &str) -> String {
@@ -53,6 +98,7 @@ pub(super) fn render(
     };
     let mut paths = vec![own_path];
     paths.extend(signoff.included_paths().iter().cloned());
+    paths.push(SHARED_PATH.to_owned());
     paths.sort();
     paths.dedup();
     let path_lines = paths
@@ -64,15 +110,9 @@ pub(super) fn render(
     let workflow_relative = workflow_path
         .strip_prefix(repo_root)
         .unwrap_or(&workflow_path);
-    let working_directory = if relative_directory.as_str().is_empty() {
-        "."
-    } else {
-        relative_directory.as_str()
-    };
     let name = check_name(context, signoff);
     format!(
-        "name: \"{name}\"\n\n# Rapport owns this file byte-for-byte.\n\non:\n  pull_request:\n    paths:\n{path_lines}\n      - \"{workflow_relative}\"\n\npermissions:\n  contents: read\n\njobs:\n  signoff:\n    name: \"{name}\"\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v6\n      - uses: extractions/setup-just@v3\n      - name: Run {target}\n        working-directory: \"{working_directory}\"\n        run: just {target}\n",
-        target = signoff.target()
+        "name: \"Request {name}\"\n\n# Rapport owns this file byte-for-byte.\n# It requests local proof for `{name}`; it never runs repository build behavior.\n\non:\n  pull_request:\n    paths:\n{path_lines}\n      - \"{workflow_relative}\"\n\npermissions:\n  statuses: write\n\nconcurrency:\n  group: ${{{{ github.workflow }}}}-${{{{ github.event.pull_request.number || github.ref }}}}\n  cancel-in-progress: true\n\njobs:\n  request:\n    if: github.event.pull_request.head.repo.full_name == github.repository\n    uses: ./.github/workflows/rapport-signoff.yml\n    with:\n      identity: \"{name}\"\n    secrets: inherit\n"
     )
 }
 
@@ -113,14 +153,26 @@ pub(super) fn validate_file(
     Ok(())
 }
 
+pub(super) fn validate_shared(fs: &impl FileSystem, repo_root: &Utf8Path) -> Result<(), Error> {
+    let path = shared_path(repo_root);
+    let actual = fs
+        .read_to_string(&path)
+        .map_err(|_| Error::WorkflowDrift(path.clone()))?;
+    if actual != shared_contents() {
+        return Err(Error::WorkflowDrift(path));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::render;
+    use super::{render, shared_contents};
     use crate::policy_context::domain::{BuildSignoff, ContextId};
     use claims::assert_ok;
     use rapport_files::Utf8Path;
 
     #[test]
+    /// When root signoff policy is checked in, its workflow requests the stable Context identity (CTX-002).
     fn checked_in_root_workflow_matches_the_context_contract() {
         let context = assert_ok!(ContextId::parse("ROOT"));
         let signoff = assert_ok!(BuildSignoff::try_new(
@@ -141,6 +193,15 @@ mod tests {
         assert_eq!(
             generated,
             include_str!("../../../../.github/workflows/rapport-root-signoff-ci.yml")
+        );
+    }
+
+    #[test]
+    /// When a request runs, the shared workflow asks for local proof without executing repository behavior (CTX-002).
+    fn checked_in_shared_workflow_requests_local_proof() {
+        assert_eq!(
+            shared_contents(),
+            include_str!("../../../../.github/workflows/rapport-signoff.yml")
         );
     }
 }

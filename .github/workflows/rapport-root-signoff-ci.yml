@@ -1,23 +1,26 @@
-name: "Rapport Root Signoff ci"
+name: "Request Rapport Root Signoff ci"
 
 # Rapport owns this file byte-for-byte.
+# It requests local proof for `Rapport Root Signoff ci`; it never runs repository build behavior.
 
 on:
   pull_request:
     paths:
       - "**"
+      - ".github/workflows/rapport-signoff.yml"
       - ".github/workflows/rapport-root-signoff-ci.yml"
 
 permissions:
-  contents: read
+  statuses: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  signoff:
-    name: "Rapport Root Signoff ci"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: extractions/setup-just@v3
-      - name: Run ci
-        working-directory: "."
-        run: just ci
+  request:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/rapport-signoff.yml
+    with:
+      identity: "Rapport Root Signoff ci"
+    secrets: inherit

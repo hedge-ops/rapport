@@ -51,6 +51,8 @@ pub enum Command {
     Ruleset(shared_ruleset::Cli),
     /// Manage active local work state.
     Work(work_ledger::Cli),
+    /// Manage the ordered sequence of development Action Tasks.
+    Develop(work_ledger::DevelopCli),
     /// Manage folder-local structured project context.
     #[command(
         about = "Manage folder-local structured project context.",
