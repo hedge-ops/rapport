@@ -1,19 +1,17 @@
 version = 1
-
+id = "ROOT"
 purpose = "Owns repository-wide Rapport workflow."
+next_ownership = 1
+next_boundary = 1
 
 [ruleset]
-id = "RAPPORT"
 includes = []
 
-[ownership]
-owns = []
-boundaries = []
-
-[[signoffs]]
-kind = "build"
-target = "ci"
-
-[[signoffs]]
-kind = "review"
+[review]
 minimum_grade = "A-"
+
+[[signoffs]]
+id = "ROOT_SIGNOFF_CI"
+target = "ci"
+stage = 0
+include = []

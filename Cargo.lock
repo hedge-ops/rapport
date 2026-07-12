@@ -761,6 +761,7 @@ dependencies = [
  "indoc",
  "nonempty",
  "pretty_assertions",
+ "rapport-command",
  "rapport-files",
  "rapport-prose",
  "rstest",

@@ -2,17 +2,14 @@ use crate::context::{Clock, CommandContext};
 use crate::runner::{CommandOutcome, CommandSpec};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
-use crate::{project_context, rules};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
-use std::collections::BTreeSet;
 use std::io::Write;
 use std::process::ExitCode;
 
 const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
 const PROJECT_CONTEXT_CHECK: &str = "Project Context";
-const RULE_PACK_CHECK: &str = "Rule packs";
 
 pub fn run<F, C, O, E>(
     arguments: Vec<String>,
@@ -35,7 +32,7 @@ where
     finish("doctor", arguments, context, result)
 }
 
-fn diagnose<F, C, O, E>(context: &CommandContext<'_, F, C, O, E>) -> DoctorReport
+fn diagnose<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> DoctorReport
 where
     F: FileSystem,
     C: Clock,
@@ -92,59 +89,18 @@ where
         )),
     }
 
-    checks.extend(project_context_checks(context));
     checks.push(
-        match crate::builtin_rules::validate_installation(context.fs, context.paths.repo_root()) {
-            Ok(count) => {
-                DoctorCheck::pass(RULE_PACK_CHECK, format!("validated {count} locked pack(s)"))
-            }
-            Err(error) => DoctorCheck::fail(RULE_PACK_CHECK, error.to_string()),
+        match crate::policy_context::doctor_all(
+            context.fs,
+            context.paths.repo_root(),
+            context.runner,
+        ) {
+            Ok(()) => DoctorCheck::pass(PROJECT_CONTEXT_CHECK, "validated Context policy"),
+            Err(error) => DoctorCheck::fail(PROJECT_CONTEXT_CHECK, error.to_string()),
         },
     );
 
     DoctorReport { checks }
-}
-
-fn project_context_checks<F, C, O, E>(context: &CommandContext<'_, F, C, O, E>) -> Vec<DoctorCheck>
-where
-    F: FileSystem,
-    C: Clock,
-    O: Write,
-    E: Write,
-{
-    let context_validation =
-        project_context::validate_repository(context.fs, context.paths.repo_root());
-    let rule_validation = rules::validate_repository(context.fs, &context.paths);
-    let problems = context_validation
-        .problem_details()
-        .chain(rule_validation.problem_details())
-        .map(ToString::to_string)
-        .collect::<BTreeSet<_>>();
-
-    if problems.is_empty() {
-        return vec![DoctorCheck::pass(
-            PROJECT_CONTEXT_CHECK,
-            format!(
-                "validated {}, {}, {}, {}, and {}",
-                file_count(context_validation.context_file_count(), "context.toml file"),
-                file_count(
-                    context_validation.embedded_ruleset_count(),
-                    "embedded ruleset"
-                ),
-                file_count(context_validation.signoff_count(), "signoff declaration"),
-                file_count(rule_validation.rule_file_count(), "standalone ruleset"),
-                file_count(
-                    context_validation.local_rule_count() + rule_validation.local_rule_count(),
-                    "locally declared rule"
-                )
-            ),
-        )];
-    }
-
-    problems
-        .into_iter()
-        .map(|problem| DoctorCheck::fail(PROJECT_CONTEXT_CHECK, problem))
-        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,14 +202,6 @@ fn origin_url_is_github(origin: &str) -> bool {
         || origin.starts_with("http://github.com/")
         || origin.starts_with("git@github.com:")
         || origin.starts_with("ssh://git@github.com/")
-}
-
-fn file_count(count: usize, noun: &str) -> String {
-    if count == 1 {
-        format!("{count} {noun}")
-    } else {
-        format!("{count} {noun}s")
-    }
 }
 
 fn finish<F, C, O, E>(

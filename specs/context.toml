@@ -1,8 +1,14 @@
 version = 1
+id = "SPECS"
 purpose = "Contains the canonical product requirements for Rapport."
-signoffs = []
-rule_includes = []
+next_ownership = 2
+next_boundary = 2
 
-[ownership]
-owns = ["Rapport lifecycle requirements, shared language, and known specification gaps."]
-boundaries = ["Implementation status and issue-specific plans remain outside requirement bodies."]
+[ownership.SPECS_OWNERSHIP_001]
+text = "Rapport lifecycle requirements, shared language, and known specification gaps."
+
+[boundaries.SPECS_BOUNDARY_001]
+text = "Implementation status and issue-specific plans remain outside requirement bodies."
+
+[ruleset]
+includes = []
