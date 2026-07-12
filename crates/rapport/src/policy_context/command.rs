@@ -996,7 +996,7 @@ fn signoff(
                 .context_mut()
                 .signoffs_mut()
                 .retain(|candidate| candidate.id() != signoff);
-            remove_signoff_state(fs, &repository, &record_path, &workflow_path)?;
+            remove_signoff_state(fs, repo_root, &repository, &record_path, &workflow_path)?;
             Ok(changed("removed Build signoff", repository.at(path)?))
         }
         SignoffAction::Repair { path, signoff } => repair(fs, repo_root, path, signoff),
@@ -1079,11 +1079,25 @@ fn repair(
         repo_root,
         signoff,
     );
-    fs.write_string(&workflow_path, contents)
+    let shared_path = workflow::shared_path(repo_root);
+    let snapshots = [snapshot(fs, &workflow_path)?, snapshot(fs, &shared_path)?];
+    let result = fs
+        .write_string(&shared_path, workflow::shared_contents())
         .map_err(|source| Error::Io {
-            path: workflow_path,
+            path: shared_path,
             source,
-        })?;
+        })
+        .and_then(|()| {
+            fs.write_string(&workflow_path, contents)
+                .map_err(|source| Error::Io {
+                    path: workflow_path,
+                    source,
+                })
+        });
+    if result.is_err() {
+        restore(fs, &snapshots);
+    }
+    result?;
     Ok(changed("repaired signoff workflow", record))
 }
 
@@ -1098,7 +1112,8 @@ fn write_signoff_state(
         .iter()
         .find(|record| record.path() == record_path)
         .ok_or(Error::InvalidPath)?;
-    let mut snapshots = vec![snapshot(fs, record_path)?];
+    let shared_path = workflow::shared_path(repo_root);
+    let mut snapshots = vec![snapshot(fs, record_path)?, snapshot(fs, &shared_path)?];
     for signoff in record.context().signoffs() {
         snapshots.push(snapshot(
             fs,
@@ -1107,6 +1122,11 @@ fn write_signoff_state(
     }
     let result = (|| {
         repository.save(fs, record_path)?;
+        fs.write_string(&shared_path, workflow::shared_contents())
+            .map_err(|source| Error::Io {
+                path: shared_path.clone(),
+                source,
+            })?;
         for signoff in record.context().signoffs() {
             let path = workflow::path(repo_root, record.context().id(), signoff);
             let contents = workflow::render(
@@ -1128,16 +1148,34 @@ fn write_signoff_state(
 
 fn remove_signoff_state(
     fs: &mut impl FileSystem,
+    repo_root: &Utf8Path,
     repository: &Repository,
     record_path: &Utf8Path,
     workflow_path: &Utf8Path,
 ) -> Result<(), Error> {
-    let snapshots = [snapshot(fs, record_path)?, snapshot(fs, workflow_path)?];
+    let shared_path = workflow::shared_path(repo_root);
+    let snapshots = [
+        snapshot(fs, record_path)?,
+        snapshot(fs, workflow_path)?,
+        snapshot(fs, &shared_path)?,
+    ];
     let result = (|| {
         repository.save(fs, record_path)?;
         if fs.is_file(workflow_path) {
             fs.remove_file(workflow_path).map_err(|source| Error::Io {
                 path: workflow_path.to_path_buf(),
+                source,
+            })?;
+        }
+        if repository_has_signoffs(repository) {
+            fs.write_string(&shared_path, workflow::shared_contents())
+                .map_err(|source| Error::Io {
+                    path: shared_path.clone(),
+                    source,
+                })?;
+        } else if fs.is_file(&shared_path) {
+            fs.remove_file(&shared_path).map_err(|source| Error::Io {
+                path: shared_path.clone(),
                 source,
             })?;
         }
@@ -1189,6 +1227,12 @@ fn doctor(
     repository.validate_included_path_existence(fs)?;
     let records = repository.descendants(path)?;
     let mut signoff_count = 0;
+    if records
+        .iter()
+        .any(|record| !record.context().signoffs().is_empty())
+    {
+        workflow::validate_shared(fs, repo_root)?;
+    }
     for record in &records {
         for signoff in record.context().signoffs() {
             workflow::validate_target(runner, record.directory(), signoff.target())?;
@@ -1236,6 +1280,19 @@ fn remove_context(
                 .map_err(|source| Error::Io { path, source })?;
         }
     }
+    let shared_path = workflow::shared_path(repo_root);
+    if repository_has_signoffs(&repository) {
+        fs.write_string(&shared_path, workflow::shared_contents())
+            .map_err(|source| Error::Io {
+                path: shared_path,
+                source,
+            })?;
+    } else if fs.is_file(&shared_path) {
+        fs.remove_file(&shared_path).map_err(|source| Error::Io {
+            path: shared_path,
+            source,
+        })?;
+    }
     Ok(format!(
         "# rapport context remove\n\n- `status` — removed\n- `context` — {}\n- `affected descendants` — {}",
         removed.context().id(),
@@ -1247,6 +1304,13 @@ fn remove_context(
                 .join(", ")
         )
     ))
+}
+
+fn repository_has_signoffs(repository: &Repository) -> bool {
+    repository
+        .records()
+        .iter()
+        .any(|record| !record.context().signoffs().is_empty())
 }
 
 fn mutate(

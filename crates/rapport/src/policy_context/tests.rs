@@ -58,6 +58,7 @@ fn succeeds(fs: &mut InMemoryFileSystem, args: &[&str]) -> String {
     clippy::too_many_lines,
     reason = "the sequential acceptance test makes the complete Phase 2 lifecycle auditable"
 )]
+/// When Context policy changes, its request workflow and shared local-proof contract remain exact (CTX-002).
 fn phase_two_context_policy_lifecycle() {
     let mut fs = InMemoryFileSystem::default();
     fs.add_directory("/repo/.git");
@@ -221,11 +222,17 @@ fn phase_two_context_policy_lifecycle() {
         ],
     );
     let workflow_path = "/repo/.github/workflows/rapport-app-signoff-ci.yml";
+    let shared_workflow_path = "/repo/.github/workflows/rapport-signoff.yml";
     let workflow = assert_ok!(fs.read_to_string(workflow_path));
-    assert!(workflow.contains("name: \"Rapport App Signoff ci\""));
-    assert!(workflow.contains("working-directory: \"app\""));
-    assert!(workflow.contains("run: just ci"));
+    assert!(workflow.contains("name: \"Request Rapport App Signoff ci\""));
+    assert!(workflow.contains("uses: ./.github/workflows/rapport-signoff.yml"));
+    assert!(workflow.contains("identity: \"Rapport App Signoff ci\""));
+    assert!(!workflow.contains("run: just ci"));
     assert!(workflow.contains("- \"other\""));
+    let shared_workflow = assert_ok!(fs.read_to_string(shared_workflow_path));
+    assert!(shared_workflow.contains("Request local Rapport signoff"));
+    assert!(shared_workflow.contains("state=pending"));
+    assert!(shared_workflow.contains("run Rapport locally and publish proof"));
 
     let effective = succeeds(&mut fs, &["context", "show", "app"]);
     assert!(effective.contains("`APP_RULE`"));
@@ -239,6 +246,10 @@ fn phase_two_context_policy_lifecycle() {
     assert!(!additional_trigger.contains("Application policy."));
 
     succeeds(&mut fs, &["context", "doctor", "app"]);
+    assert_ok!(fs.write_string(shared_workflow_path, "drift"));
+    let (code, _, err) = run(&mut fs, &["context", "doctor", "app"]);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(err.contains("missing or drifted"));
     assert_ok!(fs.write_string(workflow_path, "drift"));
     let (code, _, err) = run(&mut fs, &["context", "doctor", "app"]);
     assert_eq!(code, ExitCode::from(2));
@@ -282,6 +293,7 @@ fn phase_two_context_policy_lifecycle() {
         ],
     );
     assert!(!fs.is_file(workflow_path));
+    assert!(!fs.is_file(shared_workflow_path));
 
     succeeds(
         &mut fs,
