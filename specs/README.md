@@ -80,5 +80,5 @@ Implementation status and unresolved decisions belong in
 
 ### Integrate
 
-- [INT-001](./INT-001.md) — Integrate accepted work into the target branch
+- [INT-001](./INT-001.md) — Integrate prepared work into the target branch
 - [INT-002](./INT-002.md) — Resume an interrupted integration safely
