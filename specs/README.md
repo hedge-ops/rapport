@@ -20,10 +20,11 @@ build system, or infinitely configurable pipeline framework.
 Plan -> Develop -> Integrate -> Ship
 ```
 
-Plan turns intent into a durable request. Develop performs and records work until
-an exact committed candidate has the required proofs. Integrate moves that
-signed-off candidate onto the target branch. Ship delivers it until the change is
-live.
+Plan turns intent into a durable request. Develop performs and records work
+until an exact committed candidate is prepared with current build proof.
+Integrate creates its pull request, obtains independent review and required
+GitHub signoffs, and moves the signed-off candidate onto the target branch.
+Ship delivers it until the change is live.
 
 Plan and Ship are roadmap phases. The current specifications focus on Rules,
 Context, Work, Build, Review, and Integrate.
