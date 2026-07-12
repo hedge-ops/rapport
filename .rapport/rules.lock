@@ -1,6 +1,25 @@
 version = 1
 
-[[packs]]
-name = "rust"
-version = "1.0.0"
-digest = "f02b0bb10e8ef5af0b27e224e9cf9ddb00bca7260b3ed6f0e054f920142ce55b"
+[[rulesets]]
+id = "RUST_CODING"
+catalog_version = "1.0.0"
+path = "rust/coding.toml"
+digest = "0e1156f3126a71a919e909fe8f4b2a34bd5f0efa02b002e7402e5ed456902d83"
+
+[[rulesets]]
+id = "RUST_COMMENT"
+catalog_version = "1.0.0"
+path = "rust/comment.toml"
+digest = "6224e276b07f7c8e678051b5a5c9af8f0b53bf1e1b203d60a85bcb6551b3d1ab"
+
+[[rulesets]]
+id = "RUST_CRATE"
+catalog_version = "1.0.0"
+path = "rust/crate.toml"
+digest = "f2527898ce07a2bdf35e267f875127708fbc52542ceaa8bfb6ecf65cd22677ec"
+
+[[rulesets]]
+id = "RUST_TEST"
+catalog_version = "1.0.0"
+path = "rust/test.toml"
+digest = "45c45120f99e454fdf6fb6b800837dfa97ee624bc88135b15bf51ee30827ab2c"

@@ -1,3 +1,4 @@
+use crate::shared_ruleset;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rapport_files::Utf8PathBuf;
 
@@ -44,7 +45,10 @@ pub enum Command {
     /// Record Rapport usage in repository agent instructions.
     Init,
     /// Manage repository-owned standalone and embedded rulesets.
+    #[command(hide = true)]
     Rules(RulesArgs),
+    /// Define and compose shared repository standards.
+    Ruleset(shared_ruleset::Cli),
     /// Manage active local work state.
     Work(WorkArgs),
     /// Manage folder-local structured project context.

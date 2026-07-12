@@ -13,6 +13,7 @@ mod review;
 mod rules;
 mod ruleset;
 mod runner;
+mod shared_ruleset;
 mod signoff_contract;
 mod snapshot;
 mod state;
@@ -122,6 +123,7 @@ where
         Command::Doctor => doctor::run(argv, context),
         Command::Init => init::run(argv, context),
         Command::Rules(rules_args) => ruleset::run(&rules_args.command, argv, context),
+        Command::Ruleset(ruleset_args) => shared_ruleset::run(ruleset_args, context),
         Command::Work(work_args) => match &work_args.command {
             WorkCommand::Status => work::status(argv, context),
             WorkCommand::Start(start_args) => work::start(start_args, argv, context),
@@ -151,6 +153,7 @@ where
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use rapport_files::{InMemoryFileSystem, Utf8Path};
     use std::cell::RefCell;
     use std::collections::VecDeque;
@@ -915,6 +918,193 @@ prefer = { language = "rust", text = "prefer" }
         );
         assert_eq!(
             run_with_fs(&["context", "ruleset", "id", "set", ".", "REPO"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+    }
+
+    /// Phase 1 manages catalog and repository Rulesets through the public CLI grammar.
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the Phase 1 CLI acceptance test preserves one complete sequential lifecycle"
+    )]
+    fn shared_ruleset_cli_should_complete_the_phase_one_lifecycle() {
+        let mut fs = InMemoryFileSystem::default();
+
+        let (catalog_list_code, catalog_list, catalog_list_error) =
+            run_with_fs(&["ruleset", "catalog", "list"], &mut fs);
+        assert_eq!(catalog_list_code, ExitCode::SUCCESS);
+        assert!(
+            catalog_list.contains("`RUST_CRATE`"),
+            "expecting catalog list to include the Rust aggregate"
+        );
+        assert!(
+            catalog_list_error.is_empty(),
+            "expecting catalog list not to emit an error"
+        );
+
+        assert_eq!(
+            run_with_fs(&["ruleset", "catalog", "install", "RUST_CRATE"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(&["ruleset", "catalog", "update", "RUST_CRATE"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "ruleset",
+                    "catalog",
+                    "show",
+                    "RUST_CRATE",
+                    "--rule",
+                    "RUST_CODING_001"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "ruleset",
+                    "init",
+                    "CODE",
+                    "--purpose",
+                    "Shared coding expectations."
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "ruleset",
+                    "rule",
+                    "add",
+                    "CODE",
+                    "--id",
+                    "CODE_001",
+                    "--text",
+                    "Prefer explicit names.",
+                    "--rationale",
+                    "Names retain intent.",
+                    "--avoid-example",
+                    "let x = value;",
+                    "--avoid-language",
+                    "rust",
+                    "--prefer-example",
+                    "let person_count = value;",
+                    "--prefer-language",
+                    "rust",
+                    "--reference",
+                    "[Naming](https://example.com/naming)"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "ruleset",
+                    "rule",
+                    "update",
+                    "CODE",
+                    "--rule",
+                    "CODE_001",
+                    "--text",
+                    "Use explicit names.",
+                    "--clear-reference"
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "ruleset",
+                    "purpose",
+                    "set",
+                    "CODE",
+                    "--purpose",
+                    "Repository coding expectations."
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &[
+                    "ruleset",
+                    "init",
+                    "APP",
+                    "--purpose",
+                    "Application expectations."
+                ],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &["ruleset", "compose", "add", "APP", "--ruleset", "CODE"],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+
+        let (_, composition, _) = run_with_fs(&["ruleset", "compose", "list", "APP"], &mut fs);
+        let (_, shown_rule, _) =
+            run_with_fs(&["ruleset", "show", "APP", "--rule", "CODE_001"], &mut fs);
+        let (_, listed, _) = run_with_fs(&["ruleset", "list"], &mut fs);
+        assert!(
+            composition.contains("`CODE`"),
+            "expecting composition status to show the direct Ruleset"
+        );
+        assert!(
+            shown_rule.contains("Use explicit names."),
+            "expecting show to resolve a composed Rule"
+        );
+        assert!(
+            listed.contains("Repository coding expectations."),
+            "expecting list to show the updated Ruleset purpose"
+        );
+
+        assert_eq!(
+            run_with_fs(
+                &["ruleset", "compose", "remove", "APP", "--ruleset", "CODE"],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(
+                &["ruleset", "rule", "remove", "CODE", "--rule", "CODE_001"],
+                &mut fs
+            )
+            .0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(&["ruleset", "remove", "CODE"], &mut fs).0,
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run_with_fs(&["ruleset", "remove", "APP"], &mut fs).0,
             ExitCode::SUCCESS
         );
     }
