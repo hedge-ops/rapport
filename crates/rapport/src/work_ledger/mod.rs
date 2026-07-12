@@ -1,6 +1,7 @@
 //! Worktree-local Work and Task ledger.
 
 mod command;
+mod develop;
 mod domain;
 mod error;
 mod repository;
@@ -9,4 +10,5 @@ mod repository;
 mod tests;
 
 pub(crate) use command::{Cli, run};
+pub(crate) use develop::{Cli as DevelopCli, run as run_develop};
 pub(crate) use error::Error;

@@ -48,6 +48,8 @@ pub(super) struct Work {
     pub(super) starting_source: String,
     pub(super) starting_target: String,
     pub(super) latest_checkpoint: Option<String>,
+    #[serde(default)]
+    pub(super) development_sequence: Vec<String>,
     pub(super) next_task: u32,
     pub(super) created_at: String,
     pub(super) outcome: Option<String>,
@@ -79,6 +81,7 @@ impl Work {
             starting_source,
             starting_target,
             latest_checkpoint: None,
+            development_sequence: Vec::new(),
             next_task: 1,
             created_at,
             outcome: None,
@@ -109,6 +112,7 @@ impl fmt::Debug for Work {
             .field("starting_source", &"[redacted]")
             .field("starting_target", &"[redacted]")
             .field("has_checkpoint", &self.latest_checkpoint.is_some())
+            .field("development_tasks", &self.development_sequence.len())
             .field("next_task", &self.next_task)
             .field("created_at", &self.created_at)
             .field("has_outcome", &self.outcome.is_some())
@@ -266,8 +270,9 @@ impl Task {
         result: String,
         output: Option<String>,
     ) {
+        let started_at = self.payload.get("started_at").unwrap_or(&self.created_at);
         if let (Ok(started), Ok(completed)) = (
-            DateTime::parse_from_rfc3339(&self.created_at),
+            DateTime::parse_from_rfc3339(started_at),
             DateTime::parse_from_rfc3339(&at),
         ) {
             self.payload.insert(
@@ -284,6 +289,10 @@ impl Task {
         self.result = Some(result);
         self.output = output;
         self.continuation = None;
+    }
+
+    pub(super) fn is_develop_action(&self) -> bool {
+        self.kind == "action" && self.workflow == Workflow::Develop
     }
 }
 

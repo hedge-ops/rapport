@@ -1,9 +1,9 @@
-#[expect(
+#[allow(
     dead_code,
-    reason = "Phase 4 will reconnect Build helpers to the new Work Task ledger"
+    reason = "Phase 5 will reconnect Build helpers to the new Work Task ledger"
 )]
 mod build;
-#[expect(
+#[allow(
     dead_code,
     reason = "the Phase 1 catalog still contains compatibility helpers until Init is rebuilt"
 )]
@@ -16,23 +16,23 @@ mod integrate;
 mod paths;
 mod policy_context;
 mod prime;
-#[expect(
+#[allow(
     dead_code,
     reason = "later phases still consume a narrow read-only slice of the replaced Context model"
 )]
 mod project_context;
 mod repository_files;
-#[expect(
+#[allow(
     dead_code,
     reason = "Phase 6 will reconnect Review helpers to the new Work Task ledger"
 )]
 mod review;
-#[expect(
+#[allow(
     dead_code,
     reason = "Phase 6 will replace the legacy Work Rules projection with policy snapshots"
 )]
 mod rules;
-#[expect(
+#[allow(
     dead_code,
     reason = "later phase consumers still use the legacy Rules projection during the rewrite"
 )]
@@ -44,7 +44,7 @@ mod snapshot;
 mod state;
 mod telemetry;
 mod view;
-#[expect(
+#[allow(
     dead_code,
     reason = "later phases still consume legacy Work views until their Task migrations"
 )]
@@ -155,6 +155,7 @@ where
         Command::Rules(rules_args) => ruleset::run(&rules_args.command, argv, context),
         Command::Ruleset(ruleset_args) => shared_ruleset::run(ruleset_args, context),
         Command::Work(work_args) => work_ledger::run(work_args, context),
+        Command::Develop(develop_args) => work_ledger::run_develop(develop_args, context),
         Command::Context(context_args) => policy_context::run(context_args, context),
         Command::Build(build_args) => build::run(build_args, argv, context),
         Command::Review(review_args) => match &review_args.command {

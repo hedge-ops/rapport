@@ -29,6 +29,18 @@ pub(crate) enum Error {
     TaskIdExhausted,
     #[error("Task `{0}` was not found")]
     MissingTask(String),
+    #[error("Task `{0}` is not a pending Develop Action Task")]
+    TaskNotPending(String),
+    #[error("Task `{0}` is not a running Develop Action Task")]
+    TaskNotRunning(String),
+    #[error("another Develop Action Task is already running")]
+    DevelopTaskRunning,
+    #[error("Work cannot complete while Develop is incomplete")]
+    DevelopIncomplete,
+    #[error("a title or description update is required")]
+    EmptyTaskUpdate,
+    #[error("the before/after position must name a Develop Action Task")]
+    InvalidTaskPosition,
     #[error("Task filter `{0}` is invalid")]
     InvalidTaskFilter(String),
     #[error("another {0} Task is already active")]

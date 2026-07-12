@@ -1,6 +1,7 @@
 //! Phase 3 Work CLI and workflow operations.
 
 use super::Error;
+use super::develop;
 use super::domain::{RequestKind, RequestSource, Task, TaskStatus, Work, Workflow};
 use super::repository::Store;
 use crate::context::{Clock, CommandContext};
@@ -337,11 +338,16 @@ where
         changes.paths().iter().map(Utf8PathBuf::as_path),
     )?;
     let operation = git.operation(&repository)?;
+    let develop_state = if develop::is_complete(&work, &tasks, &live, operation) {
+        "complete"
+    } else {
+        "incomplete"
+    };
     let build_proof = workflow_state(&tasks, Workflow::Build);
     let review_proof = workflow_state(&tasks, Workflow::Review);
     let blockers = integration_blockers(&work, &tasks, &live, operation);
-    let next = select_next(&tasks).map_or_else(
-        || next_workflow(&work, &live),
+    let next = select_next(&work, &tasks).map_or_else(
+        || next_workflow(&work, &tasks, &live, operation),
         |task| {
             task.continuation
                 .clone()
@@ -349,7 +355,7 @@ where
         },
     );
     Ok(format!(
-        "# rapport work status\n\n- `work` — {}\n- `title` — {}\n- `description` — {}\n- `request` — {:?} {}\n- `source` — {} @ {}\n- `current branch` — {}\n- `target` — {} @ {}\n- `starting source` — {}\n- `starting target` — {}\n- `latest checkpoint` — {}\n- `contains target` — {}\n- `staged` — {}\n- `unstaged` — {}\n- `untracked` — {}\n- `conflicted` — {}\n- `operation` — {}\n- `candidate files` — {}\n- `required signoffs` — {}\n- `tasks` — {}\n- `task state` — {}\n- `Build proof` — {}\n- `Review proof` — {}\n- `integration blockers` — {}\n- `next` — `{}`",
+        "# rapport work status\n\n- `work` — {}\n- `title` — {}\n- `description` — {}\n- `request` — {:?} {}\n- `source` — {} @ {}\n- `current branch` — {}\n- `target` — {} @ {}\n- `starting source` — {}\n- `starting target` — {}\n- `latest checkpoint` — {}\n- `contains target` — {}\n- `staged` — {}\n- `unstaged` — {}\n- `untracked` — {}\n- `conflicted` — {}\n- `operation` — {}\n- `candidate files` — {}\n- `required signoffs` — {}\n- `tasks` — {}\n- `task state` — {}\n- `Develop` — {}\n- `Build proof` — {}\n- `Review proof` — {}\n- `integration blockers` — {}\n- `next` — `{}`",
         work.id,
         work.title,
         work.description,
@@ -389,6 +395,7 @@ where
         ),
         tasks.len(),
         task_state(&tasks),
+        develop_state,
         build_proof,
         review_proof,
         blockers,
@@ -433,16 +440,17 @@ where
             .map(|task| render_task(&work, task))
             .ok_or_else(|| Error::MissingTask(id.clone())),
         TaskAction::Next => {
-            if let Some(task) = select_next(&tasks) {
+            if let Some(task) = select_next(&work, &tasks) {
                 return Ok(render_task(&work, task));
             }
             let (git, repository) = git_repository(&context.repo_root)?;
             let live = git.status(&repository)?;
+            let operation = git.operation(&repository)?;
             Ok(format!(
                 "# rapport work task next\n\n- `work` — {}\n- `description` — {}\n- `next workflow` — `{}`",
                 work.title,
                 work.description,
-                next_workflow(&work, &live)
+                next_workflow(&work, &tasks, &live, operation)
             ))
         }
     }
@@ -814,6 +822,7 @@ where
             );
             action.related.push(tasks[index].id.clone());
             tasks[index].related.push(action.id.clone());
+            work.development_sequence.push(action.id.clone());
             store.save_task(context.fs, &tasks[index])?;
             store.save_work_and_task(context.fs, &work, &action)?;
             Err(Error::Git(error))
@@ -1187,8 +1196,11 @@ where
         if !live.is_clean() {
             return Err(Error::DirtyWorktree);
         }
-        if work.latest_checkpoint.as_deref() != Some(live.head().as_str()) {
+        if effective_checkpoint(&work) != live.head().as_str() {
             return Err(Error::UncheckpointedHead);
+        }
+        if !develop::is_complete(&work, &tasks, &live, None) {
+            return Err(Error::DevelopIncomplete);
         }
     }
     work.outcome = Some(format!(
@@ -1209,7 +1221,7 @@ where
     ))
 }
 
-fn select_next(tasks: &[Task]) -> Option<&Task> {
+fn select_next<'task>(work: &Work, tasks: &'task [Task]) -> Option<&'task Task> {
     tasks
         .iter()
         .filter(|task| !task.status.is_terminal())
@@ -1221,18 +1233,38 @@ fn select_next(tasks: &[Task]) -> Option<&Task> {
                 TaskStatus::Pending => 3,
                 TaskStatus::Passed | TaskStatus::Failed | TaskStatus::Cancelled => 4,
             };
-            (priority, task.id.as_str())
+            let order = if task.is_develop_action() {
+                work.development_sequence
+                    .iter()
+                    .position(|id| id == &task.id)
+                    .and_then(|index| u32::try_from(index).ok())
+                    .unwrap_or(u32::MAX)
+            } else {
+                u32::MAX
+            };
+            (priority, order, task.id.as_str())
         })
 }
 
-fn next_workflow(work: &Work, live: &WorktreeStatus) -> String {
+fn next_workflow(
+    work: &Work,
+    tasks: &[Task],
+    live: &WorktreeStatus,
+    operation: Option<Operation>,
+) -> String {
+    if let Some(failed) = develop::unresolved_failure(work, tasks) {
+        return format!(
+            "rapport develop task add --caused-by {} --title <TITLE> --description <DESCRIPTION>",
+            failed.id
+        );
+    }
     let checkpoint = work
         .latest_checkpoint
         .as_deref()
         .unwrap_or(&work.starting_source);
     if !live.all_changed_paths().is_empty() || checkpoint != live.head().as_str() {
         "rapport work checkpoint start".to_owned()
-    } else if work.latest_checkpoint.as_deref() == Some(live.head().as_str()) {
+    } else if develop::is_complete(work, tasks, live, operation) {
         "rapport build".to_owned()
     } else {
         "make the requested changes, then rapport work checkpoint start".to_owned()
@@ -1351,11 +1383,14 @@ fn integration_blockers(
     if operation.is_some() {
         blockers.push("source-control operation active");
     }
-    if work.latest_checkpoint.as_deref() != Some(live.head().as_str()) {
+    if effective_checkpoint(work) != live.head().as_str() {
         blockers.push("source HEAD is not the latest checkpoint");
     }
     if tasks.iter().any(|task| !task.status.is_terminal()) {
         blockers.push("nonterminal Tasks remain");
+    }
+    if !develop::is_complete(work, tasks, live, operation) {
+        blockers.push("Develop incomplete");
     }
     if !tasks
         .iter()
@@ -1370,6 +1405,12 @@ fn integration_blockers(
         blockers.push("Review proof missing");
     }
     none(&blockers.join("; "))
+}
+
+fn effective_checkpoint(work: &Work) -> &str {
+    work.latest_checkpoint
+        .as_deref()
+        .unwrap_or(&work.starting_source)
 }
 
 fn required(value: String) -> Result<String, Error> {
