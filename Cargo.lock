@@ -755,6 +755,7 @@ name = "rapport"
 version = "0.4.2"
 dependencies = [
  "chrono",
+ "claims",
  "clap",
  "dprint-plugin-markdown",
  "indoc",
@@ -762,9 +763,11 @@ dependencies = [
  "pretty_assertions",
  "rapport-files",
  "rapport-prose",
+ "rstest",
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
  "toml",
  "toml_edit",
 ]
