@@ -1,0 +1,21 @@
+[package]
+name = "rapport-git"
+description = "Git repository semantics for Rapport."
+keywords = ["git", "repository", "diff", "cli", "workflow"]
+categories = ["development-tools"]
+readme = "README.md"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+rapport-command = { path = "../rapport-command", version = "0.1.0" }
+rapport-files = { path = "../rapport-files", version = "0.2.0" }
+
+[dev-dependencies]
+
+[lints]
+workspace = true
