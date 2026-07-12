@@ -1,0 +1,19 @@
+[package]
+name = "rapport-command"
+description = "Run external tools with bounded concurrency and machine-local resource coordination."
+keywords = ["command", "process", "concurrency", "cli", "workflow"]
+categories = ["command-line-interface", "development-tools"]
+readme = "README.md"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

@@ -770,11 +770,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapport-command"
+version = "0.1.0"
+
+[[package]]
 name = "rapport-files"
 version = "0.2.0"
 dependencies = [
  "camino",
  "claims",
+]
+
+[[package]]
+name = "rapport-git"
+version = "0.1.0"
+dependencies = [
+ "rapport-command",
+ "rapport-files",
 ]
 
 [[package]]
