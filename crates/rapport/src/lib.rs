@@ -1,6 +1,6 @@
 #[allow(
     dead_code,
-    reason = "Phase 5 will reconnect Build helpers to the new Work Task ledger"
+    reason = "later phases still consume legacy Build proof views during the ledger rewrite"
 )]
 mod build;
 #[allow(
@@ -157,7 +157,7 @@ where
         Command::Work(work_args) => work_ledger::run(work_args, context),
         Command::Develop(develop_args) => work_ledger::run_develop(develop_args, context),
         Command::Context(context_args) => policy_context::run(context_args, context),
-        Command::Build(build_args) => build::run(build_args, argv, context),
+        Command::Build(build_args) => work_ledger::run_build(build_args, context),
         Command::Review(review_args) => match &review_args.command {
             ReviewCommand::Start(start_args) => review::start(start_args, argv, context),
             ReviewCommand::Complete(complete_args) => {
@@ -174,9 +174,9 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use rapport_files::{InMemoryFileSystem, Utf8Path};
-    use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::io;
+    use std::sync::Mutex;
 
     #[derive(Debug)]
     struct FixedClock;
@@ -235,15 +235,15 @@ mod tests {
 
     #[derive(Debug)]
     struct FakeRunner {
-        outcomes: RefCell<VecDeque<io::Result<CommandOutcome>>>,
-        calls: RefCell<Vec<(CommandSpec, Utf8PathBuf)>>,
+        outcomes: Mutex<VecDeque<io::Result<CommandOutcome>>>,
+        calls: Mutex<Vec<(CommandSpec, Utf8PathBuf)>>,
     }
 
     impl FakeRunner {
         fn with_outcomes(outcomes: impl IntoIterator<Item = io::Result<CommandOutcome>>) -> Self {
             Self {
-                outcomes: RefCell::new(outcomes.into_iter().collect()),
-                calls: RefCell::new(Vec::new()),
+                outcomes: Mutex::new(outcomes.into_iter().collect()),
+                calls: Mutex::new(Vec::new()),
             }
         }
 
@@ -264,7 +264,7 @@ mod tests {
         }
 
         fn calls(&self) -> Vec<(CommandSpec, Utf8PathBuf)> {
-            self.calls.borrow().clone()
+            self.calls.lock().unwrap().clone()
         }
     }
 
@@ -275,9 +275,10 @@ mod tests {
             cwd: &rapport_files::Utf8Path,
         ) -> io::Result<CommandOutcome> {
             self.calls
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push((spec.clone(), cwd.to_path_buf()));
-            self.outcomes.borrow_mut().pop_front().unwrap()
+            self.outcomes.lock().unwrap().pop_front().unwrap()
         }
     }
 
@@ -740,183 +741,6 @@ mod tests {
             1
         );
         assert_eq!(events(&fs).len(), 2);
-    }
-
-    #[test]
-    fn build_runs_for_all_work_paths_and_updates_state() {
-        let mut fs = InMemoryFileSystem::default();
-        add_active_work_with_paths(
-            &mut fs,
-            &["crates/rapport/src/lib.rs", "crates/rapport/src/work.rs"],
-        );
-        add_root_signoff(&mut fs, "ci");
-        let runner = build_runner(successful_outcome("checked\n"));
-
-        let (code, out, err) = run_with_runner(&["build"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("status `pass`"));
-        assert!(out.contains("`just ci`"));
-        assert!(out.contains("crates/rapport/src/lib.rs"));
-        assert!(out.contains("crates/rapport/src/work.rs"));
-        assert!(out.contains("stdout: 8 bytes"));
-        assert!(!out.contains("checked"));
-        assert!(out.contains("rapport integrate"));
-        assert!(!out.contains("rapport review"));
-        assert_eq!(err, "");
-        assert_eq!(
-            runner.calls().last().cloned(),
-            Some((CommandSpec::new("just", ["ci"]), Utf8PathBuf::from("/repo")))
-        );
-        let state = load_state(&fs);
-        let build = state.build.unwrap();
-
-        assert_eq!(build.status, "pass");
-        assert_eq!(build.at.as_deref(), Some("2026-07-07T23:00:00Z"));
-        assert_eq!(build.summary.as_deref(), Some("1 typed build operation(s)"));
-        assert_eq!(state.builds["root-build-ci"].status, OperationStatus::Pass);
-        let events = events(&fs);
-
-        assert_eq!(events[0].command, "build");
-        assert_eq!(events[0].outcome, CommandEventOutcome::Success);
-    }
-
-    #[test]
-    fn build_runs_for_targeted_paths_inside_current_work() {
-        let mut fs = InMemoryFileSystem::default();
-        add_active_work_with_paths(
-            &mut fs,
-            &["crates/rapport/src/lib.rs", "crates/rapport/src/work.rs"],
-        );
-        add_root_signoff(&mut fs, "ci");
-        let runner = build_runner(successful_outcome("checked targeted path\n"));
-
-        let (code, out, err) =
-            run_with_runner(&["build", "crates/rapport/src/work.rs"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("crates/rapport/src/work.rs"));
-        assert!(!out.contains("crates/rapport/src/lib.rs"));
-        assert_eq!(err, "");
-        let build = load_state(&fs).build.unwrap();
-
-        assert_eq!(build.summary.as_deref(), Some("1 typed build operation(s)"));
-    }
-
-    #[test]
-    fn build_rejects_paths_outside_current_work() {
-        let mut fs = InMemoryFileSystem::default();
-        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
-        let runner = FakeRunner::successful("must not run");
-
-        let (code, out, err) =
-            run_with_runner(&["build", "crates/rapport/src/work.rs"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::from(2));
-        assert_eq!(out, "");
-        assert!(err.contains("not part of the current work"));
-        assert!(err.contains("rapport work add path <path>"));
-        assert!(load_state(&fs).build.is_none());
-        assert!(runner.calls().is_empty());
-        let event = first_event(&fs);
-
-        assert_eq!(event.command, "build");
-        assert_eq!(event.outcome, CommandEventOutcome::Failure);
-    }
-
-    #[test]
-    fn build_rejects_parent_traversal_and_scope_widening() {
-        for requested in ["app/../other", "app"] {
-            let mut fs = InMemoryFileSystem::default();
-            add_active_work_with_paths(&mut fs, &["app/one.rs"]);
-            add_root_signoff(&mut fs, "ci");
-            let runner = FakeRunner::successful("must not run");
-
-            let (code, out, err) = run_with_runner(&["build", requested], &mut fs, &runner);
-
-            assert_eq!(code, ExitCode::from(2));
-            assert_eq!(out, "");
-            assert!(
-                err.contains("outside the repository")
-                    || err.contains("not part of the current work"),
-                "{err}"
-            );
-            assert!(runner.calls().is_empty());
-            assert!(load_state(&fs).builds.is_empty());
-        }
-    }
-
-    #[test]
-    fn build_records_command_failure() {
-        let mut fs = InMemoryFileSystem::default();
-        add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);
-        add_root_signoff(&mut fs, "ci");
-        let runner = build_runner(CommandOutcome {
-            success: false,
-            stdout: String::new(),
-            stderr: String::from("tests failed\n"),
-        });
-
-        let (code, out, err) = run_with_runner(&["build"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::from(2));
-        assert_eq!(out, "");
-        assert!(err.contains("status `fail`"));
-        assert!(err.contains("stderr: 13 bytes"));
-        assert!(!err.contains("tests failed"));
-        let build = load_state(&fs).build.unwrap();
-
-        assert_eq!(build.status, "fail");
-        assert_eq!(build.summary.as_deref(), Some("1 typed build operation(s)"));
-        let events = events(&fs);
-
-        assert_eq!(events[0].command, "build");
-        assert_eq!(events[0].outcome, CommandEventOutcome::Failure);
-    }
-
-    #[test]
-    fn successful_build_guides_to_a_required_review() {
-        let mut fs = InMemoryFileSystem::default();
-        add_active_work_with_paths(&mut fs, &["app/file.rs"]);
-        fs.write_string(
-            "/repo/context.toml",
-            r#"version = 1
-purpose = "Repository"
-
-[[signoffs]]
-kind = "build"
-target = "ci"
-
-[[signoffs]]
-kind = "review"
-minimum_grade = "A-"
-"#,
-        )
-        .unwrap();
-
-        let (code, out, err) = run_with_runner(
-            &["build"],
-            &mut fs,
-            &build_runner(successful_outcome("checked\n")),
-        );
-
-        assert_eq!(code, ExitCode::SUCCESS, "{err}");
-        assert_eq!(err, "");
-        assert!(out.contains("rapport review"));
-        assert!(!out.contains("rapport integrate"));
-    }
-
-    #[test]
-    fn build_requires_active_work() {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = FakeRunner::successful("must not run");
-
-        let (code, out, err) = run_with_runner(&["build"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::from(2));
-        assert_eq!(out, "");
-        assert!(err.contains("No active work state found"));
-        assert!(runner.calls().is_empty());
     }
 
     #[test]
@@ -2453,17 +2277,6 @@ summary = "no signoffs configured"
                 r#"{"statuses":[{"context":"signoff: root-build-shared","state":"success"},{"context":"signoff: root-build-review","state":"success"}]}"#,
         ));
         FakeRunner::with_outcomes(outcomes)
-    }
-
-    fn build_runner(outcome: CommandOutcome) -> FakeRunner {
-        FakeRunner::with_outcomes([
-            successful_result("head123\n"),
-            successful_result("origin/main\n"),
-            successful_result("base123\n"),
-            successful_result(""),
-            successful_result(""),
-            Ok(outcome),
-        ])
     }
 
     fn build_signoff_runner(diff: &str, outcome: CommandOutcome) -> FakeRunner {

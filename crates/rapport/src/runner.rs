@@ -57,7 +57,7 @@ impl std::fmt::Debug for CommandOutcome {
 
 /// Runs external programs. Production code uses [`RealCommandRunner`];
 /// tests inject a fake.
-pub trait CommandRunner {
+pub trait CommandRunner: Send + Sync {
     /// Run the program described by `spec` inside `cwd`, capturing output.
     ///
     /// # Errors

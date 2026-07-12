@@ -203,6 +203,85 @@ impl FromStr for Workflow {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum BuildMode {
+    Feedback,
+    Acceptance,
+}
+
+impl fmt::Display for BuildMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Feedback => "feedback",
+            Self::Acceptance => "acceptance",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum BuildOperationStatus {
+    Waiting,
+    Running,
+    Blocked,
+    Passed,
+    Failed,
+}
+
+impl fmt::Display for BuildOperationStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Waiting => "waiting",
+            Self::Running => "running",
+            Self::Blocked => "blocked",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct GitState {
+    pub(super) head: String,
+    pub(super) staged: Vec<String>,
+    pub(super) unstaged: Vec<String>,
+    pub(super) untracked: Vec<String>,
+    pub(super) conflicted: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct BuildOperation {
+    pub(super) id: String,
+    pub(super) context: Option<String>,
+    pub(super) working_directory: String,
+    pub(super) target: String,
+    pub(super) triggers: Vec<String>,
+    pub(super) identity: Option<String>,
+    pub(super) stage: u32,
+    pub(super) resource_group: Option<String>,
+    pub(super) contract_digest: Option<String>,
+    pub(super) status: BuildOperationStatus,
+    pub(super) started_at: Option<String>,
+    pub(super) completed_at: Option<String>,
+    pub(super) duration_seconds: Option<u64>,
+    pub(super) exit_status: Option<i32>,
+    pub(super) stdout: String,
+    pub(super) stderr: String,
+    pub(super) proof: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct BuildTask {
+    pub(super) mode: BuildMode,
+    pub(super) candidate: String,
+    pub(super) policy_digest: Option<String>,
+    pub(super) initial_git: GitState,
+    pub(super) final_git: Option<GitState>,
+    pub(super) operations: Vec<BuildOperation>,
+    pub(super) proof: bool,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Task {
     pub(super) version: u16,
@@ -224,6 +303,8 @@ pub(super) struct Task {
     pub(super) continuation: Option<String>,
     #[serde(default)]
     pub(super) payload: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) build: Option<BuildTask>,
 }
 
 impl Task {
@@ -260,6 +341,7 @@ impl Task {
             output: None,
             continuation,
             payload: BTreeMap::new(),
+            build: None,
         }
     }
 
@@ -316,6 +398,7 @@ impl fmt::Debug for Task {
             .field("has_output", &self.output.is_some())
             .field("continuation", &self.continuation)
             .field("payload_keys", &self.payload.keys().collect::<Vec<_>>())
+            .field("has_build", &self.build.is_some())
             .finish()
     }
 }

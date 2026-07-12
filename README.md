@@ -57,7 +57,10 @@ rapport rules include add <ruleset-id> <included-id>
 rapport rules rule add <ruleset-id> --id <rule-id> --text "..."
 rapport context ruleset id set <path> <ruleset-id>
 rapport work task address REV-001 --summary "what changed"
-rapport build [path...]
+rapport build                              # acceptance proof for active Work; otherwise just dev
+rapport build <path>                       # ad hoc just dev feedback
+rapport build <path> --target <just-target>
+rapport build status [task-id]
 rapport review start [path...]
 rapport review start --json [path...] # optional machine-readable request
 rapport review complete --result /tmp/review-result.json

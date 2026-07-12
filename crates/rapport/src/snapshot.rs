@@ -349,19 +349,19 @@ impl Error for SnapshotError {}
 mod tests {
     use super::*;
     use rapport_files::InMemoryFileSystem;
-    use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     struct FakeRunner {
-        outcomes: RefCell<VecDeque<CommandOutcome>>,
-        calls: RefCell<Vec<CommandSpec>>,
+        outcomes: Mutex<VecDeque<CommandOutcome>>,
+        calls: Mutex<Vec<CommandSpec>>,
     }
 
     impl FakeRunner {
         fn snapshot_with_mode(mode: &str) -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
-                outcomes: RefCell::new(
+                calls: Mutex::new(Vec::new()),
+                outcomes: Mutex::new(
                     [
                         successful("head123\n"),
                         successful(""),
@@ -381,8 +381,8 @@ mod tests {
 
         fn untracked_new_file(patch: &str) -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
-                outcomes: RefCell::new(
+                calls: Mutex::new(Vec::new()),
+                outcomes: Mutex::new(
                     vec![
                         successful("head123\n"),
                         successful(""),
@@ -400,8 +400,8 @@ mod tests {
 
         fn committed_new_file(patch: &str) -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
-                outcomes: RefCell::new(
+                calls: Mutex::new(Vec::new()),
+                outcomes: Mutex::new(
                     vec![successful("head456\n"), successful(patch), successful("")].into(),
                 ),
             }
@@ -409,8 +409,8 @@ mod tests {
 
         fn empty_untracked(path: &str) -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
-                outcomes: RefCell::new(
+                calls: Mutex::new(Vec::new()),
+                outcomes: Mutex::new(
                     vec![
                         successful("head123\n"),
                         successful(""),
@@ -424,22 +424,22 @@ mod tests {
 
         fn clean() -> Self {
             Self {
-                calls: RefCell::new(Vec::new()),
-                outcomes: RefCell::new(
+                calls: Mutex::new(Vec::new()),
+                outcomes: Mutex::new(
                     vec![successful("head123\n"), successful(""), successful("")].into(),
                 ),
             }
         }
 
         fn calls(&self) -> Vec<CommandSpec> {
-            self.calls.borrow().clone()
+            self.calls.lock().unwrap().clone()
         }
     }
 
     impl CommandRunner for FakeRunner {
         fn run(&self, spec: &CommandSpec, _cwd: &Utf8Path) -> io::Result<CommandOutcome> {
-            self.calls.borrow_mut().push(spec.clone());
-            Ok(self.outcomes.borrow_mut().pop_front().unwrap())
+            self.calls.lock().unwrap().push(spec.clone());
+            Ok(self.outcomes.lock().unwrap().pop_front().unwrap())
         }
     }
 
