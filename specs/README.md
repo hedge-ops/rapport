@@ -14,17 +14,31 @@ It favors convention over configuration and one excellent default over support
 for every possible process. Rapport is not a generic DAG engine, ticket tracker,
 build system, or infinitely configurable pipeline framework.
 
+Rapport automates mechanics so the human can stay focused on intent, code, and
+risk. An agent may accept corrective findings and perform more work; dismissing
+a finding or overriding quality policy requires human direction. The pull
+request puts the exact accepted candidate and its evidence in front of the
+human to read without adding a duplicate approval solely to record that reading.
+
+Rapport proof is a traceability and consistency mechanism under a trusted local
+operator and agent host. It prevents accidental reuse of evidence for the wrong
+candidate or policy; it is not a tamper-resistant security attestation.
+
 ## Lifecycle
 
 ```text
-Plan -> Develop -> Integrate -> Ship
+Plan -> Develop -> Build -> Review -> Integrate -> Ship
 ```
 
 Plan turns intent into a durable request. Develop performs and records work
-until an exact committed candidate is prepared with current build proof.
-Integrate creates its pull request, obtains independent review and required
-GitHub signoffs, and moves the signed-off candidate onto the target branch.
-Ship delivers it until the change is live.
+until there is one exact committed candidate. Build obtains current executable
+proof for that candidate. Review independently evaluates the candidate against
+its intent and effective repository policy. Integrate publishes the accepted
+candidate, creates its pull request, verifies required GitHub build signoffs,
+and moves it onto the target branch. Ship delivers it until the change is live.
+
+Work is the durable local ledger spanning Develop, Build, Review, and Integrate.
+It is not a separate lifecycle phase.
 
 Plan and Ship are roadmap phases. The current specifications focus on Rules,
 Context, Work, Build, Review, and Integrate.
@@ -76,7 +90,7 @@ Implementation status and unresolved decisions belong in
 ### Review
 
 - [REV-001](./REV-001.md) — Review work in progress
-- [REV-002](./REV-002.md) — Sign off a pull request through independent review
+- [REV-002](./REV-002.md) — Accept an exact candidate through independent review
 
 ### Integrate
 
