@@ -2,6 +2,18 @@
 
 This directory contains the canonical product requirements for Rapport.
 
+## Product Philosophy
+
+Rapport provides an opinionated golden path for developing software: repository-
+owned policy, explicit Context, frequent Git checkpoints, fast local builds,
+independent review, proof bound to exact commits, and a conventional path to
+the target branch.
+
+If a developer works this way, Rapport should make the workflow feel effortless.
+It favors convention over configuration and one excellent default over support
+for every possible process. Rapport is not a generic DAG engine, ticket tracker,
+build system, or infinitely configurable pipeline framework.
+
 ## Lifecycle
 
 ```text

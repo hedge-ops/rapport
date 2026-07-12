@@ -60,12 +60,30 @@ other rulesets by stable ID.
 ## Task
 
 A durable actionable obligation in Work, including its origin, status,
-attempts, and result.
+attempts, and result. Tasks may be ordered to keep the next action clear, but
+they do not form a dependency graph.
+
+## Attempt
+
+One execution of a task, build, or review with a unique ID. Its evidence records
+the relevant Git commit and whether repository changes were present.
+
+## Checkpoint
+
+An ordinary Git commit that preserves a coherent development state and is
+recorded in the Work log. Git remains the source of truth whether Rapport or the
+developer created the commit.
 
 ## Build
 
 Execution of an explicit repository-owned operation through Rapport. A build
 can provide development feedback or proof for an exact committed candidate.
+
+## Dirty State
+
+A repository state with staged, unstaged, or relevant untracked changes. Work
+can retain attempts made in dirty state as history and feedback, but those
+attempts cannot sign off the underlying Git commit.
 
 ## Review
 
