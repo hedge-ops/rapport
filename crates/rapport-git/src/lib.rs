@@ -87,6 +87,7 @@ pub struct WorktreeStatus {
     staged: BTreeSet<Utf8PathBuf>,
     unstaged: BTreeSet<Utf8PathBuf>,
     untracked: BTreeSet<Utf8PathBuf>,
+    conflicted: BTreeSet<Utf8PathBuf>,
 }
 
 impl WorktreeStatus {
@@ -116,8 +117,16 @@ impl WorktreeStatus {
     }
 
     #[must_use]
+    pub fn conflicted(&self) -> &BTreeSet<Utf8PathBuf> {
+        &self.conflicted
+    }
+
+    #[must_use]
     pub fn is_clean(&self) -> bool {
-        self.staged.is_empty() && self.unstaged.is_empty() && self.untracked.is_empty()
+        self.staged.is_empty()
+            && self.unstaged.is_empty()
+            && self.untracked.is_empty()
+            && self.conflicted.is_empty()
     }
 
     #[must_use]
@@ -126,6 +135,7 @@ impl WorktreeStatus {
             .iter()
             .chain(&self.unstaged)
             .chain(&self.untracked)
+            .chain(&self.conflicted)
             .cloned()
             .collect()
     }
@@ -136,6 +146,21 @@ impl WorktreeStatus {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SourceSideChanges {
     paths: BTreeSet<Utf8PathBuf>,
+}
+
+/// A source-control operation currently owned by Git.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Rebase,
+    Merge,
+    CherryPick,
+}
+
+/// Result of starting or continuing a rebase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebaseOutcome {
+    Completed,
+    Conflicts,
 }
 
 impl SourceSideChanges {
@@ -252,6 +277,15 @@ impl<R: Runner> Git<R> {
             .stdout(),
             "read untracked paths",
         )?;
+        let conflicted = zero_delimited_paths(
+            self.run_in(
+                repository,
+                ["diff", "--name-only", "--diff-filter=U", "-z", "--"],
+                "read conflicted paths",
+            )?
+            .stdout(),
+            "read conflicted paths",
+        )?;
 
         Ok(WorktreeStatus {
             head,
@@ -259,7 +293,236 @@ impl<R: Runner> Git<R> {
             staged,
             unstaged,
             untracked,
+            conflicted,
         })
+    }
+
+    /// Resolve a branch, tag, or other validated revision to a commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot resolve the revision to a commit.
+    pub fn resolve(
+        &self,
+        repository: &Repository,
+        revision: &Revision,
+    ) -> Result<ObjectId, GitError> {
+        let commit = format!("{}^{{commit}}", revision.as_str());
+        ObjectId::parse(single_line(
+            &self.run_args(
+                repository,
+                ["rev-parse", "--verify", &commit],
+                "resolve revision",
+            )?,
+            "resolve revision",
+        )?)
+    }
+
+    /// Resolve the conventional default target branch without network access.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when neither `origin/HEAD`, `main`, nor `master` resolves.
+    pub fn default_target(&self, repository: &Repository) -> Result<String, GitError> {
+        let remote = self.run_allowing_failure(
+            &CommandSpec::new("git")
+                .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+                .current_dir(repository.root()),
+            "read default branch",
+        )?;
+        if remote.success() {
+            return single_line(&remote, "read default branch")
+                .map(|branch| branch.strip_prefix("origin/").unwrap_or(&branch).to_owned());
+        }
+        for candidate in ["main", "master"] {
+            let revision = Revision::new(candidate).map_err(GitError::InvalidRevision)?;
+            if self.resolve(repository, &revision).is_ok() {
+                return Ok(candidate.to_owned());
+            }
+        }
+        Err(GitError::MissingOutput("read default branch"))
+    }
+
+    /// Report whether the target commit is already contained in source `HEAD`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot compare the revisions.
+    pub fn contains(&self, repository: &Repository, target: &Revision) -> Result<bool, GitError> {
+        let outcome = self.run_allowing_failure(
+            &CommandSpec::new("git")
+                .args(["merge-base", "--is-ancestor", target.as_str(), "HEAD"])
+                .current_dir(repository.root()),
+            "compare source and target",
+        )?;
+        match outcome.exit_code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(command_failed("compare source and target", &outcome)),
+        }
+    }
+
+    /// List source-side commits, oldest first, that are not reachable from a target.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot compare the target with source `HEAD`
+    /// or emits an invalid object identifier.
+    pub fn source_commits(
+        &self,
+        repository: &Repository,
+        target: &Revision,
+    ) -> Result<Vec<ObjectId>, GitError> {
+        let range = format!("{}..HEAD", target.as_str());
+        let outcome = self.run_in(
+            repository,
+            ["rev-list", "--reverse", &range],
+            "list source-side commits",
+        )?;
+        let output =
+            std::str::from_utf8(outcome.stdout()).map_err(|source| GitError::InvalidUtf8 {
+                operation: "list source-side commits",
+                source,
+            })?;
+        output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| ObjectId::parse(line.to_owned()))
+            .collect()
+    }
+
+    /// Return the current tracked patch, including staged and unstaged changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot render the working patch.
+    pub fn working_patch(&self, repository: &Repository) -> Result<Vec<u8>, GitError> {
+        Ok(self
+            .run_args(
+                repository,
+                ["diff", "--binary", "--no-ext-diff", "HEAD", "--"],
+                "snapshot working changes",
+            )?
+            .stdout()
+            .to_vec())
+    }
+
+    /// Commit exactly the currently staged changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git or a commit hook rejects the commit.
+    pub fn commit(
+        &self,
+        repository: &Repository,
+        summary: &str,
+        description: Option<&str>,
+    ) -> Result<ObjectId, GitError> {
+        let mut spec = CommandSpec::new("git")
+            .args(["commit", "-m", summary])
+            .current_dir(repository.root());
+        if let Some(description) = description {
+            spec = spec.args(["-m", description]);
+        }
+        self.run(&spec, "create checkpoint commit")?;
+        self.status(repository).map(|status| status.head)
+    }
+
+    /// Fetch the target branch and resolve its remote-tracking commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when fetch or target resolution fails.
+    pub fn fetch_target(
+        &self,
+        repository: &Repository,
+        target: &str,
+    ) -> Result<(Revision, ObjectId), GitError> {
+        self.run_args(
+            repository,
+            ["fetch", "origin", target],
+            "update target branch",
+        )?;
+        let remote = Revision::new(format!("refs/remotes/origin/{target}"))
+            .map_err(GitError::InvalidRevision)?;
+        let commit = self.resolve(repository, &remote)?;
+        Ok((remote, commit))
+    }
+
+    /// Rebase source `HEAD` onto a target revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] for failures other than a reported conflict.
+    pub fn rebase_start(
+        &self,
+        repository: &Repository,
+        target: &Revision,
+    ) -> Result<RebaseOutcome, GitError> {
+        self.rebase_command(
+            repository,
+            &CommandSpec::new("git")
+                .args(["rebase", target.as_str()])
+                .current_dir(repository.root()),
+            "rebase source branch",
+        )
+    }
+
+    /// Continue the active rebase without opening an editor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] for failures other than another reported conflict.
+    pub fn rebase_continue(&self, repository: &Repository) -> Result<RebaseOutcome, GitError> {
+        self.rebase_command(
+            repository,
+            &CommandSpec::new("git")
+                .args(["rebase", "--continue"])
+                .env("GIT_EDITOR", "true")
+                .current_dir(repository.root()),
+            "continue rebase",
+        )
+    }
+
+    /// Abort the active rebase.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot restore the pre-rebase state.
+    pub fn rebase_abort(&self, repository: &Repository) -> Result<(), GitError> {
+        self.run_args(repository, ["rebase", "--abort"], "abort rebase")?;
+        Ok(())
+    }
+
+    /// Detect an active rebase, merge, or cherry-pick operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot resolve its operation marker paths.
+    pub fn operation(&self, repository: &Repository) -> Result<Option<Operation>, GitError> {
+        for (marker, operation) in [
+            ("rebase-merge", Operation::Rebase),
+            ("rebase-apply", Operation::Rebase),
+            ("MERGE_HEAD", Operation::Merge),
+            ("CHERRY_PICK_HEAD", Operation::CherryPick),
+        ] {
+            let outcome = self.run_args(
+                repository,
+                ["rev-parse", "--git-path", marker],
+                "inspect source-control operation",
+            )?;
+            let path = single_line(&outcome, "inspect source-control operation")?;
+            let path = Utf8PathBuf::from(path);
+            let absolute = if path.is_absolute() {
+                path
+            } else {
+                repository.root().join(path)
+            };
+            if absolute.exists() {
+                return Ok(Some(operation));
+            }
+        }
+        Ok(None)
     }
 
     /// Find the merge base between a target revision and `HEAD`.
@@ -321,6 +584,40 @@ impl<R: Runner> Git<R> {
         )
     }
 
+    fn run_args<I, S>(
+        &self,
+        repository: &Repository,
+        args: I,
+        operation: &'static str,
+    ) -> Result<CommandOutcome, GitError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.run(
+            &CommandSpec::new("git")
+                .args(args)
+                .current_dir(repository.root()),
+            operation,
+        )
+    }
+
+    fn rebase_command(
+        &self,
+        repository: &Repository,
+        spec: &CommandSpec,
+        operation: &'static str,
+    ) -> Result<RebaseOutcome, GitError> {
+        let outcome = self.run_allowing_failure(spec, operation)?;
+        if outcome.success() {
+            return Ok(RebaseOutcome::Completed);
+        }
+        if !self.status(repository)?.conflicted().is_empty() {
+            return Ok(RebaseOutcome::Conflicts);
+        }
+        Err(command_failed(operation, &outcome))
+    }
+
     fn run(&self, spec: &CommandSpec, operation: &'static str) -> Result<CommandOutcome, GitError> {
         let outcome = self.run_allowing_failure(spec, operation)?;
         if outcome.success() {
@@ -344,6 +641,7 @@ impl<R: Runner> Git<R> {
 /// A failure while invoking or interpreting Git.
 #[derive(Debug)]
 pub enum GitError {
+    InvalidRevision(InvalidRevision),
     Invocation {
         operation: &'static str,
         source: io::Error,
@@ -364,6 +662,7 @@ pub enum GitError {
 impl fmt::Display for GitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRevision(source) => source.fmt(formatter),
             Self::Invocation { operation, source } => {
                 write!(formatter, "could not {operation}: {source}")
             }
@@ -398,6 +697,7 @@ impl fmt::Display for GitError {
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::InvalidRevision(source) => Some(source),
             Self::Invocation { source, .. } => Some(source),
             Self::InvalidUtf8 { source, .. } => Some(source),
             Self::CommandFailed { .. } | Self::MissingOutput(_) | Self::InvalidObjectId(_) => None,
@@ -442,6 +742,7 @@ fn zero_delimited_paths(
 #[cfg(test)]
 mod tests {
     use super::{Git, Revision};
+    use claims::assert_ok;
     use rapport_files::{Utf8Path, Utf8PathBuf};
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -460,9 +761,10 @@ mod tests {
                 "rapport-git-test-{}-{sequence}",
                 std::process::id()
             ));
-            std::fs::create_dir_all(&path).expect("create test repository");
-            let canonical_path = std::fs::canonicalize(path).expect("canonicalize test repository");
-            let root = Utf8PathBuf::from_path_buf(canonical_path).expect("test path is UTF-8");
+            assert_ok!(std::fs::create_dir_all(&path));
+            let canonical_path = assert_ok!(std::fs::canonicalize(path));
+            let root = Utf8PathBuf::from_path_buf(canonical_path)
+                .unwrap_or_else(|path| panic!("test path is not UTF-8: {}", path.display()));
             let repository = Self { root };
             repository.git(["init", "-q", "-b", "main"]);
             repository.git(["config", "user.name", "Rapport Test"]);
@@ -477,26 +779,24 @@ mod tests {
         fn write(&self, path: &str, contents: &str) {
             let path = self.root.join(path);
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).expect("create test file parent");
+                assert_ok!(std::fs::create_dir_all(parent));
             }
-            std::fs::write(path, contents).expect("write test file");
+            assert_ok!(std::fs::write(path, contents));
         }
 
         fn git<const N: usize>(&self, args: [&str; N]) -> String {
-            let output = Command::new("git")
-                .args(args)
-                .current_dir(&self.root)
-                .output()
-                .expect("invoke Git in test");
+            let output = assert_ok!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&self.root)
+                    .output()
+            );
             assert!(
                 output.status.success(),
                 "Git failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            String::from_utf8(output.stdout)
-                .expect("Git test output is UTF-8")
-                .trim()
-                .to_owned()
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
         }
     }
 
@@ -522,18 +822,14 @@ mod tests {
         temporary.write("staged file.txt", "staged\n");
         temporary.git(["add", "staged file.txt"]);
         temporary.write("untracked.txt", "untracked\n");
-        std::fs::create_dir_all(temporary.root().join("nested"))
-            .expect("create nested test directory");
+        assert_ok!(std::fs::create_dir_all(temporary.root().join("nested")));
 
         let git = Git::default();
-        let repository = git
-            .discover(temporary.root().join("nested"))
-            .expect("discover temporary repository");
-        let status = git.status(&repository).expect("read repository status");
-        let target = Revision::new(&base).expect("valid base revision");
-        let changes = git
-            .source_side_changes(&repository, &target)
-            .expect("read source-side changes");
+        let repository = assert_ok!(git.discover(temporary.root().join("nested")));
+        let status = assert_ok!(git.status(&repository));
+        let target = assert_ok!(Revision::new(&base));
+        let changes = assert_ok!(git.source_side_changes(&repository, &target));
+        let source_commits = assert_ok!(git.source_commits(&repository, &target));
 
         assert_eq!(repository.root(), temporary.root());
         assert_eq!(status.branch(), Some("feature"));
@@ -546,10 +842,13 @@ mod tests {
         assert!(changes.contains("committed.txt"));
         assert!(changes.contains("staged file.txt"));
         assert!(changes.contains("untracked.txt"));
+        assert_eq!(source_commits.len(), 1);
         assert_eq!(
-            git.merge_base(&repository, &target)
-                .expect("find merge base")
-                .as_str(),
+            source_commits[0].as_str(),
+            temporary.git(["rev-parse", "HEAD"])
+        );
+        assert_eq!(
+            assert_ok!(git.merge_base(&repository, &target)).as_str(),
             base
         );
     }

@@ -53,6 +53,15 @@ pub trait FileSystem {
     /// Returns the underlying filesystem error when the path cannot be read.
     fn read_to_string(&self, path: impl AsRef<Utf8Path>) -> io::Result<String>;
 
+    /// Read arbitrary file bytes from the filesystem.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the path cannot be read.
+    fn read_bytes(&self, path: impl AsRef<Utf8Path>) -> io::Result<Vec<u8>> {
+        self.read_to_string(path).map(String::into_bytes)
+    }
+
     /// Read the immediate children of a directory.
     ///
     /// # Errors
@@ -139,6 +148,10 @@ impl FileSystem for RealFileSystem {
 
     fn read_to_string(&self, path: impl AsRef<Utf8Path>) -> io::Result<String> {
         std::fs::read_to_string(path.as_ref())
+    }
+
+    fn read_bytes(&self, path: impl AsRef<Utf8Path>) -> io::Result<Vec<u8>> {
+        std::fs::read(path.as_ref())
     }
 
     fn read_dir(&self, path: impl AsRef<Utf8Path>) -> io::Result<Vec<Utf8PathBuf>> {

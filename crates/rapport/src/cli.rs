@@ -1,4 +1,4 @@
-use crate::{policy_context, shared_ruleset};
+use crate::{policy_context, shared_ruleset, work_ledger};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rapport_files::Utf8PathBuf;
 
@@ -50,7 +50,7 @@ pub enum Command {
     /// Define and compose shared repository standards.
     Ruleset(shared_ruleset::Cli),
     /// Manage active local work state.
-    Work(WorkArgs),
+    Work(work_ledger::Cli),
     /// Manage folder-local structured project context.
     #[command(
         about = "Manage folder-local structured project context.",

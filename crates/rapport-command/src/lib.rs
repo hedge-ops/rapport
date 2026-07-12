@@ -497,7 +497,9 @@ mod tests {
         let lock_directory = unique_lock_directory("exclusive");
         let resources = MachineResources::new(&lock_directory);
         let batch = BatchRunner::new(NonZeroUsize::new(3).unwrap_or(NonZeroUsize::MIN), resources);
-        let resource = ResourceKey::new("macos-screen").expect("valid test resource");
+        let Ok(resource) = ResourceKey::new("macos-screen") else {
+            panic!("test resource should be valid");
+        };
         let jobs = (0..3)
             .map(|index| {
                 Job::new(format!("job-{index}"), CommandSpec::new("unused"))

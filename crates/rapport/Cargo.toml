@@ -15,8 +15,10 @@ authors.workspace = true
 rapport-command = { path = "../rapport-command", version = "0.1.0" }
 rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
 rapport-files = { path = "../rapport-files", version = "0.2.0" }
+rapport-git = { path = "../rapport-git", version = "0.1.0" }
 chrono.workspace = true
 clap.workspace = true
+directories.workspace = true
 dprint-plugin-markdown.workspace = true
 nonempty.workspace = true
 serde.workspace = true
@@ -25,6 +27,7 @@ sha2.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 claims.workspace = true
