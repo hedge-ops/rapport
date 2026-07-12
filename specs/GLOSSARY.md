@@ -7,15 +7,20 @@ repository area means and what must be true of changes to it.
 
 ## Candidate
 
-An exact proposed change identified by its base commit, source commit, content
-checksum, and affected files. A committed candidate can receive acceptance
-proofs. A dirty working-tree snapshot can receive feedback but is not a final
-accepted candidate.
+An exact proposed change identified by its target/source merge base, source
+commit, content checksum, and affected files. Its committed files are the
+source-side diff from that merge base through source `HEAD`, excluding commits
+and files present only on the target. A development snapshot additionally
+includes staged, unstaged, deleted, and relevant untracked files. A committed
+candidate can receive acceptance proofs; a dirty snapshot can receive feedback
+but cannot become the final accepted candidate.
 
 ## Proof
 
 Durable evidence that an operation or independent review evaluated an exact
-candidate under an exact policy.
+candidate under an exact policy. Proof prevents accidental reuse of evidence
+for mismatched inputs under a trusted local operator and agent host; it is not a
+tamper-resistant security attestation.
 
 ## Signoff
 
@@ -24,8 +29,8 @@ candidate being evaluated.
 
 ## Work Log
 
-The durable local ledger of the request, repository identities, tasks, attempts,
-results, proofs, decisions, and current state of one body of work.
+The durable local ledger of the request, repository identities, Tasks, results,
+proofs, decisions, and current state of one body of work.
 
 ## Context
 
@@ -59,14 +64,11 @@ other rulesets by stable ID.
 
 ## Task
 
-A durable actionable obligation in Work, including its origin, status,
-attempts, and result. Tasks may be ordered to keep the next action clear, but
-they do not form a dependency graph.
-
-## Attempt
-
-One execution of a task, build, or review with a unique ID. Its evidence records
-the relevant Git commit and whether repository changes were present.
+A workflow-owned requested or performed unit of Work, including its origin,
+status, Git state, timing, result, and output. Failed and superseded Tasks remain
+immutable history. Corrective work and retries are new causally related Tasks.
+Tasks may be ordered to keep the next action clear, but they do not form a
+dependency graph.
 
 ## Checkpoint
 
@@ -79,20 +81,43 @@ developer created the commit.
 Execution of an explicit repository-owned operation through Rapport. A build
 can provide development feedback or proof for an exact committed candidate.
 
+## Build Stage
+
+A nonnegative order assigned to a required Build operation. Stages execute in
+ascending order, while operations in the same stage may run concurrently.
+
+## Machine Resource Group
+
+An optional name that limits a Build operation to one concurrent execution
+across Rapport processes and worktrees on the same machine. It does not
+coordinate work across different machines.
+
 ## Dirty State
 
 A repository state with staged, unstaged, or relevant untracked changes. Work
-can retain attempts made in dirty state as history and feedback, but those
-attempts cannot sign off the underlying Git commit.
+can retain Tasks completed in dirty state as history and feedback, but those
+Tasks cannot sign off the underlying Git commit.
 
 ## Review
 
 Judgment of a complete source-control change using every affected Context and
-Rule. An acceptance review is independent and binds to the exact candidate it
-evaluated.
+Rule. An acceptance Review is independent, happens before publication, and
+binds to the exact candidate it evaluated. One Review Task owns one acceptance
+outcome and contains one or more Review Units; the initial delivery creates one
+unit for the complete candidate.
+
+## Review Unit
+
+One independently evaluated packet inside a Review Task. Every unit receives
+the complete intent and candidate overview. The initial delivery uses exactly
+one unit containing every applicable Rule; future delivery may partition the
+detailed Rules without splitting the acceptance outcome.
 
 ## Integrate
 
-The phase that creates a pull request for prepared Work, obtains and verifies
-the required GitHub signoffs against its latest head commit, and moves it onto
-the target branch.
+The phase that publishes an accepted candidate, creates a pull request carrying
+the candidate and its Review evidence as the aggregate shared Review artifact,
+verifies the aggregate `Rapport Build` result against its latest head commit,
+and moves it onto the target branch under the repository's strict, loose, or
+merge-queue target-freshness policy. Rapport does not publish a duplicate Review
+status for the pull request.
