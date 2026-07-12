@@ -411,7 +411,7 @@ fn list(fs: &mut impl FileSystem, repo_root: &Utf8Path, path: &Utf8Path) -> Resu
     Ok(format!("# rapport context list\n\n{}", or_none(&lines)))
 }
 
-fn show(
+pub(super) fn show(
     fs: &mut impl FileSystem,
     repo_root: &Utf8Path,
     path: &Utf8Path,

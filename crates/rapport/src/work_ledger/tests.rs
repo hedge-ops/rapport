@@ -3,8 +3,10 @@ use super::repository::Store;
 use crate::{Clock, CommandOutcome, CommandRunner, CommandSpec, run_with_environment};
 use claims::assert_ok;
 use rapport_files::{FileSystem, InMemoryFileSystem, RealFileSystem, Utf8Path, Utf8PathBuf};
+use std::collections::VecDeque;
 use std::io;
 use std::process::{Command, ExitCode};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
@@ -24,6 +26,68 @@ struct NeverRunner;
 impl CommandRunner for NeverRunner {
     fn run(&self, _spec: &CommandSpec, _cwd: &Utf8Path) -> io::Result<CommandOutcome> {
         panic!("the Phase 3 Work boundary should use rapport-git")
+    }
+}
+
+#[derive(Debug)]
+struct QueueRunner {
+    outcomes: Mutex<VecDeque<CommandOutcome>>,
+    calls: Mutex<Vec<(CommandSpec, Utf8PathBuf)>>,
+}
+
+impl QueueRunner {
+    fn new(outcomes: impl IntoIterator<Item = CommandOutcome>) -> Self {
+        Self {
+            outcomes: Mutex::new(outcomes.into_iter().collect()),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> Vec<(CommandSpec, Utf8PathBuf)> {
+        self.calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl CommandRunner for QueueRunner {
+    fn run(&self, spec: &CommandSpec, cwd: &Utf8Path) -> io::Result<CommandOutcome> {
+        self.calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((spec.clone(), cwd.to_path_buf()));
+        self.outcomes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop_front()
+            .ok_or_else(|| io::Error::other("missing queued outcome"))
+    }
+}
+
+#[derive(Debug)]
+struct MutatingRunner;
+
+impl CommandRunner for MutatingRunner {
+    fn run(&self, _spec: &CommandSpec, cwd: &Utf8Path) -> io::Result<CommandOutcome> {
+        std::fs::write(cwd.join("generated.txt"), "generated during build\n")?;
+        Ok(successful("generated output\n"))
+    }
+}
+
+fn successful(stdout: &str) -> CommandOutcome {
+    CommandOutcome {
+        success: true,
+        stdout: stdout.to_owned(),
+        stderr: String::new(),
+    }
+}
+
+fn failing(stderr: &str) -> CommandOutcome {
+    CommandOutcome {
+        success: false,
+        stdout: String::new(),
+        stderr: stderr.to_owned(),
     }
 }
 
@@ -87,12 +151,16 @@ impl TemporaryRepository {
     }
 
     fn run(&self, args: &[&str]) -> (ExitCode, String, String) {
+        self.run_with(args, &NeverRunner)
+    }
+
+    fn run_with(&self, args: &[&str], runner: &dyn CommandRunner) -> (ExitCode, String, String) {
         let mut fs = RealFileSystem;
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = run_with_environment(
             args.iter().map(|argument| (*argument).to_owned()),
-            &NeverRunner,
+            runner,
             &mut fs,
             &FixedClock,
             self.root.clone(),
@@ -111,6 +179,30 @@ impl TemporaryRepository {
         assert_eq!(code, ExitCode::SUCCESS, "{args:?}: {err}");
         assert!(err.is_empty(), "{args:?}: {err}");
         out
+    }
+
+    fn succeeds_with(&self, args: &[&str], runner: &dyn CommandRunner) -> String {
+        let (code, out, err) = self.run_with(args, runner);
+        assert_eq!(code, ExitCode::SUCCESS, "{args:?}: {err}");
+        assert!(err.is_empty(), "{args:?}: {err}");
+        out
+    }
+
+    fn add_signoff(&self, target: &str, stage: u32) {
+        let targets = QueueRunner::new([successful(&format!("dev {target}\n"))]);
+        self.succeeds_with(
+            &[
+                "context",
+                "signoff",
+                "add",
+                ".",
+                "--target",
+                target,
+                "--stage",
+                &stage.to_string(),
+            ],
+            &targets,
+        );
     }
 }
 
@@ -630,4 +722,158 @@ fn develop_should_preserve_failed_task_until_explicit_resolution() {
     ]);
     let status = repository.succeeds(&["work", "status"]);
     assert!(status.contains("Develop` — complete"));
+}
+
+#[test]
+/// A clean candidate with no required operations still receives exact empty acceptance proof (BLD-002).
+fn acceptance_build_passes_when_no_signoffs_are_required() {
+    let repository = TemporaryRepository::new();
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Prove an empty signoff set.",
+        "--title",
+        "Empty acceptance Build",
+        "--target",
+        "main",
+    ]);
+
+    let built = repository.succeeds(&["build"]);
+
+    assert!(built.contains("status` — passed"), "{built}");
+    assert!(built.contains("operations` — 0"), "{built}");
+    let status = repository.succeeds(&["build", "status"]);
+    assert!(status.contains("Build` — complete"), "{status}");
+    assert!(status.contains("proof` — current"), "{status}");
+    let next = repository.succeeds(&["work", "task", "next"]);
+    assert!(next.contains("rapport review start"), "{next}");
+    let task = repository.succeeds(&["build", "status", "TASK_001"]);
+    assert!(task.contains("mode` — acceptance"), "{task}");
+    assert!(task.contains("proof` — true"), "{task}");
+
+    repository.write("later.txt", "candidate changed\n");
+    repository.git(["add", "later.txt"]);
+    repository.git(["commit", "-q", "-m", "change candidate after proof"]);
+    let stale = repository.succeeds(&["build", "status"]);
+    assert!(stale.contains("Build` — incomplete"), "{stale}");
+    assert!(stale.contains("proof` — missing or stale"), "{stale}");
+}
+
+#[test]
+/// Without Work, the conventional development target runs directly and creates no ledger (BLD-001).
+fn build_without_work_runs_dev_without_inventing_state() {
+    let repository = TemporaryRepository::new();
+    let runner = QueueRunner::new([successful("development feedback\n")]);
+
+    let output = repository.succeeds_with(&["build"], &runner);
+
+    assert!(output.contains("mode` — feedback"), "{output}");
+    assert!(output.contains("target` — dev"), "{output}");
+    assert!(output.contains("proof` — none"), "{output}");
+    assert!(!repository.root.join(".rapport/work.toml").is_file());
+    let calls = runner.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, CommandSpec::new("just", ["dev"]));
+
+    let (code, _, error) = repository.run_with(&["build", "../outside"], &runner);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("must stay inside the repository"), "{error}");
+    assert_eq!(runner.calls().len(), 1);
+}
+
+#[test]
+/// A failed stage blocks later stages and creates one corrective Develop Task per failed signoff (BLD-002, WRK-005).
+fn failed_acceptance_stage_blocks_later_work_and_reopens_develop() {
+    let repository = TemporaryRepository::new();
+    repository.add_signoff("ci-fast", 0);
+    repository.add_signoff("ci-later", 1);
+    repository.git(["add", "-A"]);
+    repository.git(["commit", "-q", "-m", "declare staged signoffs"]);
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Exercise staged acceptance failure.",
+        "--title",
+        "Stage Build operations",
+        "--target",
+        "main",
+    ]);
+    let runner = QueueRunner::new([failing("ci-fast failed\n")]);
+
+    let (code, _, error) = repository.run_with(&["build"], &runner);
+
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("Build Task `TASK_001` failed"), "{error}");
+    assert_eq!(runner.calls().len(), 1);
+    let task = repository.succeeds(&["build", "status", "TASK_001"]);
+    assert!(task.contains("ROOT_SIGNOFF_CI_FAST"), "{task}");
+    assert!(task.contains("status failed"), "{task}");
+    assert!(task.contains("ROOT_SIGNOFF_CI_LATER"), "{task}");
+    assert!(task.contains("status blocked"), "{task}");
+    let develop = repository.succeeds(&["develop", "task", "list"]);
+    assert_eq!(develop.matches("Repair failed Build signoff").count(), 1);
+    assert!(develop.contains("TASK_002"), "{develop}");
+}
+
+#[test]
+/// Ad hoc feedback records failure and dirty Git state without manufacturing corrective work (BLD-001).
+fn ad_hoc_failure_remains_feedback_without_corrective_develop_task() {
+    let repository = TemporaryRepository::new();
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Collect development feedback.",
+        "--title",
+        "Ad hoc Build",
+        "--target",
+        "main",
+    ]);
+    repository.write("dirty.rs", "fn dirty() {}\n");
+    let runner = QueueRunner::new([failing("feedback failed\n")]);
+
+    let (code, _, error) = repository.run_with(&["build", ".", "--target", "ci"], &runner);
+
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("Build Task `TASK_001` failed"), "{error}");
+    let shown = repository.succeeds(&["build", "status", "TASK_001"]);
+    assert!(shown.contains("mode` — feedback"), "{shown}");
+    assert!(shown.contains("untracked dirty.rs"), "{shown}");
+    assert!(shown.contains("proof` — false"), "{shown}");
+    let tasks = repository.succeeds(&["work", "task", "list", "--all"]);
+    assert_eq!(tasks.matches("TASK_").count(), 1, "{tasks}");
+}
+
+#[test]
+/// Build-generated source changes invalidate passing operations and become explicit corrective work (BLD-002).
+fn acceptance_build_generated_changes_invalidate_proof() {
+    let repository = TemporaryRepository::new();
+    repository.add_signoff("ci", 0);
+    repository.git(["add", "-A"]);
+    repository.git(["commit", "-q", "-m", "declare signoff"]);
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Reject build-generated changes.",
+        "--title",
+        "Clean acceptance Build",
+        "--target",
+        "main",
+    ]);
+
+    let (code, _, error) = repository.run_with(&["build"], &MutatingRunner);
+
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("Build Task `TASK_001` failed"), "{error}");
+    let shown = repository.succeeds(&["build", "status", "TASK_001"]);
+    assert!(shown.contains("untracked generated.txt"), "{shown}");
+    assert!(shown.contains("proof` — false"), "{shown}");
+    let develop = repository.succeeds(&["develop", "task", "list"]);
+    assert!(
+        develop.contains("Reconcile build-generated changes"),
+        "{develop}"
+    );
 }

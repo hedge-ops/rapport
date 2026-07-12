@@ -37,6 +37,20 @@ pub(crate) enum Error {
     DevelopTaskRunning,
     #[error("Work cannot complete while Develop is incomplete")]
     DevelopIncomplete,
+    #[error("acceptance Build requires Develop to be complete")]
+    BuildDevelopIncomplete,
+    #[error("Work cannot complete while Build proof is missing or stale")]
+    BuildIncomplete,
+    #[error("Build target `{0}` is interactive or long-running")]
+    InteractiveBuildTarget(String),
+    #[error("Build path must stay inside the repository")]
+    InvalidBuildPath,
+    #[error("Build operation `{0}` could not run")]
+    BuildExecution(String),
+    #[error("Build Task `{0}` failed; inspect it with `rapport build status {0}`")]
+    BuildFailed(String),
+    #[error("ad hoc Build failed; no proof was recorded")]
+    AdHocBuildFailed,
     #[error("a title or description update is required")]
     EmptyTaskUpdate,
     #[error("the before/after position must name a Develop Action Task")]

@@ -62,7 +62,7 @@ pub enum Command {
     )]
     Context(policy_context::Cli),
     /// Validate active work with existing repository Just conventions.
-    Build(BuildArgs),
+    Build(work_ledger::BuildCli),
     /// Request or record an independent adversarial review of active work.
     Review(ReviewArgs),
     /// Turn validated local work into Git/GitHub integration state.
@@ -639,11 +639,12 @@ pub struct WorkTaskAddressArgs {
     pub summary: String,
 }
 
+/// Legacy Build arguments retained for later-phase proof readers during the
+/// Work ledger migration. The root CLI uses `work_ledger::BuildCli`.
 #[derive(Debug, Args)]
-pub struct BuildArgs {
-    /// Optional paths to validate instead of the active work paths.
+pub(crate) struct LegacyBuildArgs {
     #[arg(value_name = "PATH")]
-    pub paths: Vec<Utf8PathBuf>,
+    pub(crate) paths: Vec<Utf8PathBuf>,
 }
 
 #[derive(Debug, Args)]

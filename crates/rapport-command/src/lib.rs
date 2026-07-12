@@ -7,7 +7,7 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 /// A program invocation, including its working directory and environment.
@@ -97,6 +97,23 @@ pub struct CommandOutcome {
 }
 
 impl CommandOutcome {
+    #[must_use]
+    pub fn new(
+        success: bool,
+        exit_code: Option<i32>,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        elapsed: Duration,
+    ) -> Self {
+        Self {
+            success,
+            exit_code,
+            stdout,
+            stderr,
+            elapsed,
+        }
+    }
+
     #[must_use]
     pub fn success(&self) -> bool {
         self.success
@@ -309,6 +326,33 @@ pub struct JobOutcome {
     result: io::Result<CommandOutcome>,
 }
 
+/// A lifecycle event emitted while a concurrent batch is running.
+#[derive(Debug)]
+pub enum JobEvent {
+    /// A worker has acquired any resource and is about to run the command.
+    Started { name: String },
+    /// The command or resource acquisition finished.
+    Finished(JobOutcome),
+}
+
+impl JobEvent {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Started { name } => name,
+            Self::Finished(outcome) => outcome.name(),
+        }
+    }
+
+    #[must_use]
+    pub fn outcome(&self) -> Option<&JobOutcome> {
+        match self {
+            Self::Started { .. } => None,
+            Self::Finished(outcome) => Some(outcome),
+        }
+    }
+}
+
 impl JobOutcome {
     #[must_use]
     pub fn name(&self) -> &str {
@@ -349,6 +393,24 @@ impl BatchRunner {
     /// Run every job, preserving input order in the returned outcomes.
     #[must_use]
     pub fn run<R: Runner>(&self, runner: &R, jobs: Vec<Job>) -> Vec<JobOutcome> {
+        self.run_with_events(runner, jobs, |_| {})
+    }
+
+    /// Run every job and report lifecycle events on the calling thread.
+    ///
+    /// The callback can safely persist incremental state without requiring the
+    /// persistence implementation itself to be thread-safe.
+    #[must_use]
+    pub fn run_with_events<R, F>(
+        &self,
+        runner: &R,
+        jobs: Vec<Job>,
+        mut on_event: F,
+    ) -> Vec<JobOutcome>
+    where
+        R: Runner,
+        F: FnMut(&JobEvent),
+    {
         let job_count = jobs.len();
         if job_count == 0 {
             return Vec::new();
@@ -357,14 +419,14 @@ impl BatchRunner {
         let queue = Arc::new(Mutex::new(
             jobs.into_iter().enumerate().collect::<VecDeque<_>>(),
         ));
-        let outcomes = Arc::new(Mutex::new(Vec::with_capacity(job_count)));
+        let (events, received_events) = mpsc::channel();
         let worker_count = self.max_parallelism.get().min(job_count);
 
         std::thread::scope(|scope| {
             for _ in 0..worker_count {
                 let queue = Arc::clone(&queue);
-                let outcomes = Arc::clone(&outcomes);
                 let resources = self.resources.clone();
+                let events = events.clone();
                 scope.spawn(move || {
                     loop {
                         let next = match queue.lock() {
@@ -375,40 +437,53 @@ impl BatchRunner {
                             break;
                         };
 
-                        let result = match job.resource.as_ref() {
-                            Some(resource) => resources
-                                .acquire(resource)
-                                .and_then(|_guard| runner.run(&job.command)),
-                            None => runner.run(&job.command),
+                        let result = if let Some(resource) = job.resource.as_ref() {
+                            resources.acquire(resource).and_then(|_guard| {
+                                let _ = events.send((
+                                    index,
+                                    JobEvent::Started {
+                                        name: job.name.clone(),
+                                    },
+                                ));
+                                runner.run(&job.command)
+                            })
+                        } else {
+                            let _ = events.send((
+                                index,
+                                JobEvent::Started {
+                                    name: job.name.clone(),
+                                },
+                            ));
+                            runner.run(&job.command)
                         };
-                        let outcome = (
+                        let event = (
                             index,
-                            JobOutcome {
+                            JobEvent::Finished(JobOutcome {
                                 name: job.name,
                                 result,
-                            },
+                            }),
                         );
-                        match outcomes.lock() {
-                            Ok(mut outcomes) => outcomes.push(outcome),
-                            Err(poisoned) => poisoned.into_inner().push(outcome),
-                        }
+                        let _ = events.send(event);
                     }
                 });
             }
-        });
 
-        let mut outcomes = match Arc::try_unwrap(outcomes) {
-            Ok(outcomes) => match outcomes.into_inner() {
-                Ok(outcomes) => outcomes,
-                Err(poisoned) => poisoned.into_inner(),
-            },
-            Err(outcomes) => match outcomes.lock() {
-                Ok(mut outcomes) => std::mem::take(&mut *outcomes),
-                Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
-            },
-        };
-        outcomes.sort_by_key(|(index, _)| *index);
-        outcomes.into_iter().map(|(_, outcome)| outcome).collect()
+            drop(events);
+            let mut finished = 0;
+            let mut outcomes = Vec::with_capacity(job_count);
+            while finished < job_count {
+                let Ok((index, event)) = received_events.recv() else {
+                    break;
+                };
+                on_event(&event);
+                if let JobEvent::Finished(outcome) = event {
+                    outcomes.push((index, outcome));
+                    finished += 1;
+                }
+            }
+            outcomes.sort_by_key(|(index, _)| *index);
+            outcomes.into_iter().map(|(_, outcome)| outcome).collect()
+        })
     }
 }
 
@@ -489,6 +564,35 @@ mod tests {
 
         assert_eq!(outcomes.len(), 3);
         assert!(runner.greatest_parallelism.load(Ordering::SeqCst) > 1);
+    }
+
+    #[test]
+    fn batch_reports_started_before_finished_for_incremental_persistence() {
+        let runner = CountingRunner::default();
+        let batch = BatchRunner::new(
+            NonZeroUsize::new(2).unwrap_or(NonZeroUsize::MIN),
+            MachineResources::new(unique_lock_directory("events")),
+        );
+        let jobs = ["first", "second"]
+            .into_iter()
+            .map(|name| Job::new(name, CommandSpec::new("test")))
+            .collect();
+        let mut events = Vec::new();
+
+        let outcomes = batch.run_with_events(&runner, jobs, |event| {
+            events.push((event.name().to_owned(), event.outcome().is_some()));
+        });
+
+        assert_eq!(outcomes.len(), 2);
+        for name in ["first", "second"] {
+            let started = events
+                .iter()
+                .position(|event| event == &(name.to_owned(), false));
+            let finished = events
+                .iter()
+                .position(|event| event == &(name.to_owned(), true));
+            assert!(started.is_some_and(|started| finished.is_some_and(|done| started < done)));
+        }
     }
 
     #[test]

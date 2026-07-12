@@ -206,7 +206,7 @@ fn git_repository(repo_root: &Utf8Path) -> Result<(Git, Repository), Error> {
     Ok((git, repository))
 }
 
-fn target_revision(
+pub(super) fn target_revision(
     git: &Git,
     repository: &Repository,
     branch: &str,
@@ -337,13 +337,23 @@ where
         &context.repo_root,
         changes.paths().iter().map(Utf8PathBuf::as_path),
     )?;
+    let policy_digest = crate::policy_context::effective_policy_digest_for_paths(
+        context.fs,
+        &context.repo_root,
+        changes.paths().iter().map(Utf8PathBuf::as_path),
+    )?;
     let operation = git.operation(&repository)?;
     let develop_state = if develop::is_complete(&work, &tasks, &live, operation) {
         "complete"
     } else {
         "incomplete"
     };
-    let build_proof = workflow_state(&tasks, Workflow::Build);
+    let build_proof =
+        if super::build::current_proof(&tasks, live.head().as_str(), &policy_digest, &signoffs) {
+            "current"
+        } else {
+            "missing or stale"
+        };
     let review_proof = workflow_state(&tasks, Workflow::Review);
     let blockers = integration_blockers(&work, &tasks, &live, operation);
     let next = select_next(&work, &tasks).map_or_else(
@@ -1202,6 +1212,21 @@ where
         if !develop::is_complete(&work, &tasks, &live, None) {
             return Err(Error::DevelopIncomplete);
         }
+        let target = Revision::new(work.target_branch.clone())?;
+        let changes = git.source_side_changes(&repository, &target)?;
+        let signoffs = crate::policy_context::required_signoffs_for_paths(
+            context.fs,
+            &context.repo_root,
+            changes.paths().iter().map(Utf8PathBuf::as_path),
+        )?;
+        let policy_digest = crate::policy_context::effective_policy_digest_for_paths(
+            context.fs,
+            &context.repo_root,
+            changes.paths().iter().map(Utf8PathBuf::as_path),
+        )?;
+        if !super::build::current_proof(&tasks, live.head().as_str(), &policy_digest, &signoffs) {
+            return Err(Error::BuildIncomplete);
+        }
     }
     work.outcome = Some(format!(
         "{} at {}: {}",
@@ -1265,7 +1290,11 @@ fn next_workflow(
     if !live.all_changed_paths().is_empty() || checkpoint != live.head().as_str() {
         "rapport work checkpoint start".to_owned()
     } else if develop::is_complete(work, tasks, live, operation) {
-        "rapport build".to_owned()
+        if super::build::has_candidate_proof(tasks, live.head().as_str()) {
+            "rapport review start".to_owned()
+        } else {
+            "rapport build".to_owned()
+        }
     } else {
         "make the requested changes, then rapport work checkpoint start".to_owned()
     }

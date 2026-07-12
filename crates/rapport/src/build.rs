@@ -1,4 +1,4 @@
-use crate::cli::BuildArgs;
+use crate::cli::LegacyBuildArgs as BuildArgs;
 use crate::context::{Clock, CommandContext};
 use crate::project_context::resolved_rules_for_paths;
 use crate::project_context::{SignoffRequirement, required_signoff_requirements_for_paths};
