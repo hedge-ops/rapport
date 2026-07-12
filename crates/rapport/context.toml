@@ -1,12 +1,11 @@
 version = 1
+id = "CRATES_RAPPORT"
 purpose = "Owns the Rapport factory-workflow CLI and orchestration."
-signoffs = []
-rule_includes = []
+next_ownership = 2
+next_boundary = 1
 
-[ownership]
-owns = ["CLI commands and repository factory workflow orchestration."]
-boundaries = []
+[ownership.CRATES_RAPPORT_OWNERSHIP_001]
+text = "CLI commands and repository factory workflow orchestration."
 
 [ruleset]
-id = "CRATES_RAPPORT"
 includes = ["RUST_CRATE"]

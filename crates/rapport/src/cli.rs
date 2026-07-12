@@ -1,4 +1,4 @@
-use crate::shared_ruleset;
+use crate::{policy_context, shared_ruleset};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rapport_files::Utf8PathBuf;
 
@@ -58,7 +58,7 @@ pub enum Command {
         after_help = CONTEXT_AFTER_HELP,
         after_long_help = CONTEXT_AFTER_HELP
     )]
-    Context(ContextArgs),
+    Context(policy_context::Cli),
     /// Validate active work with existing repository Just conventions.
     Build(BuildArgs),
     /// Request or record an independent adversarial review of active work.

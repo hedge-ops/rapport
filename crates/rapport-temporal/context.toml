@@ -1,12 +1,11 @@
 version = 1
+id = "CRATES_RAPPORT_TEMPORAL"
 purpose = "Owns ergonomic temporal domain types and calculations."
-signoffs = []
-rule_includes = []
+next_ownership = 2
+next_boundary = 1
 
-[ownership]
-owns = ["Date, time, recurrence, interval, and relative-offset domain behavior."]
-boundaries = []
+[ownership.CRATES_RAPPORT_TEMPORAL_OWNERSHIP_001]
+text = "Date, time, recurrence, interval, and relative-offset domain behavior."
 
 [ruleset]
-id = "CRATES_RAPPORT_TEMPORAL"
 includes = ["RUST_CRATE"]

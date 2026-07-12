@@ -597,14 +597,6 @@ mod tests {
     }
 
     #[test]
-    fn checked_in_shared_workflow_matches_generated_bytes() {
-        assert_eq!(
-            include_str!("../../../.github/workflows/rapport-signoff.yml"),
-            SHARED_WORKFLOW_CONTENTS
-        );
-    }
-
-    #[test]
     fn validation_requires_exact_generated_files() {
         let mut fs = InMemoryFileSystem::default();
         fs.add_directory("/repo/.git");

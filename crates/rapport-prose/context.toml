@@ -1,12 +1,11 @@
 version = 1
+id = "CRATES_RAPPORT_PROSE"
 purpose = "Owns human- and agent-facing Markdown presentation."
-signoffs = []
-rule_includes = []
+next_ownership = 2
+next_boundary = 1
 
-[ownership]
-owns = ["Markdown prose formatting and presentation primitives."]
-boundaries = []
+[ownership.CRATES_RAPPORT_PROSE_OWNERSHIP_001]
+text = "Markdown prose formatting and presentation primitives."
 
 [ruleset]
-id = "CRATES_RAPPORT_PROSE"
 includes = ["RUST_CRATE"]
