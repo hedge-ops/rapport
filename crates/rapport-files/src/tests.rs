@@ -102,11 +102,11 @@ fn in_memory_file_system_writes_files() {
 fn in_memory_file_system_appends_lines() {
     let mut fs = InMemoryFileSystem::default();
 
-    assert_ok!(fs.append_line("/work/.rapport/events.jsonl", "{\"one\":1}"));
-    assert_ok!(fs.append_line("/work/.rapport/events.jsonl", "{\"two\":2}"));
+    assert_ok!(fs.append_line("/work/journal.jsonl", "{\"one\":1}"));
+    assert_ok!(fs.append_line("/work/journal.jsonl", "{\"two\":2}"));
 
     assert_eq!(
-        assert_ok!(fs.read_to_string("/work/.rapport/events.jsonl")),
+        assert_ok!(fs.read_to_string("/work/journal.jsonl")),
         "{\"one\":1}\n{\"two\":2}\n"
     );
 }

@@ -5,21 +5,15 @@
 
 use crate::context::{Clock, CommandContext};
 use crate::runner::{CommandOutcome, CommandSpec};
-use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
 use std::io::Write;
 use std::process::ExitCode;
 
-const SUCCESS: u8 = 0;
-const FAILURE: u8 = 2;
 const PROJECT_CONTEXT_CHECK: &str = "Project Context";
 
-pub fn run<F, C, O, E>(
-    arguments: Vec<String>,
-    context: &mut CommandContext<'_, F, C, O, E>,
-) -> ExitCode
+pub fn run<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
 where
     F: FileSystem,
     C: Clock,
@@ -27,14 +21,13 @@ where
     E: Write,
 {
     let report = diagnose(context);
-    let result = if report.passed() {
+    if report.passed() {
         let _ = writeln!(context.out, "{}", render_report(&report));
-        CommandResult::success()
+        ExitCode::SUCCESS
     } else {
         let _ = writeln!(context.err, "{}", render_report(&report));
-        CommandResult::failure()
-    };
-    finish("doctor", arguments, context, result)
+        ExitCode::from(2)
+    }
 }
 
 fn diagnose<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> DoctorReport
@@ -173,28 +166,6 @@ enum CheckStatus {
     Fail,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CommandResult {
-    outcome: CommandEventOutcome,
-    exit_code: u8,
-}
-
-impl CommandResult {
-    fn success() -> Self {
-        Self {
-            outcome: CommandEventOutcome::Success,
-            exit_code: SUCCESS,
-        }
-    }
-
-    fn failure() -> Self {
-        Self {
-            outcome: CommandEventOutcome::Failure,
-            exit_code: FAILURE,
-        }
-    }
-}
-
 fn failed_origin_detail(outcome: &CommandOutcome) -> String {
     let output = [outcome.stderr.trim(), outcome.stdout.trim()]
         .into_iter()
@@ -209,34 +180,6 @@ fn origin_url_is_github(origin: &str) -> bool {
         || origin.starts_with("http://github.com/")
         || origin.starts_with("git@github.com:")
         || origin.starts_with("ssh://git@github.com/")
-}
-
-fn finish<F, C, O, E>(
-    command: &'static str,
-    arguments: Vec<String>,
-    context: &mut CommandContext<'_, F, C, O, E>,
-    result: CommandResult,
-) -> ExitCode
-where
-    F: FileSystem,
-    C: Clock,
-    O: Write,
-    E: Write,
-{
-    let event = CommandEvent::new(
-        context.clock.now_rfc3339(),
-        arguments,
-        command,
-        result.outcome,
-        result.exit_code,
-    );
-    match TelemetryWriter::new(context.paths.clone()).append(context.fs, &event) {
-        Ok(()) => ExitCode::from(result.exit_code),
-        Err(error) => {
-            let _ = writeln!(context.err, "{}", render_telemetry_error(&error));
-            ExitCode::FAILURE
-        }
-    }
 }
 
 fn render_report(report: &DoctorReport) -> String {
@@ -255,15 +198,6 @@ fn render_report(report: &DoctorReport) -> String {
             b.items(report.checks.iter().map(DoctorCheck::line))
         })
         .next_actions(nonempty![next])
-        .build()
-}
-
-fn render_telemetry_error(error: &TelemetryError) -> String {
-    ViewBuilder::new()
-        .title("rapport telemetry")
-        .paragraph("Command completed, but telemetry could not be written.")
-        .paragraph(error)
-        .next_actions(nonempty![RunHint::new("rapport work status")])
         .build()
 }
 

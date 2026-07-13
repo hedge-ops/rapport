@@ -1,7 +1,7 @@
 //! Repository-local Rapport paths.
 //!
-//! This module owns canonical locations for active Work, Tasks, history,
-//! telemetry, and other local workflow state.
+//! This module owns canonical locations for active Work, Tasks, history, and
+//! other local workflow state.
 
 use rapport_files::{Utf8Path, Utf8PathBuf};
 
@@ -42,11 +42,6 @@ impl RapportPaths {
     pub fn history_file(&self, filename: &str) -> Utf8PathBuf {
         self.history_dir().join(filename)
     }
-
-    #[must_use]
-    pub fn events_file(&self) -> Utf8PathBuf {
-        self.rapport_dir().join("events.jsonl")
-    }
 }
 
 #[cfg(test)]
@@ -69,10 +64,6 @@ mod tests {
         assert_eq!(
             paths.history_file("done.toml"),
             Utf8PathBuf::from("/repo/.rapport/history/done.toml")
-        );
-        assert_eq!(
-            paths.events_file(),
-            Utf8PathBuf::from("/repo/.rapport/events.jsonl")
         );
     }
 }

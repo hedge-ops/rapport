@@ -5,7 +5,7 @@ target
 !crates/rapport/tests/fixtures/**/target/
 !crates/rapport/tests/fixtures/**/target/**
 
-# Local Rapport work state and telemetry
+# Local Rapport runtime state
 # rapport:init-rules:start
 .rapport/**
 !.rapport/

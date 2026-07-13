@@ -46,13 +46,17 @@ pub(crate) enum Error {
     WorkflowDrift(Utf8PathBuf),
     #[error("unsupported Context schema version `{version}` in `{path}`")]
     SchemaVersion { path: Utf8PathBuf, version: u16 },
+    #[error(
+        "legacy Rapport 0.4 Context schema in `{path}`; migrate every legacy `context.toml` together before using Rapport 0.5 (`rule_includes`, array ownership/boundaries, `kind` signoffs, and `[[rules]]` are unsupported)"
+    )]
+    LegacySchema { path: Utf8PathBuf },
     #[error("could not read or write `{path}`")]
     Io {
         path: Utf8PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("could not decode `{path}`")]
+    #[error("could not decode `{path}`: {source}")]
     Decode {
         path: Utf8PathBuf,
         #[source]

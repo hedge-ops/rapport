@@ -60,7 +60,7 @@ pub(crate) enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("could not decode `{path}`")]
+    #[error("could not decode `{path}`: {source}")]
     Decode {
         path: Utf8PathBuf,
         #[source]
