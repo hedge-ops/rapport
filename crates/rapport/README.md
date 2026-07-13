@@ -5,11 +5,13 @@ The repository workflow CLI for Rapport.
 Rapport keeps human-directed agent work grounded in repository-owned rules,
 build conventions, GitHub integration, and local state.
 
-The first loop is:
+The product workflow is:
 
 ```text
-work -> build -> review -> integrate
+Plan -> Develop -> Build -> Review -> Integrate -> Ship
 ```
+
+Work is the durable local ledger connecting Develop through Integrate.
 
 ## License
 

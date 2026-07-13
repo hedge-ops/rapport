@@ -76,15 +76,17 @@ fn render_prime() -> String {
         })
         .section("Loop", |b| {
             b.items([
-                "`rapport work start --title \"...\" --ticket <ticket> --objective \"...\" --path <path>` - create active work state",
-                "`rapport work status` - inspect current work, paths, and recent facts",
+                "`rapport work start --ticket <ticket> --title \"...\" --target <branch>` - create active Work from a durable request",
+                "`rapport work status` - inspect the current candidate, Tasks, proof, blockers, and next command",
                 "`rapport context show <path>` - read folder purpose, ownership, boundaries, and applicable benchmarks",
-                "`rapport work rules list` - read repository rules for active work paths",
                 "`rapport doctor` - verify Git and GitHub prerequisites before integration",
-                "`rapport build` - run applicable typed build operations for active work",
-                "`rapport review start` - emit a host-neutral Markdown adversarial-review request; use `rapport review complete --result <file>` to record the structured result",
-                "`rapport integrate --summary \"...\" --message \"...\"` - commit active changes and open a PR",
-                "`rapport work complete --summary \"...\"` - archive completed work and clear local state",
+                "`rapport develop task next` - follow the ordered Develop Task sequence",
+                "`rapport work checkpoint start` - reconcile and stage a coherent Git checkpoint",
+                "`rapport build` - prove the exact clean checkpoint with applicable Context signoffs",
+                "`rapport review start` - request one independent Review; use `rapport review complete --result <file>` to record it",
+                "`rapport integrate start` - publish accepted Work and create its evidence-carrying pull request",
+                "`rapport integrate status` - inspect GitHub state without changing it",
+                "`rapport integrate complete` - revalidate, squash-merge, delete the remote branch, and archive Work",
             ])
         })
         .section("Boundaries", |b| {
@@ -118,11 +120,12 @@ mod tests {
         assert!(view.contains("planning, coding, testing, building, reviewing"));
         assert!(view.contains("rapport work start"));
         assert!(view.contains("rapport context show"));
-        assert!(view.contains("rapport work rules list"));
         assert!(view.contains("rapport doctor"));
+        assert!(view.contains("rapport develop task next"));
+        assert!(view.contains("rapport work checkpoint start"));
         assert!(view.contains("rapport build"));
         assert!(view.contains("rapport review"));
         assert!(view.contains("rapport integrate"));
-        assert!(view.contains("rapport work complete"));
+        assert!(view.contains("rapport integrate complete"));
     }
 }

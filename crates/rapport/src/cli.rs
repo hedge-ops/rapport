@@ -8,7 +8,7 @@ Rapport keeps human-directed agent work grounded in repository-owned rules, \
 build conventions, Git/GitHub integration, and local state.";
 const ROOT_AFTER_HELP: &str = "\
 First loop:
-  prime -> doctor -> work -> context -> build -> review -> integrate -> work complete
+  prime -> doctor -> work -> develop -> build -> review -> integrate
 
 Rapport coordinates repository workflow; it does not replace Just or implement release/deploy behavior.";
 const CONTEXT_LONG_ABOUT: &str = "\
@@ -42,6 +42,8 @@ pub enum Command {
     Prime,
     /// Check repository prerequisites for Rapport workflow.
     Doctor,
+    /// Configure repository-owned GitHub integration policy.
+    Github(crate::github::Cli),
     /// Record Rapport usage in repository agent instructions.
     Init,
     /// Manage repository-owned standalone and embedded rulesets.
@@ -66,7 +68,7 @@ pub enum Command {
     /// Request or record an independent adversarial review of active work.
     Review(work_ledger::ReviewCli),
     /// Turn validated local work into Git/GitHub integration state.
-    Integrate(IntegrateArgs),
+    Integrate(work_ledger::IntegrateCli),
 }
 
 #[derive(Debug, Args)]
@@ -677,14 +679,4 @@ pub(crate) struct LegacyReviewCompleteArgs {
     /// Structured JSON review result to validate and record.
     #[arg(long, value_name = "FILE")]
     pub(crate) result: Utf8PathBuf,
-}
-
-#[derive(Debug, Args)]
-pub struct IntegrateArgs {
-    /// Human summary for a new integration record. Omit when resuming signoff.
-    #[arg(long)]
-    pub summary: Option<String>,
-    /// Git commit or PR message body. Omit when resuming signoff.
-    #[arg(long)]
-    pub message: Option<String>,
 }

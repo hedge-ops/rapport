@@ -69,6 +69,22 @@ pub(crate) enum Error {
     OverrideUnavailable,
     #[error("Work cannot complete while Review proof is missing or stale")]
     ReviewIncomplete,
+    #[error(
+        "integration requires current Develop, Build, and Review proof for the exact checkpoint"
+    )]
+    IntegrationPrerequisite,
+    #[error("another Integration pull request is already open for this Work or source branch")]
+    ActiveIntegration,
+    #[error("no current Integration Task exists")]
+    MissingIntegration,
+    #[error("the Integration pull request no longer identifies the accepted candidate")]
+    StaleIntegration,
+    #[error("the Integration pull request is not ready to merge: {0}")]
+    IntegrationBlocked(String),
+    #[error("the Integration pull request cannot be proven to belong to active Work")]
+    IntegrationOwnership,
+    #[error("GitHub operation failed: {0}")]
+    GitHub(String),
     #[error("could not decode review result `{path}`")]
     ReviewDecode {
         path: Utf8PathBuf,
@@ -96,8 +112,22 @@ pub(crate) enum Error {
     #[error("Work cannot end before source HEAD equals its latest checkpoint")]
     UncheckpointedHead,
     #[error("the global Work history directory is unavailable")]
+    #[cfg_attr(
+        test,
+        expect(
+            dead_code,
+            reason = "tests isolate history beneath the temporary repository instead of platform state"
+        )
+    )]
     MissingHistoryDirectory,
     #[error("path is not valid UTF-8")]
+    #[cfg_attr(
+        test,
+        expect(
+            dead_code,
+            reason = "test history roots are already represented by Utf8PathBuf"
+        )
+    )]
     NonUtf8Path,
     #[error("could not access `{path}`")]
     Io {
@@ -124,4 +154,6 @@ pub(crate) enum Error {
     Revision(#[from] rapport_git::InvalidRevision),
     #[error(transparent)]
     Context(#[from] crate::policy_context::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
 }

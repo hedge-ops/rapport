@@ -21,13 +21,27 @@ jobs:
       - name: Request local Rapport signoff
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AGGREGATE: Rapport Build
           IDENTITY: ${{ inputs.identity }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api -X POST "repos/${REPO}/statuses/${SHA}" \
-            -f "context=${IDENTITY}" \
-            -f state=pending \
-            -f "description=run Rapport locally and publish proof" \
-            -f "target_url=${PR_URL}"
+          state() {
+            gh api "repos/${REPO}/commits/${SHA}/status" \
+              --jq ".statuses | map(select(.context == \"$1\")) | first | .state // \"missing\""
+          }
+          if [ "$(state "${IDENTITY}")" != success ]; then
+            gh api -X POST "repos/${REPO}/statuses/${SHA}" \
+              -f "context=${IDENTITY}" \
+              -f state=pending \
+              -f "description=run Rapport locally and publish proof" \
+              -f "target_url=${PR_URL}"
+          fi
+          if [ "$(state "${AGGREGATE}")" != success ]; then
+            gh api -X POST "repos/${REPO}/statuses/${SHA}" \
+              -f "context=${AGGREGATE}" \
+              -f state=pending \
+              -f "description=one or more Rapport Build signoffs need local proof" \
+              -f "target_url=${PR_URL}"
+          fi

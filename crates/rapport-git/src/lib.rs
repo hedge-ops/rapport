@@ -428,6 +428,56 @@ impl<R: Runner> Git<R> {
         self.status(repository).map(|status| status.head)
     }
 
+    /// Publish `HEAD` to the named same-repository branch without force.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when the branch is unsafe or the remote rejects the
+    /// non-force update.
+    pub fn push_branch(&self, repository: &Repository, branch: &str) -> Result<(), GitError> {
+        let branch = Revision::new(branch.to_owned()).map_err(GitError::InvalidRevision)?;
+        let destination = format!("HEAD:refs/heads/{}", branch.as_str());
+        self.run_args(
+            repository,
+            ["push", "--set-upstream", "origin", &destination],
+            "publish source branch",
+        )?;
+        Ok(())
+    }
+
+    /// Delete a same-repository remote branch, succeeding when it is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when the branch is unsafe or the remote cannot be
+    /// inspected or updated.
+    pub fn delete_remote_branch(
+        &self,
+        repository: &Repository,
+        branch: &str,
+    ) -> Result<(), GitError> {
+        let branch = Revision::new(branch.to_owned()).map_err(GitError::InvalidRevision)?;
+        let reference = format!("refs/heads/{}", branch.as_str());
+        let exists = self.run_allowing_failure(
+            &CommandSpec::new("git")
+                .args(["ls-remote", "--exit-code", "--heads", "origin", &reference])
+                .current_dir(repository.root()),
+            "inspect remote source branch",
+        )?;
+        match exists.exit_code() {
+            Some(0) => {
+                self.run_args(
+                    repository,
+                    ["push", "origin", "--delete", branch.as_str()],
+                    "delete remote source branch",
+                )?;
+                Ok(())
+            }
+            Some(2) => Ok(()),
+            _ => Err(command_failed("inspect remote source branch", &exists)),
+        }
+    }
+
     /// Fetch the target branch and resolve its remote-tracking commit.
     ///
     /// # Errors
@@ -858,5 +908,39 @@ mod tests {
         assert!(Revision::new("main").is_ok());
         assert!(Revision::new("--output=/tmp/surprise").is_err());
         assert!(Revision::new("contains spaces").is_err());
+    }
+
+    #[test]
+    fn publishes_and_idempotently_deletes_a_remote_branch() {
+        let temporary = TemporaryRepository::new();
+        temporary.write("base.txt", "base\n");
+        temporary.git(["add", "base.txt"]);
+        temporary.git(["commit", "-q", "-m", "base"]);
+        temporary.git(["switch", "-q", "-c", "feature"]);
+        let remote = Utf8PathBuf::from(format!("{}-remote.git", temporary.root()));
+        let initialized = assert_ok!(
+            Command::new("git")
+                .args(["init", "--bare", "-q", remote.as_str()])
+                .output()
+        );
+        assert!(initialized.status.success());
+        temporary.git(["remote", "add", "origin", remote.as_str()]);
+        let git = Git::default();
+        let repository = assert_ok!(git.discover(temporary.root()));
+
+        assert_ok!(git.push_branch(&repository, "feature"));
+        assert!(
+            !temporary
+                .git(["ls-remote", "--heads", "origin", "feature"])
+                .is_empty()
+        );
+        assert_ok!(git.delete_remote_branch(&repository, "feature"));
+        assert_ok!(git.delete_remote_branch(&repository, "feature"));
+        assert!(
+            temporary
+                .git(["ls-remote", "--heads", "origin", "feature"])
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(remote);
     }
 }

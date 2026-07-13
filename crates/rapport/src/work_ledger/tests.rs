@@ -130,9 +130,70 @@ fn request_checksum(request: &str) -> &str {
     checksum
 }
 
+fn accepted_work(repository: &TemporaryRepository) -> Work {
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Integrate one exact accepted candidate.",
+        "--title",
+        "Integrate accepted Work",
+        "--target",
+        "main",
+    ]);
+    repository.write("candidate.txt", "accepted candidate\n");
+    repository.succeeds(&["work", "checkpoint", "start"]);
+    repository.git(["add", "candidate.txt"]);
+    repository.succeeds(&["work", "checkpoint", "complete", "Add accepted candidate"]);
+    repository.succeeds(&["build"]);
+    let request = repository.succeeds(&["review", "start"]);
+    let result_path = std::env::temp_dir().join(format!(
+        "rapport-integration-review-{}.json",
+        NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    assert_ok!(std::fs::write(
+        &result_path,
+        review_result(request_checksum(&request), "A", false)
+    ));
+    let result_path = result_path.to_string_lossy().into_owned();
+    repository.succeeds(&["review", "complete", "--result", &result_path]);
+    let _ = std::fs::remove_file(result_path);
+    let fs = RealFileSystem;
+    assert_ok!(Store::new(&repository.root).require_work(&fs))
+}
+
+fn integration_pull_request(repository: &TemporaryRepository, work: &Work, head: &str) -> String {
+    serde_json::json!({
+        "number": 115,
+        "url": "https://github.com/hedge-ops/rapport/pull/115",
+        "body": format!("Evidence\n\n<!-- Rapport-Work: {} -->", work.id),
+        "headRefOid": head,
+        "headRefName": "feature",
+        "baseRefOid": repository.git(["rev-parse", "main"]),
+        "baseRefName": "main",
+        "isCrossRepository": false,
+        "state": "OPEN",
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "reviewDecision": "",
+        "statusCheckRollup": [{
+            "__typename": "StatusContext",
+            "context": "Rapport Build",
+            "state": "SUCCESS"
+        }],
+        "mergeCommit": null
+    })
+    .to_string()
+}
+
+fn github_target(repository: &TemporaryRepository) -> CommandOutcome {
+    successful(&format!("{}\n", repository.git(["rev-parse", "main"])))
+}
+
 #[derive(Debug)]
 struct TemporaryRepository {
     root: Utf8PathBuf,
+    remote: Option<Utf8PathBuf>,
 }
 
 impl TemporaryRepository {
@@ -146,7 +207,7 @@ impl TemporaryRepository {
         let canonical = assert_ok!(std::fs::canonicalize(path));
         let root = Utf8PathBuf::from_path_buf(canonical)
             .unwrap_or_else(|path| panic!("test path is not UTF-8: {}", path.display()));
-        let repository = Self { root };
+        let repository = Self { root, remote: None };
         repository.git(["init", "-q", "-b", "main"]);
         repository.git(["config", "user.name", "Rapport Test"]);
         repository.git(["config", "user.email", "rapport@example.invalid"]);
@@ -243,11 +304,32 @@ impl TemporaryRepository {
             &targets,
         );
     }
+
+    fn use_bare_origin(&mut self) {
+        let remote = Utf8PathBuf::from(format!("{}-remote.git", self.root));
+        let output = assert_ok!(
+            Command::new("git")
+                .args(["init", "--bare", "-q", remote.as_str()])
+                .output()
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        self.git(["remote", "set-url", "origin", remote.as_str()]);
+        self.git(["push", "-q", "origin", "main"]);
+        self.git(["push", "-q", "-u", "origin", "feature"]);
+        self.remote = Some(remote);
+    }
 }
 
 impl Drop for TemporaryRepository {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+        if let Some(remote) = &self.remote {
+            let _ = std::fs::remove_dir_all(remote);
+        }
     }
 }
 
@@ -992,4 +1074,212 @@ fn review_finding_dismissal_records_reason_and_completes_policy() {
     assert!(dismissed.contains("status` — passed"), "{dismissed}");
     assert!(dismissed.contains("proof` — true"), "{dismissed}");
     let _ = std::fs::remove_file(result_path);
+}
+
+#[test]
+/// Start publishes exact Build proof and creates the aggregate Review-carrying pull request (INT-001, REV-002).
+fn integration_start_publishes_the_accepted_candidate() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let pull_request = integration_pull_request(&repository, &work, &head);
+    let runner = QueueRunner::new([
+        successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
+        successful("[]"),
+        successful("[]"),
+        github_target(&repository),
+        successful("{}"),
+        successful("[]"),
+        successful("https://github.com/hedge-ops/rapport/pull/115\n"),
+        successful(&pull_request),
+    ]);
+
+    let output = repository.succeeds_with(&["integrate", "start"], &runner);
+
+    assert!(output.contains("stage` — Published"), "{output}");
+    assert!(output.contains("blockers` — none"), "{output}");
+    assert!(output.contains("rapport integrate complete"), "{output}");
+    let fs = RealFileSystem;
+    let tasks = assert_ok!(Store::new(&repository.root).load_tasks(&fs));
+    let Some(task) = tasks.last() else {
+        panic!("Integration Task was not recorded")
+    };
+    let Some(integration) = task.integration.as_ref() else {
+        panic!("typed Integration payload was not recorded")
+    };
+    assert_eq!(integration.candidate, head);
+    assert!(integration.pushed);
+    assert!(integration.aggregate_build_published);
+    assert_eq!(integration.pull_request_number, Some(115));
+    assert_eq!(integration.review_task, "TASK_003");
+    let calls = runner.calls();
+    let Some(create) = calls.iter().find(|(spec, _)| {
+        spec.args
+            .starts_with(&["pr".to_owned(), "create".to_owned()])
+    }) else {
+        panic!("pull request creation was not recorded")
+    };
+    let Some(body) = create.0.args.last() else {
+        panic!("pull request body was not recorded")
+    };
+    assert!(body.contains("Independent Review"));
+    assert!(body.contains("Rapport-Work"));
+    assert!(!body.contains("Rapport Review status"));
+}
+
+#[test]
+/// Retrying interrupted publication adopts the owned pull request without repeating durable side effects (INT-002).
+fn integration_start_resumes_without_duplicate_publication() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let pull_request = integration_pull_request(&repository, &work, &head);
+    let first = QueueRunner::new([
+        successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
+        successful("[]"),
+        successful("[]"),
+        github_target(&repository),
+        successful("{}"),
+        successful("[]"),
+        failing("connection closed after request creation"),
+    ]);
+
+    let (code, _, error) = repository.run_with(&["integrate", "start"], &first);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("connection closed"), "{error}");
+
+    let second = QueueRunner::new([
+        successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
+        successful(&format!("[{pull_request}]")),
+    ]);
+    let output = repository.succeeds_with(&["integrate", "start"], &second);
+
+    assert!(output.contains("pull/115"), "{output}");
+    let calls = second.calls();
+    assert_eq!(calls.len(), 2);
+    assert!(!calls.iter().any(|(spec, _)| {
+        spec.args.iter().any(|argument| argument == "state=success")
+            || spec
+                .args
+                .starts_with(&["pr".to_owned(), "create".to_owned()])
+    }));
+}
+
+#[test]
+/// Status reports a changed remote head without mutating GitHub or local Work (INT-001, INT-002).
+fn integration_status_is_read_only_and_reports_changed_head() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let pull_request = integration_pull_request(&repository, &work, &head);
+    let start = QueueRunner::new([
+        successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
+        successful("[]"),
+        successful("[]"),
+        github_target(&repository),
+        successful("{}"),
+        successful("[]"),
+        successful("https://github.com/hedge-ops/rapport/pull/115\n"),
+        successful(&pull_request),
+    ]);
+    repository.succeeds_with(&["integrate", "start"], &start);
+    let changed = integration_pull_request(&repository, &work, "deadbeef");
+    let status = QueueRunner::new([successful(&changed)]);
+
+    let output = repository.succeeds_with(&["integrate", "status"], &status);
+
+    assert!(output.contains("pull-request head changed"), "{output}");
+    assert_eq!(status.calls().len(), 1);
+    let fs = RealFileSystem;
+    assert!(assert_ok!(Store::new(&repository.root).load_work(&fs)).is_some());
+}
+
+#[test]
+/// Cancellation closes only the owned PR, deletes its remote branch, and preserves the local Work candidate (INT-002).
+fn integration_cancel_preserves_local_work() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let pull_request = integration_pull_request(&repository, &work, &head);
+    let start = QueueRunner::new([
+        successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
+        successful("[]"),
+        successful("[]"),
+        github_target(&repository),
+        successful("{}"),
+        successful("[]"),
+        successful("https://github.com/hedge-ops/rapport/pull/115\n"),
+        successful(&pull_request),
+    ]);
+    repository.succeeds_with(&["integrate", "start"], &start);
+    let cancel = QueueRunner::new([successful(&pull_request), successful("")]);
+
+    let output = repository.succeeds_with(
+        &[
+            "integrate",
+            "cancel",
+            "--reason",
+            "The candidate needs another product decision.",
+        ],
+        &cancel,
+    );
+
+    assert!(output.contains("local Work preserved` — true"), "{output}");
+    assert_eq!(repository.git(["branch", "--show-current"]), "feature");
+    assert!(repository.root.join(".rapport/work.toml").is_file());
+    assert!(
+        repository
+            .git(["ls-remote", "--heads", "origin", "feature"])
+            .is_empty()
+    );
+}
+
+#[test]
+/// Completion revalidates, squash-merges, archives Work, and leaves the local branch checked out (INT-001, INT-002).
+fn integration_complete_archives_without_switching_local_git() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let pull_request = integration_pull_request(&repository, &work, &head);
+    let start = QueueRunner::new([
+        successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
+        successful("[]"),
+        successful("[]"),
+        github_target(&repository),
+        successful("{}"),
+        successful("[]"),
+        successful("https://github.com/hedge-ops/rapport/pull/115\n"),
+        successful(&pull_request),
+    ]);
+    repository.succeeds_with(&["integrate", "start"], &start);
+    let mut merged: serde_json::Value = assert_ok!(serde_json::from_str(&pull_request));
+    merged["state"] = serde_json::Value::String("MERGED".to_owned());
+    merged["mergeCommit"] = serde_json::json!({"oid": "feedface1234"});
+    let complete = QueueRunner::new([
+        successful(&pull_request),
+        successful(""),
+        successful(&merged.to_string()),
+    ]);
+
+    let output = repository.succeeds_with(&["integrate", "complete"], &complete);
+
+    assert!(output.contains("feedface1234"), "{output}");
+    assert!(!repository.root.join(".rapport/work.toml").is_file());
+    assert!(
+        repository
+            .root
+            .join(format!(".rapport/test-history/work/{}/work.toml", work.id))
+            .is_file()
+    );
+    assert_eq!(repository.git(["branch", "--show-current"]), "feature");
+    assert!(
+        repository
+            .git(["ls-remote", "--heads", "origin", "feature"])
+            .is_empty()
+    );
 }
