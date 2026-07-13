@@ -26,17 +26,23 @@ impl ContextId {
         let value = path
             .components()
             .map(|component| {
-                component
-                    .as_str()
-                    .chars()
-                    .map(|character| {
-                        if character.is_ascii_alphanumeric() {
-                            character.to_ascii_uppercase()
-                        } else {
-                            '_'
-                        }
-                    })
-                    .collect::<String>()
+                let value = component.as_str();
+                let leading_dots = value.bytes().take_while(|byte| *byte == b'.').count();
+                let mut id = "DOT_".repeat(leading_dots);
+                id.push_str(
+                    value[leading_dots..]
+                        .chars()
+                        .map(|character| {
+                            if character.is_ascii_alphanumeric() {
+                                character.to_ascii_uppercase()
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect::<String>()
+                        .trim_matches('_'),
+                );
+                id
             })
             .collect::<Vec<_>>()
             .join("_");

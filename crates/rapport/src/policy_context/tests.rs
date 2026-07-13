@@ -21,7 +21,7 @@ impl CommandRunner for JustRunner {
         assert_eq!(spec, &CommandSpec::new("just", ["--summary"]));
         Ok(CommandOutcome {
             success: true,
-            stdout: "ci test".to_owned(),
+            stdout: "ci test skills-ci".to_owned(),
             stderr: String::new(),
         })
     }
@@ -312,6 +312,54 @@ fn phase_two_context_policy_lifecycle() {
     let removed = succeeds(&mut fs, &["context", "remove", "app"]);
     assert!(removed.contains("context` — APP"));
     assert!(!fs.is_file("/repo/app/context.toml"));
+}
+
+#[test]
+/// Hidden repository directories retain canonical Context IDs so their local Build signoffs can be declared.
+fn hidden_root_contexts_support_build_signoffs() {
+    let mut fs = InMemoryFileSystem::default();
+    fs.add_directory("/repo/.git");
+    fs.add_directory("/repo/.github");
+    fs.add_directory("/repo/.agents/skills");
+
+    let github = succeeds(
+        &mut fs,
+        &[
+            "context",
+            "init",
+            ".github",
+            "--purpose",
+            "GitHub automation.",
+        ],
+    );
+    assert!(github.contains("`context` — DOT_GITHUB"));
+    let agents = succeeds(
+        &mut fs,
+        &[
+            "context",
+            "init",
+            ".agents/skills",
+            "--purpose",
+            "Agent skills.",
+        ],
+    );
+    assert!(agents.contains("`context` — DOT_AGENTS_SKILLS"));
+
+    succeeds(
+        &mut fs,
+        &[
+            "context",
+            "signoff",
+            "add",
+            ".agents/skills",
+            "--target",
+            "skills-ci",
+            "--stage",
+            "1",
+        ],
+    );
+    let signoffs = succeeds(&mut fs, &["context", "signoff", "list", ".agents/skills"]);
+    assert!(signoffs.contains("`DOT_AGENTS_SKILLS_SIGNOFF_SKILLS_CI`"));
 }
 
 #[test]
