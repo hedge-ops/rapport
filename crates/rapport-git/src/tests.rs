@@ -3,9 +3,11 @@
 use super::{BranchName, Git, ObjectId, Revision};
 use claims::{assert_ok, assert_some};
 use pretty_assertions::assert_eq;
+use rapport_command::{CommandOutcome, CommandSpec, Runner, SystemRunner};
 use rapport_files::{Utf8Path, Utf8PathBuf};
+use std::io;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
 const SHA1_OBJECT_ID: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -64,6 +66,23 @@ impl TemporaryRepository {
 impl Drop for TemporaryRepository {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[derive(Debug)]
+struct ConcurrentBranchDeletionRunner {
+    deleted: AtomicBool,
+}
+
+impl Runner for ConcurrentBranchDeletionRunner {
+    fn run(&self, spec: &CommandSpec) -> io::Result<CommandOutcome> {
+        if spec.arguments() == ["push", "origin", "--delete", "feature"]
+            && !self.deleted.swap(true, Ordering::SeqCst)
+        {
+            let concurrent_delete = SystemRunner.run(spec)?;
+            assert!(concurrent_delete.success());
+        }
+        SystemRunner.run(spec)
     }
 }
 
@@ -198,6 +217,38 @@ fn push_branch_should_publish_and_delete_remote_branch_idempotently() {
     assert_eq!(tracking.head(), assert_ok!(git.status(&repository)).head());
     assert_eq!(tracking.revision().as_str(), "refs/remotes/origin/feature");
     assert_ok!(git.delete_remote_branch(&repository, &branch));
+    assert_ok!(git.delete_remote_branch(&repository, &branch));
+    assert!(
+        temporary
+            .git(["ls-remote", "--heads", "origin", "feature"])
+            .is_empty()
+    );
+    let _ = std::fs::remove_dir_all(remote);
+}
+
+#[test]
+/// When another actor deletes the branch first, deletion still succeeds.
+fn delete_remote_branch_should_tolerate_concurrent_deletion() {
+    let temporary = TemporaryRepository::new();
+    temporary.write("base.txt", "base\n");
+    temporary.git(["add", "base.txt"]);
+    temporary.git(["commit", "-q", "-m", "base"]);
+    temporary.git(["switch", "-q", "-c", "feature"]);
+    let remote = Utf8PathBuf::from(format!("{}-remote.git", temporary.root()));
+    let initialized = assert_ok!(
+        Command::new("git")
+            .args(["init", "--bare", "-q", remote.as_str()])
+            .output()
+    );
+    assert!(initialized.status.success());
+    temporary.git(["remote", "add", "origin", remote.as_str()]);
+    temporary.git(["push", "-q", "origin", "feature"]);
+    let git = Git::new(ConcurrentBranchDeletionRunner {
+        deleted: AtomicBool::new(false),
+    });
+    let repository = assert_ok!(git.discover(temporary.root()));
+    let branch = assert_ok!(BranchName::new("feature"));
+
     assert_ok!(git.delete_remote_branch(&repository, &branch));
     assert!(
         temporary
