@@ -769,7 +769,7 @@ fn render_request(
     build: Option<&str>,
 ) -> String {
     format!(
-        "# Rapport Independent Review\n\n## Intent\n\n{}\n\n## Candidate\n\n- Base: `{}`\n- Candidate: `{}`\n- Build proof: `{}`\n\n{}\n\n## Grading Rubric\n\nA is excellent and exemplary; B is good and releasable; C has meaningful weaknesses; D has serious release-blocking flaws; F is unacceptable. Grade from the highest-impact unresolved risk. Inspect relevant source, tests, manifests, build files, and documentation. Form findings independently, cite Rule IDs and concrete file/line evidence, and keep suggested Rule improvements separate.\n",
+        "# Rapport Independent Review\n\n## Intent\n\n{}\n\n## Candidate\n\n- Base: `{}`\n- Candidate: `{}`\n- Build proof: `{}`\n\n{}\n\n## Host Instruction\n\nDelegate this request to a fresh independent review agent. The implementing agent must not review or certify its own candidate. Save the returned JSON outside the repository, then run `rapport review complete --result <FILE>`.\n\n## Grading Rubric\n\nA is excellent and exemplary; B is good and releasable; C has meaningful weaknesses; D has serious release-blocking flaws; F is unacceptable. Grade from the highest-impact unresolved risk. Inspect relevant source, tests, manifests, build files, and documentation. Form findings independently, cite Rule IDs and concrete file/line evidence, and keep suggested Rule improvements separate.\n",
         work.map_or("Ad hoc repository review".to_owned(), |w| format!(
             "{}\n\n{}\n\nSource: {:?} {}",
             w.title, w.description, w.request.kind, w.request.value

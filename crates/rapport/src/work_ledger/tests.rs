@@ -1279,6 +1279,14 @@ fn acceptance_review_passes_and_routes_work_to_integrate() {
 
     let request = repository.succeeds(&["review", "start"]);
     assert!(request.contains("Rapport Independent Review"), "{request}");
+    assert!(
+        request.contains("Delegate this request to a fresh independent review agent"),
+        "{request}"
+    );
+    assert!(
+        request.contains("The implementing agent must not review or certify its own candidate"),
+        "{request}"
+    );
     assert!(!request.contains("effective review minimum"), "{request}");
     let result_path = std::env::temp_dir().join(format!(
         "rapport-review-result-{}.json",
