@@ -80,7 +80,10 @@ impl Runner for ConcurrentBranchDeletionRunner {
             && !self.deleted.swap(true, Ordering::SeqCst)
         {
             let concurrent_delete = SystemRunner.run(spec)?;
-            assert!(concurrent_delete.success());
+            assert!(
+                concurrent_delete.success(),
+                "precondition: the concurrent actor deletes the remote branch"
+            );
         }
         SystemRunner.run(spec)
     }
@@ -240,7 +243,10 @@ fn delete_remote_branch_should_tolerate_concurrent_deletion() {
             .args(["init", "--bare", "-q", remote.as_str()])
             .output()
     );
-    assert!(initialized.status.success());
+    assert!(
+        initialized.status.success(),
+        "precondition: the bare remote repository initializes successfully"
+    );
     temporary.git(["remote", "add", "origin", remote.as_str()]);
     temporary.git(["push", "-q", "origin", "feature"]);
     let git = Git::new(ConcurrentBranchDeletionRunner {
@@ -253,7 +259,8 @@ fn delete_remote_branch_should_tolerate_concurrent_deletion() {
     assert!(
         temporary
             .git(["ls-remote", "--heads", "origin", "feature"])
-            .is_empty()
+            .is_empty(),
+        "expecting the remote branch to remain absent after concurrent deletion"
     );
     let _ = std::fs::remove_dir_all(remote);
 }
