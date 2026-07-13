@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-13
+
+### Fixed
+
+- Fixed Context initialization and Build signoffs for hidden-root repository
+  paths by deriving explicit stable IDs such as `DOT_GITHUB`.
+
 ## [0.5.1] - 2026-07-13
 
 ### Added
@@ -256,7 +263,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.1...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.2...HEAD
+[0.5.2]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.1...rapport-v0.5.2
 [0.5.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.0...rapport-v0.5.1
 [0.5.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.2...rapport-v0.5.0
 [0.4.2]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.1...rapport-v0.4.2
