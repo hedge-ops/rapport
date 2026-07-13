@@ -1,11 +1,13 @@
+use super::Error;
 use super::domain::{
     RequestKind, RequestSource, Task, TaskStatus, Work, WorkOutcomeKind, Workflow,
 };
 use super::history::HistoryStore;
 use super::repository::Store;
 use crate::{Clock, CommandOutcome, CommandRunner, CommandSpec, run_with_environment};
-use claims::{assert_ok, assert_some};
+use claims::{assert_err, assert_ok, assert_some};
 use rapport_files::{FileSystem, InMemoryFileSystem, RealFileSystem, Utf8Path, Utf8PathBuf};
+use rapport_git::{BranchName, ObjectId};
 use std::collections::VecDeque;
 use std::io;
 use std::process::{Command, ExitCode};
@@ -13,6 +15,34 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
+const INITIAL_OBJECT_ID: &str = "1111111111111111111111111111111111111111";
+const CHECKPOINT_OBJECT_ID: &str = "2222222222222222222222222222222222222222";
+const MERGE_OBJECT_ID: &str = "feedface1234feedface1234feedface1234feed";
+
+fn branch(value: &str) -> BranchName {
+    assert_ok!(BranchName::new(value))
+}
+
+fn object_id(value: &str) -> ObjectId {
+    assert_ok!(ObjectId::new(value))
+}
+
+fn stored_work() -> Work {
+    assert_ok!(Work::new(
+        "Stored Work".to_owned(),
+        "Reject invalid persisted Git identities.".to_owned(),
+        RequestSource {
+            kind: RequestKind::AdHoc,
+            value: "Exercise the persistence boundary.".to_owned(),
+        },
+        "/repository".to_owned(),
+        branch("feature"),
+        branch("main"),
+        object_id(INITIAL_OBJECT_ID),
+        object_id(CHECKPOINT_OBJECT_ID),
+        "2026-07-12T23:00:00Z".to_owned(),
+    ))
+}
 
 #[derive(Debug)]
 struct FixedClock;
@@ -337,6 +367,58 @@ impl Drop for TemporaryRepository {
 }
 
 #[test]
+/// When persisted Work contains an invalid branch, loading fails instead of using a fallback.
+fn load_work_should_reject_invalid_branch_names_without_fallback() {
+    let mut fs = InMemoryFileSystem::default();
+    let store = Store::new("/repository");
+    assert_ok!(store.save_work(&mut fs, &stored_work()));
+    let path = Utf8Path::new("/repository/.rapport/work.toml");
+    let valid = assert_ok!(fs.read_to_string(path));
+
+    for invalid in [
+        "-option",
+        "feature name",
+        "feature..other",
+        "feature@{upstream}",
+        "feature/.hidden",
+        "feature.lock",
+    ] {
+        let corrupted = valid.replace(
+            "source_branch = \"feature\"",
+            &format!("source_branch = \"{invalid}\""),
+        );
+        assert_ok!(fs.write_string(path, corrupted));
+        let error = assert_err!(store.load_work(&fs));
+        assert!(
+            matches!(error, Error::BranchName(_)),
+            "expecting invalid stored branch {invalid:?} to fail explicitly, got {error:?}"
+        );
+    }
+}
+
+#[test]
+/// When persisted Work contains an invalid object ID, loading fails before returning domain state.
+fn load_work_should_reject_invalid_object_identifiers() {
+    let mut fs = InMemoryFileSystem::default();
+    let store = Store::new("/repository");
+    assert_ok!(store.save_work(&mut fs, &stored_work()));
+    let path = Utf8Path::new("/repository/.rapport/work.toml");
+    let valid = assert_ok!(fs.read_to_string(path));
+    let corrupted = valid.replace(
+        &format!("starting_source = \"{INITIAL_OBJECT_ID}\""),
+        "starting_source = \"not-an-oid\"",
+    );
+    assert_ok!(fs.write_string(path, corrupted));
+
+    let error = assert_err!(store.load_work(&fs));
+
+    assert!(
+        matches!(error, Error::ObjectId(_)),
+        "expecting an invalid stored object identifier to fail explicitly, got {error:?}"
+    );
+}
+
+#[test]
 /// When Phase 3 runs end to end, request, Git, Tasks, and proof readiness remain aligned (WRK-001–WRK-005).
 fn phase_three_work_checkpoint_and_rebase_lifecycle() {
     let repository = TemporaryRepository::new();
@@ -525,10 +607,10 @@ fn archive_writes_global_history_before_removing_local_state() {
             value: "#106".to_owned(),
         },
         "/repository".to_owned(),
-        "feature".to_owned(),
-        "main".to_owned(),
-        "1111".to_owned(),
-        "1111".to_owned(),
+        branch("feature"),
+        branch("main"),
+        object_id(INITIAL_OBJECT_ID),
+        object_id(INITIAL_OBJECT_ID),
         "2026-07-12T23:00:00Z".to_owned(),
     ));
     let mut task = Task::new(
@@ -553,8 +635,8 @@ fn archive_writes_global_history_before_removing_local_state() {
         WorkOutcomeKind::Completed,
         "2026-07-12T23:00:08Z".to_owned(),
         "Preserved the complete local ledger.".to_owned(),
-        "2222".to_owned(),
-        "1111".to_owned(),
+        object_id(CHECKPOINT_OBJECT_ID),
+        object_id(INITIAL_OBJECT_ID),
     ));
     assert_ok!(store.save_work_and_task(&mut fs, &work, &task));
 
@@ -1439,7 +1521,7 @@ fn integration_complete_archives_without_switching_local_git() {
     repository.succeeds_with(&["integrate", "start"], &start);
     let mut merged: serde_json::Value = assert_ok!(serde_json::from_str(&pull_request));
     merged["state"] = serde_json::Value::String("MERGED".to_owned());
-    merged["mergeCommit"] = serde_json::json!({"oid": "feedface1234"});
+    merged["mergeCommit"] = serde_json::json!({"oid": MERGE_OBJECT_ID});
     let complete = QueueRunner::new([
         successful(&pull_request),
         successful(""),
@@ -1448,7 +1530,10 @@ fn integration_complete_archives_without_switching_local_git() {
 
     let output = repository.succeeds_with(&["integrate", "complete"], &complete);
 
-    assert!(output.contains("feedface1234"), "{output}");
+    assert!(
+        output.contains(MERGE_OBJECT_ID),
+        "expecting completion to report the full merge object ID: {output}"
+    );
     assert!(!repository.root.join(".rapport/work.toml").is_file());
     assert!(
         repository
@@ -1468,7 +1553,7 @@ fn integration_complete_archives_without_switching_local_git() {
         "expecting Integration to finalize Work as integrated: {history}"
     );
     assert!(
-        history.contains("final target` — feedface1234"),
+        history.contains(&format!("final target` — {MERGE_OBJECT_ID}")),
         "expecting history to retain the confirmed squash commit: {history}"
     );
     assert!(

@@ -1,8 +1,10 @@
 //! Atomic persistence for finalized Work History.
+//!
+//! This module owns global archive publication and resumable cleanup of active repository-local state.
 
 use super::super::Error;
 use super::super::domain::{TASK_SCHEMA_VERSION, Task, WORK_SCHEMA_VERSION, Work};
-use super::super::repository::Store;
+use super::super::repository::{Store, decode_work, encode_work};
 #[cfg(not(test))]
 use directories::ProjectDirs;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
@@ -152,10 +154,7 @@ impl HistoryStore {
             path: work_path.clone(),
             source,
         })?;
-        let work: Work = toml::from_str(&work_contents).map_err(|source| Error::Decode {
-            path: work_path.clone(),
-            source,
-        })?;
+        let work = decode_work(&work_contents, &work_path)?;
         let expected_work_id = work.id.to_string();
         if work.version != WORK_SCHEMA_VERSION
             || path.file_name() != Some(expected_work_id.as_str())
@@ -218,7 +217,7 @@ impl HistoryStore {
             source,
         })?;
         let work_path = path.join("work.toml");
-        fs.write_string(&work_path, toml::to_string_pretty(work)?)
+        fs.write_string(&work_path, encode_work(work)?)
             .map_err(|source| Error::Io {
                 path: work_path,
                 source,
@@ -272,7 +271,20 @@ mod tests {
     };
     use claims::{assert_err, assert_ok, assert_some};
     use rapport_files::InMemoryFileSystem;
+    use rapport_git::{BranchName, ObjectId};
     use std::io;
+
+    const INITIAL_OBJECT_ID: &str = "1111111111111111111111111111111111111111";
+    const CHECKPOINT_OBJECT_ID: &str = "2222222222222222222222222222222222222222";
+    const LATER_OBJECT_ID: &str = "3333333333333333333333333333333333333333";
+
+    fn branch(value: &str) -> BranchName {
+        assert_ok!(BranchName::new(value))
+    }
+
+    fn object_id(value: &str) -> ObjectId {
+        assert_ok!(ObjectId::new(value))
+    }
 
     #[derive(Debug, Default)]
     struct FailingPublishFileSystem {
@@ -346,10 +358,10 @@ mod tests {
                 value: "Exercise atomic history publication.".to_owned(),
             },
             "/repository".to_owned(),
-            "feature".to_owned(),
-            "main".to_owned(),
-            "1111".to_owned(),
-            "1111".to_owned(),
+            branch("feature"),
+            branch("main"),
+            object_id(INITIAL_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T12:00:00Z".to_owned(),
         ));
         let mut task = Task::new(
@@ -374,8 +386,8 @@ mod tests {
             WorkOutcomeKind::Completed,
             "2026-07-13T12:01:00Z".to_owned(),
             "History is ready.".to_owned(),
-            "2222".to_owned(),
-            "1111".to_owned(),
+            object_id(CHECKPOINT_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         assert_ok!(active.save_work_and_task(&mut fs, &work, &task));
         let history = assert_ok!(HistoryStore::new(Utf8Path::new("/repository")));
@@ -414,10 +426,10 @@ mod tests {
                 value: "Exercise cleanup recovery.".to_owned(),
             },
             "/repository".to_owned(),
-            "feature".to_owned(),
-            "main".to_owned(),
-            "1111".to_owned(),
-            "1111".to_owned(),
+            branch("feature"),
+            branch("main"),
+            object_id(INITIAL_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T12:00:00Z".to_owned(),
         ));
         let mut first = Task::new(
@@ -460,8 +472,8 @@ mod tests {
             WorkOutcomeKind::Completed,
             "2026-07-13T12:01:00Z".to_owned(),
             "Published the complete record.".to_owned(),
-            "2222".to_owned(),
-            "1111".to_owned(),
+            object_id(CHECKPOINT_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         let tasks = vec![first, second];
         assert_ok!(active.save_work_and_tasks(&mut fs, &work, &tasks));
@@ -505,10 +517,10 @@ mod tests {
                 value: "#105".to_owned(),
             },
             "/first-repository".to_owned(),
-            "older".to_owned(),
-            "main".to_owned(),
-            "1111".to_owned(),
-            "1111".to_owned(),
+            branch("older"),
+            branch("main"),
+            object_id(INITIAL_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T10:00:00Z".to_owned(),
         ));
         older.id = assert_ok!(Uuid::parse_str("019f5300-0000-4000-8000-000000000001"));
@@ -516,8 +528,8 @@ mod tests {
             WorkOutcomeKind::Completed,
             "2026-07-13T10:30:00Z".to_owned(),
             "Completed earlier.".to_owned(),
-            "2222".to_owned(),
-            "1111".to_owned(),
+            object_id(CHECKPOINT_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         let mut newer = assert_ok!(Work::new(
             "Newer Work".to_owned(),
@@ -527,10 +539,10 @@ mod tests {
                 value: "#106".to_owned(),
             },
             "/second-repository".to_owned(),
-            "newer".to_owned(),
-            "main".to_owned(),
-            "3333".to_owned(),
-            "1111".to_owned(),
+            branch("newer"),
+            branch("main"),
+            object_id(LATER_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T11:00:00Z".to_owned(),
         ));
         newer.id = assert_ok!(Uuid::parse_str("019f5300-0000-4000-8000-000000000002"));
@@ -538,8 +550,8 @@ mod tests {
             WorkOutcomeKind::Abandoned,
             "2026-07-13T11:30:00Z".to_owned(),
             "Stopped later.".to_owned(),
-            "3333".to_owned(),
-            "1111".to_owned(),
+            object_id(LATER_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         assert_ok!(HistoryStore::write_record(
             &mut fs,

@@ -1,4 +1,6 @@
 //! Shared Ruleset command boundary.
+//!
+//! This module owns clap grammar dispatch and user-facing Ruleset lifecycle output; repositories own persistence.
 
 use super::Error;
 use super::catalog::Catalog;

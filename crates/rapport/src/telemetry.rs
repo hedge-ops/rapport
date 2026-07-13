@@ -1,9 +1,12 @@
+//! Local command telemetry records.
+//!
+//! This module owns the durable event schema and append-only repository-local
+//! writer; individual commands decide which outcome to record.
+
 use crate::paths::RapportPaths;
 use rapport_files::FileSystem;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::error::Error;
-use std::fmt;
 use std::io;
 
 pub const EVENT_SCHEMA_VERSION: u16 = 2;
@@ -135,37 +138,19 @@ impl TelemetryWriter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TelemetryError {
-    Io(io::Error),
-    Encode(serde_json::Error),
-}
-
-impl fmt::Display for TelemetryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "telemetry filesystem error: {error}"),
-            Self::Encode(error) => write!(f, "telemetry encode error: {error}"),
-        }
-    }
-}
-
-impl Error for TelemetryError {}
-
-impl From<io::Error> for TelemetryError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
-}
-
-impl From<serde_json::Error> for TelemetryError {
-    fn from(error: serde_json::Error) -> Self {
-        Self::Encode(error)
-    }
+    #[error("telemetry filesystem error: {0}")]
+    Io(#[from] io::Error),
+    #[error("telemetry encode error: {0}")]
+    Encode(#[from] serde_json::Error),
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "telemetry tests unwrap deterministic in-memory event fixtures"
+)]
 mod tests {
     use super::*;
     use rapport_files::InMemoryFileSystem;

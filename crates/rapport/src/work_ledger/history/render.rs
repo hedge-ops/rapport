@@ -1,4 +1,6 @@
 //! Human-readable rendering for complete historical Work records.
+//!
+//! This module owns complete historical evidence views without mutating active or archived state.
 
 use super::super::Error;
 use super::super::domain::{

@@ -14,7 +14,8 @@ use std::str::FromStr;
 
 pub(crate) const SCHEMA_VERSION: u16 = 1;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+#[display("{_0}")]
 pub(crate) struct ContextId(String);
 
 impl ContextId {
@@ -74,12 +75,6 @@ impl ContextId {
 impl fmt::Debug for ContextId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_tuple("ContextId").field(&self.0).finish()
-    }
-}
-
-impl fmt::Display for ContextId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
     }
 }
 
@@ -177,20 +172,33 @@ pub(crate) enum BoundaryOwnerUpdate {
     Clear,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub(crate) enum Grade {
+    #[display("F")]
     F,
+    #[display("D-")]
     DMinus,
+    #[display("D")]
     D,
+    #[display("D+")]
     DPlus,
+    #[display("C-")]
     CMinus,
+    #[display("C")]
     C,
+    #[display("C+")]
     CPlus,
+    #[display("B-")]
     BMinus,
+    #[display("B")]
     B,
+    #[display("B+")]
     BPlus,
+    #[display("A-")]
     AMinus,
+    #[display("A")]
     A,
+    #[display("A+")]
     APlus,
 }
 
@@ -218,26 +226,6 @@ impl FromStr for Grade {
             "F" => Ok(Self::F),
             _ => Err(Error::InvalidGrade),
         }
-    }
-}
-
-impl fmt::Display for Grade {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::APlus => "A+",
-            Self::A => "A",
-            Self::AMinus => "A-",
-            Self::BPlus => "B+",
-            Self::B => "B",
-            Self::BMinus => "B-",
-            Self::CPlus => "C+",
-            Self::C => "C",
-            Self::CMinus => "C-",
-            Self::DPlus => "D+",
-            Self::D => "D",
-            Self::DMinus => "D-",
-            Self::F => "F",
-        })
     }
 }
 

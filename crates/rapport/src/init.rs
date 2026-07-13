@@ -1,5 +1,10 @@
+//! Repository initialization command.
+//!
+//! This module owns idempotent agent instructions, local rules ignore policy,
+//! shared signoff workflow creation, and init telemetry.
+
 use crate::context::{Clock, CommandContext};
-use crate::signoff_contract;
+use crate::policy_context;
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
@@ -33,7 +38,7 @@ where
             let contents = upsert_rapport_section(existing.as_deref());
             match context.fs.write_string(&path, contents) {
                 Ok(()) => {
-                    match signoff_contract::write_shared(context.fs, context.paths.repo_root()) {
+                    match policy_context::write_shared(context.fs, context.paths.repo_root()) {
                         Ok(()) => {
                             if let Err(error) =
                                 write_rules_gitignore(context.fs, context.paths.repo_root())
@@ -248,7 +253,7 @@ fn render_initialized(status: &str) -> String {
             ])
         })
         .section("Signoff Workflow", |b| {
-            b.entries([("path", signoff_contract::SHARED_WORKFLOW.to_string())])
+            b.entries([("path", policy_context::SHARED_WORKFLOW_PATH.to_string())])
         })
         .next_actions(nonempty![RunHint::new("rapport work status")])
         .build()

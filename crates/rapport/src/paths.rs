@@ -1,3 +1,8 @@
+//! Repository-local Rapport paths.
+//!
+//! This module owns canonical locations for active Work, Tasks, history,
+//! telemetry, and other local workflow state.
+
 use rapport_files::{Utf8Path, Utf8PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

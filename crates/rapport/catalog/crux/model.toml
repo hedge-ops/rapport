@@ -4,6 +4,7 @@ includes = []
 
 [rules.CRUX_MODEL_001]
 text = "Represent lifecycle, progress, failure, and transitions as explicit state-machine state. Do not hide stateful behavior behind stateless helpers."
+rationale = "Explicit state makes lifecycle invariants and valid transitions visible to the compiler and reviewers."
 
 [rules.CRUX_MODEL_001.avoid]
 language = "rust"
@@ -15,6 +16,7 @@ text = '''explicit `Pending`, `Fetching`, `Applying`, and `Failed` states.'''
 
 [rules.CRUX_MODEL_002]
 text = "Use `new(...)` for pure state entry and `start(...) -> Start<Self, Event>` when entering the state emits commands."
+rationale = "Separating pure construction from effectful entry makes command emission impossible to overlook."
 
 [rules.CRUX_MODEL_002.avoid]
 language = "rust"
@@ -26,6 +28,7 @@ text = '''pure `new` and effectful `start`.'''
 
 [rules.CRUX_MODEL_003]
 text = "Give each state-machine node one central `update(...)` method that owns mutation in response to its events."
+rationale = "One update contract centralizes mutation and keeps the accepted event surface auditable."
 
 [rules.CRUX_MODEL_003.avoid]
 language = "text"
@@ -37,6 +40,7 @@ text = '''one `update` matching the event enum.'''
 
 [rules.CRUX_MODEL_004]
 text = "Return `Outcome<Self, Transition, ParentEvent>` when a child may either continue or complete into a parent-owned transition."
+rationale = "An explicit outcome preserves the distinction between continued child ownership and parent-owned completion."
 
 [rules.CRUX_MODEL_004.avoid]
 language = "text"
@@ -48,6 +52,7 @@ text = '''an explicit `Outcome<Self, Transition, ParentEvent>`.'''
 
 [rules.CRUX_MODEL_005]
 text = "Represent meaningful terminal paths with explicit transition or completion types. Do not encode terminal outcomes as booleans, strings, or incidental effects."
+rationale = "Typed terminal paths prevent callers from guessing meaning from incidental flags or strings."
 
 [rules.CRUX_MODEL_005.avoid]
 language = "rust"
@@ -59,6 +64,7 @@ text = '''Transition::Completed(Workspace)` and `Transition::Cancelled'''
 
 [rules.CRUX_MODEL_006]
 text = "Parents own child routing. Parent state variants mirror child states, and parent event variants mirror child events."
+rationale = "Mirrored variants preserve hierarchical ownership and keep child behavior from flattening into the parent."
 
 [rules.CRUX_MODEL_006.avoid]
 language = "text"
@@ -70,6 +76,7 @@ text = '''ParentEvent::Loading(loading::Event)` and `::Editing(editing::Event)''
 
 [rules.CRUX_MODEL_007]
 text = "Route parent events by matching the parent state and event together, then delegate matching pairs to the owning child."
+rationale = "Matching state and event together prevents dispatching an event to a child that is not currently active."
 
 [rules.CRUX_MODEL_007.avoid]
 language = "text"
@@ -81,6 +88,7 @@ text = '''`match (self, event)` with paired child arms.'''
 
 [rules.CRUX_MODEL_008]
 text = "Route wrong-state events through `route::invalid(...)`. Do not silently ignore them or reconstruct the parent merely to return it unchanged."
+rationale = "Surfacing invalid routes exposes stale or impossible event flow instead of silently losing behavior."
 
 [rules.CRUX_MODEL_008.avoid]
 language = "rust"
@@ -92,6 +100,7 @@ text = '''(state, event) => route::invalid(state, event)'''
 
 [rules.CRUX_MODEL_009]
 text = "Use a newtype event when a state consumes exactly one input type and the wrapper exists for parent routing. Use an enum when the state accepts multiple inputs or the event set is expected to grow."
+rationale = "The representation should communicate whether an event is a routing wrapper or an extensible choice set."
 
 [rules.CRUX_MODEL_009.avoid]
 language = "text"
@@ -103,6 +112,7 @@ text = '''struct StorageReadEvent(StorageReadResponse)'''
 
 [rules.CRUX_MODEL_010]
 text = "Use `CompletingOutcome<Transition, ParentEvent>` when processing the event must terminate the child and no `Continue` path is possible."
+rationale = "A completing-only outcome removes an impossible continuation state from the type contract."
 
 [rules.CRUX_MODEL_010.avoid]
 language = "text"
@@ -114,6 +124,7 @@ text = '''CompletingOutcome<Transition, ParentEvent>'''
 
 [rules.CRUX_MODEL_011]
 text = "Screens own local input and render state. Input events remain local until a commit gesture produces a typed value for the parent."
+rationale = "Local input ownership avoids parent churn and emits only validated, meaningful submissions."
 
 [rules.CRUX_MODEL_011.avoid]
 language = "text"
@@ -125,6 +136,7 @@ text = '''mutate screen input locally and render.'''
 
 [rules.CRUX_MODEL_012]
 text = "Let the parent decide whether submitted screen values cause a transition or effects. Screens expose validation and hand submitted values to the parent."
+rationale = "The parent owns business transitions, while screens remain reusable input and rendering state machines."
 
 [rules.CRUX_MODEL_012.avoid]
 language = "text"
@@ -136,6 +148,7 @@ text = '''record a submitted name for the parent to consume.'''
 
 [rules.CRUX_MODEL_013]
 text = "When behavior recurs across unrelated states and has lifecycle, progress, or failure semantics, make it a reusable state machine rather than a stateless helper."
+rationale = "Reusable state machines centralize repeated lifecycle and failure semantics instead of duplicating hidden state."
 
 [rules.CRUX_MODEL_013.avoid]
 language = "text"
@@ -147,6 +160,7 @@ text = '''a reusable `WorkspaceLoading` state machine.'''
 
 [rules.CRUX_MODEL_014]
 text = "Represent independent child readiness explicitly when a parent fans out work and can resolve only after every required child is ready."
+rationale = "Typed readiness slots make fan-out progress and completion prerequisites explicit."
 
 [rules.CRUX_MODEL_014.avoid]
 language = "text"
@@ -158,6 +172,7 @@ text = '''`ReadinessSlot<Pending, Ready>` fields.'''
 
 [rules.CRUX_MODEL_015]
 text = "Use readiness vocabulary consistently: children become ready; parents resolve."
+rationale = "Consistent transition vocabulary makes child and parent roles immediately understandable."
 
 [rules.CRUX_MODEL_015.avoid]
 language = "text"
@@ -169,6 +184,7 @@ text = '''ChildTransition::Ready` and `ParentTransition::Resolved'''
 
 [rules.CRUX_MODEL_016]
 text = "Consume readiness state when attempting completion so unresolved state can be returned without cloning."
+rationale = "Consuming completion avoids cloning and guarantees ready values move exactly once into resolved state."
 
 [rules.CRUX_MODEL_016.avoid]
 language = "text"
@@ -180,6 +196,7 @@ text = '''try_complete(self) -> Result<Resolved, Self>'''
 
 [rules.CRUX_MODEL_017]
 text = "Place a reusable cross-cutting state machine at the nearest common module of its users and re-export its public contract from that owner."
+rationale = "A nearest-common owner prevents copies while avoiding a globally misplaced abstraction."
 
 [rules.CRUX_MODEL_017.avoid]
 language = "text"
@@ -191,6 +208,7 @@ text = '''one sibling module at their common parent.'''
 
 [rules.CRUX_MODEL_018]
 text = "Use `From<Child>` for parent variants containing only that child. Use a named constructor when entering the variant also requires parent-owned state."
+rationale = "Construction style should reveal whether a variant is a simple wrapper or requires parent-owned context."
 
 [rules.CRUX_MODEL_018.avoid]
 language = "text"
@@ -202,6 +220,7 @@ text = '''`From<Loading>` for simple variants and `Parent::editing(...)` for par
 
 [rules.CRUX_MODEL_019]
 text = "Use compact outcome mapping only when continuation and completion are pure mappings. Keep an explicit match when the parent must preserve state or make a transition decision."
+rationale = "Explicit matching is necessary whenever mapping must preserve ownership or make a real transition decision."
 
 [rules.CRUX_MODEL_019.avoid]
 language = "text"
@@ -213,6 +232,7 @@ text = '''explicit continue and complete arms preserving ownership.'''
 
 [rules.CRUX_MODEL_020]
 text = "Document a state-machine type by saying what it owns, what it is waiting for, and where it can transition next."
+rationale = "Ownership, waiting conditions, and next transitions are the essential orientation contract for a state machine."
 
 [rules.CRUX_MODEL_020.avoid]
 language = "text"

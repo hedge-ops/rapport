@@ -1,4 +1,6 @@
 //! Build feedback and acceptance proof recorded in the Work Task ledger.
+//!
+//! This module owns Build command execution and proof transitions; repository Just targets own build behavior.
 
 use super::Error;
 use super::develop;
@@ -787,13 +789,15 @@ fn git_state(status: &WorktreeStatus) -> GitState {
 }
 
 fn ensure_source(work: &Work, status: &WorktreeStatus) -> Result<(), Error> {
-    let actual = status.branch().unwrap_or("detached");
-    if actual == work.source_branch {
+    let actual = status.branch();
+    if actual == Some(&work.source_branch) {
         Ok(())
     } else {
         Err(Error::SourceBranchChanged {
-            expected: work.source_branch.clone(),
-            actual: actual.to_owned(),
+            expected: work.source_branch.as_str().to_owned(),
+            actual: actual
+                .map_or("detached", rapport_git::BranchName::as_str)
+                .to_owned(),
         })
     }
 }

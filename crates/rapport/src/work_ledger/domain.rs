@@ -1,6 +1,9 @@
 //! Phase 3 Work and Task domain values.
+//!
+//! This module owns durable Work, Task, Build, Review, and Integration state and their transition invariants.
 
 use chrono::DateTime;
+use rapport_git::{BranchName, ObjectId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -8,7 +11,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use super::Error;
-use crate::ReviewGrade;
+use super::grade::ReviewGrade;
 
 pub(super) const WORK_SCHEMA_VERSION: u16 = 2;
 pub(super) const TASK_SCHEMA_VERSION: u16 = 1;
@@ -37,7 +40,7 @@ impl fmt::Debug for RequestSource {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Work {
     pub(super) version: u16,
     pub(super) id: Uuid,
@@ -45,15 +48,13 @@ pub(super) struct Work {
     pub(super) title: String,
     pub(super) description: String,
     pub(super) request: RequestSource,
-    pub(super) source_branch: String,
-    pub(super) target_branch: String,
-    pub(super) starting_source: String,
-    pub(super) starting_target: String,
-    pub(super) latest_checkpoint: Option<String>,
-    #[serde(default)]
+    pub(super) source_branch: BranchName,
+    pub(super) target_branch: BranchName,
+    pub(super) starting_source: ObjectId,
+    pub(super) starting_target: ObjectId,
+    pub(super) latest_checkpoint: Option<ObjectId>,
     pub(super) development_sequence: Vec<String>,
     pub(super) next_task: u32,
-    #[serde(default = "default_counter")]
     pub(super) next_finding: u32,
     pub(super) created_at: String,
     pub(super) outcome: Option<WorkOutcome>,
@@ -69,10 +70,10 @@ impl Work {
         description: String,
         request: RequestSource,
         repository: String,
-        source_branch: String,
-        target_branch: String,
-        starting_source: String,
-        starting_target: String,
+        source_branch: BranchName,
+        target_branch: BranchName,
+        starting_source: ObjectId,
+        starting_target: ObjectId,
         created_at: String,
     ) -> Result<Self, Error> {
         Ok(Self {
@@ -82,8 +83,8 @@ impl Work {
             title: required(title)?,
             description: required(description)?,
             request,
-            source_branch: required(source_branch)?,
-            target_branch: required(target_branch)?,
+            source_branch,
+            target_branch,
             starting_source,
             starting_target,
             latest_checkpoint: None,
@@ -100,8 +101,8 @@ impl Work {
         kind: WorkOutcomeKind,
         at: String,
         summary: String,
-        source_commit: String,
-        target_commit: String,
+        source_commit: ObjectId,
+        target_commit: ObjectId,
     ) -> Result<(), Error> {
         if let Some(outcome) = &self.outcome {
             if outcome.kind == kind {
@@ -113,8 +114,8 @@ impl Work {
             kind,
             at: required(at)?,
             summary: required(summary)?,
-            source_commit: required(source_commit)?,
-            target_commit: required(target_commit)?,
+            source_commit,
+            target_commit,
         });
         Ok(())
     }
@@ -162,31 +163,24 @@ impl fmt::Debug for Work {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum WorkOutcomeKind {
+    #[display("integrated")]
     Integrated,
+    #[display("completed")]
     Completed,
+    #[display("abandoned")]
     Abandoned,
 }
 
-impl fmt::Display for WorkOutcomeKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Integrated => "integrated",
-            Self::Completed => "completed",
-            Self::Abandoned => "abandoned",
-        })
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct WorkOutcome {
     pub(super) kind: WorkOutcomeKind,
     pub(super) at: String,
     pub(super) summary: String,
-    pub(super) source_commit: String,
-    pub(super) target_commit: String,
+    pub(super) source_commit: ObjectId,
+    pub(super) target_commit: ObjectId,
 }
 
 impl fmt::Debug for WorkOutcome {
@@ -202,33 +196,28 @@ impl fmt::Debug for WorkOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, derive_more::Display,
+)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum TaskStatus {
+    #[display("pending")]
     Pending,
+    #[display("running")]
     Running,
+    #[display("blocked")]
     Blocked,
+    #[display("passed")]
     Passed,
+    #[display("failed")]
     Failed,
+    #[display("cancelled")]
     Cancelled,
 }
 
 impl TaskStatus {
     pub(super) fn is_terminal(self) -> bool {
         matches!(self, Self::Passed | Self::Failed | Self::Cancelled)
-    }
-}
-
-impl fmt::Display for TaskStatus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Pending => "pending",
-            Self::Running => "running",
-            Self::Blocked => "blocked",
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-        })
     }
 }
 
@@ -248,26 +237,21 @@ impl FromStr for TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, derive_more::Display,
+)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Workflow {
+    #[display("develop")]
     Develop,
+    #[display("build")]
     Build,
+    #[display("review")]
     Review,
+    #[display("rebase")]
     Rebase,
+    #[display("integrate")]
     Integrate,
-}
-
-impl fmt::Display for Workflow {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Develop => "develop",
-            Self::Build => "build",
-            Self::Review => "review",
-            Self::Rebase => "rebase",
-            Self::Integrate => "integrate",
-        })
-    }
 }
 
 impl FromStr for Workflow {
@@ -285,42 +269,28 @@ impl FromStr for Workflow {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum BuildMode {
+    #[display("feedback")]
     Feedback,
+    #[display("acceptance")]
     Acceptance,
 }
 
-impl fmt::Display for BuildMode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Feedback => "feedback",
-            Self::Acceptance => "acceptance",
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum BuildOperationStatus {
+    #[display("waiting")]
     Waiting,
+    #[display("running")]
     Running,
+    #[display("blocked")]
     Blocked,
+    #[display("passed")]
     Passed,
+    #[display("failed")]
     Failed,
-}
-
-impl fmt::Display for BuildOperationStatus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Waiting => "waiting",
-            Self::Running => "running",
-            Self::Blocked => "blocked",
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,20 +334,13 @@ pub(super) struct BuildTask {
     pub(super) proof: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum ReviewMode {
+    #[display("feedback")]
     Feedback,
+    #[display("acceptance")]
     Acceptance,
-}
-
-impl fmt::Display for ReviewMode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Feedback => "feedback",
-            Self::Acceptance => "acceptance",
-        })
-    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,23 +434,18 @@ pub(super) enum IntegrationStage {
     Cancelled,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display,
+)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum FreshnessPolicy {
+    #[display("strict")]
     Strict,
     #[default]
+    #[display("loose")]
     Loose,
+    #[display("merge_queue")]
     MergeQueue,
-}
-
-impl fmt::Display for FreshnessPolicy {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Strict => "strict",
-            Self::Loose => "loose",
-            Self::MergeQueue => "merge_queue",
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -663,10 +621,6 @@ impl fmt::Debug for Task {
             .field("has_integration", &self.integration.is_some())
             .finish()
     }
-}
-
-const fn default_counter() -> u32 {
-    1
 }
 
 fn required(value: String) -> Result<String, Error> {

@@ -1,12 +1,15 @@
 //! Independent feedback and acceptance Review recorded in the Work ledger.
+//!
+//! This module owns Review requests, result validation, findings, corrective Tasks, and acceptance proof.
 
 use super::domain::{
     FindingStatus, ReviewMode, ReviewResult, ReviewTask, ReviewUnit, Task, TaskStatus, Work,
     Workflow,
 };
+use super::grade::ReviewGrade;
 use super::repository::Store;
 use super::{Error, build, develop};
-use crate::{Clock, CommandContext, ReviewGrade};
+use crate::{Clock, CommandContext};
 use clap::{ArgGroup, Args, Subcommand};
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 use rapport_git::{Git, Repository, WorktreeStatus};
@@ -526,8 +529,9 @@ fn ensure_acceptance_ready(
         || !live.is_clean()
         || work
             .latest_checkpoint
-            .as_deref()
+            .as_ref()
             .unwrap_or(&work.starting_source)
+            .as_str()
             != live.head().as_str()
     {
         return Err(Error::ReviewPrerequisite);

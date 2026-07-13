@@ -1,4 +1,6 @@
 //! Context policy failures.
+//!
+//! This module owns the primary failure contract for Context domain, persistence, workflows, and commands.
 
 use rapport_files::Utf8PathBuf;
 use std::io;

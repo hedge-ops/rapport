@@ -1,4 +1,6 @@
 //! Work ledger failures.
+//!
+//! This module owns the primary failure contract for active Work and every Task workflow.
 
 use rapport_files::Utf8PathBuf;
 use std::io;
@@ -162,6 +164,10 @@ pub(crate) enum Error {
     Git(#[from] rapport_git::GitError),
     #[error(transparent)]
     Revision(#[from] rapport_git::InvalidRevision),
+    #[error(transparent)]
+    BranchName(#[from] rapport_git::InvalidBranchName),
+    #[error(transparent)]
+    ObjectId(#[from] rapport_git::InvalidObjectId),
     #[error(transparent)]
     Context(#[from] crate::policy_context::Error),
     #[error(transparent)]

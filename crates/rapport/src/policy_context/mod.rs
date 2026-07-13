@@ -1,17 +1,26 @@
 //! Contextual repository policy.
+//!
+//! This module composes Context storage, effective policy projection, signoff requirements, commands, and diagnostics.
 
 mod boundary;
+mod cli;
 mod command;
+mod doctor;
 mod domain;
 mod error;
+mod render;
 mod repository;
+mod signoff;
 mod workflow;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use command::{Cli, doctor_all, run};
+pub(crate) use cli::Cli;
+pub(crate) use command::run;
+pub(crate) use doctor::doctor_all;
 pub(crate) use error::Error;
+pub(crate) use workflow::{SHARED_PATH as SHARED_WORKFLOW_PATH, write_shared};
 
 use rapport_files::{FileSystem, Utf8Path};
 use sha2::{Digest, Sha256};
@@ -111,7 +120,7 @@ pub(crate) fn effective_policy_digest_for_paths<'path>(
     let mut rendered = paths
         .into_iter()
         .map(|path| {
-            command::show(fs, repo_root, path, false).map(|policy| (path.to_string(), policy))
+            render::show(fs, repo_root, path, false).map(|policy| (path.to_string(), policy))
         })
         .collect::<Result<Vec<_>, _>>()?;
     rendered.sort_by(|left, right| left.0.cmp(&right.0));

@@ -1,4 +1,6 @@
 //! Context-facing shared Ruleset projection.
+//!
+//! This module owns the immutable Ruleset summaries consumed by Context policy without exposing repository internals.
 
 use super::boundary;
 use super::catalog::Catalog;

@@ -1,4 +1,6 @@
 //! Context discovery, persistence, and effective inheritance.
+//!
+//! This module owns Context discovery, hierarchy resolution, mutation, and composition with shared Rulesets.
 
 use super::Error;
 use super::boundary;

@@ -16,7 +16,7 @@ use super::repository::Store;
 use crate::{Clock, CommandContext, CommandSpec};
 use clap::{Args, Subcommand};
 use rapport_files::{FileSystem, Utf8PathBuf};
-use rapport_git::{Git, Repository};
+use rapport_git::{BranchName, Git, ObjectId, Repository};
 use serde::Deserialize;
 use std::io::Write;
 use std::process::ExitCode;
@@ -96,10 +96,13 @@ where
         return Err(Error::SourceOperationActive);
     }
     let live = git.status(repository)?;
-    if live.branch() != Some(work.source_branch.as_str()) {
+    if live.branch() != Some(&work.source_branch) {
         return Err(Error::SourceBranchChanged {
-            expected: work.source_branch.clone(),
-            actual: live.branch().unwrap_or("detached HEAD").to_owned(),
+            expected: work.source_branch.as_str().to_owned(),
+            actual: live
+                .branch()
+                .map_or("detached HEAD", BranchName::as_str)
+                .to_owned(),
         });
     }
     if !live.is_clean() {
@@ -107,9 +110,9 @@ where
     }
     let checkpoint = work
         .latest_checkpoint
-        .as_deref()
+        .as_ref()
         .unwrap_or(&work.starting_source);
-    if checkpoint != live.head().as_str() {
+    if checkpoint != live.head() {
         return Err(Error::UncheckpointedHead);
     }
     if !develop::is_complete(work, tasks, &live, None)
@@ -203,11 +206,12 @@ where
         );
     }
 
-    if !open_pull_requests(context, &work.source_branch)?.is_empty() {
+    if !open_pull_requests(context, work.source_branch.as_str())?.is_empty() {
         return Err(Error::ActiveIntegration);
     }
-    let freshness_policy = freshness_policy(context, &repository_name, &work.target_branch)?;
-    let target_commit = github_target_commit(context, &repository_name, &work.target_branch)?;
+    let target_branch = work.target_branch.as_str();
+    let freshness_policy = freshness_policy(context, &repository_name, target_branch)?;
+    let target_commit = github_target_commit(context, &repository_name, target_branch)?;
     let review = tasks
         .iter()
         .find(|task| task.id == accepted.review_task)
@@ -245,8 +249,8 @@ where
     task.integration = Some(IntegrationTask {
         stage: IntegrationStage::Preparing,
         repository: Some(repository_name.clone()),
-        source_branch: work.source_branch.clone(),
-        target_branch: work.target_branch.clone(),
+        source_branch: work.source_branch.as_str().to_owned(),
+        target_branch: work.target_branch.as_str().to_owned(),
         candidate: accepted.candidate,
         target_commit,
         policy_digest: accepted.policy_digest,
@@ -308,6 +312,7 @@ where
             .ok_or(Error::MissingIntegration)?
             .source_branch
             .clone();
+        let branch = BranchName::new(branch)?;
         git.push_branch(repository, &branch)?;
         task.integration
             .as_mut()
@@ -581,6 +586,7 @@ where
             .ok_or(Error::MissingIntegration)?
             .source_branch
             .clone();
+        let source = BranchName::new(source)?;
         git.delete_remote_branch(&repository, &source)?;
         task.integration
             .as_mut()
@@ -673,10 +679,12 @@ where
     integration.merge_commit = Some(merge_commit.clone());
     if !integration.remote_branch_deleted {
         let (git, repository) = git_repository(&context.repo_root)?;
-        git.delete_remote_branch(&repository, &integration.source_branch)?;
+        let source = BranchName::new(integration.source_branch.clone())?;
+        git.delete_remote_branch(&repository, &source)?;
         integration.remote_branch_deleted = true;
     }
-    let final_source = integration.candidate.clone();
+    let final_source = ObjectId::new(integration.candidate.clone())?;
+    let final_target = ObjectId::new(merge_commit.clone())?;
     let completed_at = context.clock.now_rfc3339();
     task.finish(
         TaskStatus::Passed,
@@ -692,7 +700,7 @@ where
             observed_pull_request.number
         ),
         final_source,
-        merge_commit.clone(),
+        final_target,
     )?;
     tasks[index] = task.clone();
     store.save_work_and_task(context.fs, &work, &task)?;
@@ -719,7 +727,7 @@ fn integration_blockers(
     if pull_request.head_ref_oid != integration.candidate {
         blockers.push("pull-request head changed".to_owned());
     }
-    if pull_request.base_ref_name != work.target_branch {
+    if pull_request.base_ref_name != work.target_branch.as_str() {
         blockers.push("pull-request target changed".to_owned());
     }
     if integration.freshness_policy == FreshnessPolicy::Strict

@@ -1,0 +1,11 @@
+version = 1
+id = "CRATES_RAPPORT_COMMAND"
+purpose = "Owns execution of local system programs for Rapport workflows."
+next_ownership = 2
+next_boundary = 1
+
+[ownership.CRATES_RAPPORT_COMMAND_OWNERSHIP_001]
+text = "Typed command specifications, bounded execution, captured outcomes, and machine-local resource coordination."
+
+[ruleset]
+includes = ["RUST_CRATE"]

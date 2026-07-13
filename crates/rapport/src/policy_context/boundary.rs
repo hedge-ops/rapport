@@ -1,4 +1,6 @@
 //! Context TOML boundary.
+//!
+//! This module owns canonical Context TOML conversion; domain values own identity and semantic validation.
 
 use super::Error;
 use super::domain::{Boundary, BuildSignoff, Context, ContextId, Entry, Grade, SCHEMA_VERSION};
@@ -181,56 +183,56 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
 }
 
 #[derive(Serialize)]
-struct ContextFileRef<'a> {
+struct ContextFileRef<'context> {
     version: u16,
-    id: &'a str,
-    purpose: &'a str,
+    id: &'context str,
+    purpose: &'context str,
     next_ownership: u16,
     next_boundary: u16,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    ownership: BTreeMap<&'a str, EntryFileRef<'a>>,
+    ownership: BTreeMap<&'context str, EntryFileRef<'context>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    boundaries: BTreeMap<&'a str, BoundaryFileRef<'a>>,
-    ruleset: EmbeddedRulesetFileRef<'a>,
+    boundaries: BTreeMap<&'context str, BoundaryFileRef<'context>>,
+    ruleset: EmbeddedRulesetFileRef<'context>,
     #[serde(skip_serializing_if = "Option::is_none")]
     review: Option<ReviewFileRef>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    signoffs: Vec<SignoffFileRef<'a>>,
+    signoffs: Vec<SignoffFileRef<'context>>,
 }
 
 #[derive(Serialize)]
-struct EntryFileRef<'a> {
-    text: &'a str,
+struct EntryFileRef<'context> {
+    text: &'context str,
 }
 
 #[derive(Serialize)]
-struct BoundaryFileRef<'a> {
-    text: &'a str,
+struct BoundaryFileRef<'context> {
+    text: &'context str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    owner: Option<&'a str>,
+    owner: Option<&'context str>,
 }
 
 #[derive(Serialize)]
-struct EmbeddedRulesetFileRef<'a> {
-    includes: Vec<&'a str>,
+struct EmbeddedRulesetFileRef<'context> {
+    includes: Vec<&'context str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    rules: BTreeMap<&'a str, RuleFileRef<'a>>,
+    rules: BTreeMap<&'context str, RuleFileRef<'context>>,
 }
 
 #[derive(Serialize)]
-struct RuleFileRef<'a> {
-    text: &'a str,
-    rationale: &'a str,
-    avoid: ExampleFileRef<'a>,
-    prefer: ExampleFileRef<'a>,
+struct RuleFileRef<'context> {
+    text: &'context str,
+    rationale: &'context str,
+    avoid: ExampleFileRef<'context>,
+    prefer: ExampleFileRef<'context>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reference: Option<String>,
 }
 
 #[derive(Serialize)]
-struct ExampleFileRef<'a> {
-    language: &'a str,
-    text: &'a str,
+struct ExampleFileRef<'context> {
+    language: &'context str,
+    text: &'context str,
 }
 
 #[derive(Serialize)]
@@ -239,13 +241,13 @@ struct ReviewFileRef {
 }
 
 #[derive(Serialize)]
-struct SignoffFileRef<'a> {
-    id: &'a str,
-    target: &'a str,
+struct SignoffFileRef<'context> {
+    id: &'context str,
+    target: &'context str,
     stage: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    resource_group: Option<&'a str>,
-    include: &'a [String],
+    resource_group: Option<&'context str>,
+    include: &'context [String],
 }
 
 pub(super) fn render(context: &Context) -> Result<String, Error> {
