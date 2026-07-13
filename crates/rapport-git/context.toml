@@ -1,0 +1,11 @@
+version = 1
+id = "CRATES_RAPPORT_GIT"
+purpose = "Owns Git source-control operations for Rapport workflows."
+next_ownership = 2
+next_boundary = 1
+
+[ownership.CRATES_RAPPORT_GIT_OWNERSHIP_001]
+text = "Validated Git identities and repository operations for status, checkpoints, rebases, and remote branches."
+
+[ruleset]
+includes = ["RUST_CRATE"]
