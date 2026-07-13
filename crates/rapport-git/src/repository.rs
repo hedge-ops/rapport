@@ -337,12 +337,29 @@ impl<R: Runner> Git<R> {
         )?;
         match exists.exit_code() {
             Some(0) => {
-                self.run_args(
-                    repository,
-                    ["push", "origin", "--delete", branch.as_str()],
+                let deleted = self.run_allowing_failure(
+                    &CommandSpec::new("git")
+                        .args(["push", "origin", "--delete", branch.as_str()])
+                        .current_dir(repository.root()),
                     "delete remote source branch",
                 )?;
-                Ok(())
+                if deleted.success() {
+                    return Ok(());
+                }
+                let remains = self.run_allowing_failure(
+                    &CommandSpec::new("git")
+                        .args(["ls-remote", "--exit-code", "--heads", "origin", &reference])
+                        .current_dir(repository.root()),
+                    "inspect remote source branch after failed deletion",
+                )?;
+                match remains.exit_code() {
+                    Some(2) => Ok(()),
+                    Some(0) => Err(command_failed("delete remote source branch", &deleted)),
+                    _ => Err(command_failed(
+                        "inspect remote source branch after failed deletion",
+                        &remains,
+                    )),
+                }
             }
             Some(2) => Ok(()),
             _ => Err(command_failed("inspect remote source branch", &exists)),
