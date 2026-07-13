@@ -4,6 +4,7 @@ includes = []
 
 [rules.CRUX_VIEW_001]
 text = "ViewModels are pure, shell-independent projections of model state. They contain what the shell needs to render and dispatch, not model behavior or shell implementation."
+rationale = "Pure projections keep shells thin and let one model drive multiple platform renderers consistently."
 
 [rules.CRUX_VIEW_001.avoid]
 language = "text"
@@ -15,6 +16,7 @@ text = "`PersonViewModel { name, save: Command }`"
 
 [rules.CRUX_VIEW_002]
 text = "ViewModels crossing FFI derive `Facet`, `Serialize`, and `Deserialize`. Privacy-bearing fields still follow the Rust privacy rules for diagnostics and formatting."
+rationale = "Stable serialization traits define the FFI contract without weakening explicit sensitive-data handling."
 
 [rules.CRUX_VIEW_002.avoid]
 language = "text"
@@ -26,6 +28,7 @@ text = "an FFI-safe ViewModel exposing only `AccountStatus`"
 
 [rules.CRUX_VIEW_003]
 text = "Put localized product copy in ViewModel fields. Shells choose presentation but do not reconstruct shared labels, warnings, action names, or workflow copy."
+rationale = "Model-owned copy keeps wording and workflow meaning consistent across supported shells."
 
 [rules.CRUX_VIEW_003.avoid]
 language = "text"
@@ -37,6 +40,7 @@ text = "`Button(viewModel.save.text)`"
 
 [rules.CRUX_VIEW_004]
 text = "Represent visible user actions as `Command` values carrying localized text or icon, logical action, enabled state, and the exact model event to dispatch."
+rationale = "A typed command packages every property of an affordance so shells cannot dispatch a mismatched action."
 
 [rules.CRUX_VIEW_004.avoid]
 language = "text"
@@ -48,6 +52,7 @@ text = "an editor exposing `save: Command`"
 
 [rules.CRUX_VIEW_005]
 text = "Treat each ViewModel command as the source of truth for its action affordance. Shells may choose how to render it but must not independently derive its label, enabled state, logical action, or event."
+rationale = "One affordance source prevents labels, enablement, and events from diverging across platforms."
 
 [rules.CRUX_VIEW_005.avoid]
 language = "text"
@@ -59,6 +64,7 @@ text = "`CommandButton(viewModel.save)`"
 
 [rules.CRUX_VIEW_006]
 text = "Use dedicated choice ViewModels for selection controls. A choice is not a `Command` unless it is rendered as an action affordance."
+rationale = "Choices describe selectable values, while commands describe actions; conflating them obscures interaction semantics."
 
 [rules.CRUX_VIEW_006.avoid]
 language = "text"
@@ -70,6 +76,7 @@ text = "`Vec<FrequencyChoiceViewModel>`"
 
 [rules.CRUX_VIEW_007]
 text = "A choice ViewModel carries its localized label, selected state, availability, stable value when needed, and exact model event. Shells must not synthesize these independently."
+rationale = "A complete choice projection prevents shells from independently reconstructing selection behavior."
 
 [rules.CRUX_VIEW_007.avoid]
 language = "text"
@@ -81,6 +88,7 @@ text = "`Text(choice.label).disabled(!choice.enabled)`"
 
 [rules.CRUX_VIEW_008]
 text = "Name a model projection mechanically: replace a `Model` suffix with `ViewModel`; otherwise append `ViewModel`."
+rationale = "Mechanical naming makes the relationship between model and projection searchable and predictable."
 
 [rules.CRUX_VIEW_008.avoid]
 language = "text"
@@ -92,6 +100,7 @@ text = "`ActiveModel -> ActiveViewModel`"
 
 [rules.CRUX_VIEW_009]
 text = "When a model has a `FooModelKind` discriminant, name the corresponding view discriminant `FooViewModelKind`. Do not invent a view-side kind unless it mirrors model variants."
+rationale = "Mirrored discriminant names preserve traceability to the model states they project."
 
 [rules.CRUX_VIEW_009.avoid]
 language = "text"
@@ -103,6 +112,7 @@ text = "`AuthenticatedViewModelKind`"
 
 [rules.CRUX_VIEW_010]
 text = "Flatten or split model layers only when doing so creates a clear shell-facing concept. Name the result for that user-facing concept and document the departure."
+rationale = "A deliberate shell-facing concept can justify flattening; type-count reduction alone cannot."
 
 [rules.CRUX_VIEW_010.avoid]
 language = "text"
@@ -114,6 +124,7 @@ text = "a documented `Stage` projection for shell routing"
 
 [rules.CRUX_VIEW_011]
 text = "When the model uses a struct plus `Kind` enum but the view has no shared fields for the wrapper, collapse the projection into a single `*ViewModel` enum."
+rationale = "Removing an empty wrapper avoids a view layer with no shared rendering contract."
 
 [rules.CRUX_VIEW_011.avoid]
 language = "text"
@@ -125,6 +136,7 @@ text = "one `AuthenticatingActivityViewModel` enum"
 
 [rules.CRUX_VIEW_012]
 text = "Name each projection function after the full snake-case ViewModel name, including `_view_model`. Projection functions are pure."
+rationale = "Full projection names make pure conversion entry points discoverable beside their ViewModels."
 
 [rules.CRUX_VIEW_012.avoid]
 language = "text"
@@ -136,6 +148,7 @@ text = "`fn workspace_activity_view_model(...)`"
 
 [rules.CRUX_VIEW_013]
 text = "Give each independently rendered ViewModel its own file, named in snake case after the primary type. Small private support types may remain with their owner."
+rationale = "One independently rendered contract per file keeps shell parity and ownership reviewable."
 
 [rules.CRUX_VIEW_013.avoid]
 language = "text"
@@ -147,6 +160,7 @@ text = "separate activity, screen, and workflow ViewModel files"
 
 [rules.CRUX_VIEW_014]
 text = "Mirror the model module path unless a skipped model layer has no view-side type, behavior, or rendering contract. Restore the layer when the view needs to own something there."
+rationale = "Mirrored paths preserve model-to-view orientation unless a layer genuinely has no view responsibility."
 
 [rules.CRUX_VIEW_014.avoid]
 language = "text"
@@ -158,6 +172,7 @@ text = "a view tree mirroring authenticated/active"
 
 [rules.CRUX_VIEW_015]
 text = "Keep single-field enum variants inline. Extract a dedicated ViewModel when a variant has multiple fields, is independently rendered, carries commands, or is reused."
+rationale = "Inline simple data avoids needless types, while complex or reusable rendering contracts deserve an owner."
 
 [rules.CRUX_VIEW_015.avoid]
 language = "text"
@@ -169,6 +184,7 @@ text = "`Message { message: String }` inline and complex editor factored"
 
 [rules.CRUX_VIEW_016]
 text = "An `ActivityViewModel` represents a window. It owns the window-level workspace and routes screens and workflows within that window."
+rationale = "Window-level ownership gives shells a consistent root for workspace state and internal routing."
 
 [rules.CRUX_VIEW_016.avoid]
 language = "text"
@@ -180,6 +196,7 @@ text = "opening `PeopleActivityView` in a window"
 
 [rules.CRUX_VIEW_017]
 text = "A `ScreenViewModel` represents a routed portion of an activity's window. It owns the content, sections, choices, and commands rendered in that portion."
+rationale = "Screen-level ownership keeps routed content within its activity instead of multiplying windows."
 
 [rules.CRUX_VIEW_017.avoid]
 language = "text"
@@ -191,6 +208,7 @@ text = "rendering `PersonScreenView` inside its activity"
 
 [rules.CRUX_VIEW_018]
 text = "A `WorkflowViewModel` represents a modal interaction within an activity, typically rendered as a sheet, dialog, or popover. It owns the complete start-to-finish interaction."
+rationale = "Workflow ownership models one complete modal interaction and its start-to-finish commands."
 
 [rules.CRUX_VIEW_018.avoid]
 language = "text"
@@ -202,6 +220,7 @@ text = "presenting `AdmitPersonWorkflowView` as a sheet"
 
 [rules.CRUX_VIEW_019]
 text = "`Stage` is the top-level shell display phase. It may flatten internal startup and authentication states only when that flattening is the shell's routing contract."
+rationale = "A small shell routing phase can hide internal startup detail without leaking the full model machine."
 
 [rules.CRUX_VIEW_019.avoid]
 language = "text"
@@ -213,6 +232,7 @@ text = "`Stage::{Loading, Authenticating, Authenticated}`"
 
 [rules.CRUX_VIEW_020]
 text = "Every public ViewModel with an independent rendering contract has a paired rendering construct in each supported shell. The shell construct takes that ViewModel as its primary data source."
+rationale = "Paired renderers make every public ViewModel an explicit cross-platform contract."
 
 [rules.CRUX_VIEW_020.avoid]
 language = "text"
@@ -224,6 +244,7 @@ text = "`PeopleScreenView { view_model: PeopleScreenViewModel }`"
 
 [rules.CRUX_VIEW_021]
 text = "Construct a `Command` in the ViewModel that owns the visible affordance. Move it into a reusable component only when that component owns the action contract."
+rationale = "The projection that owns an affordance has the context needed to build its correct action contract."
 
 [rules.CRUX_VIEW_021.avoid]
 language = "text"
@@ -235,6 +256,7 @@ text = "`EditorViewModel { save: Command }`"
 
 [rules.CRUX_VIEW_022]
 text = "Reuse model or domain types in a ViewModel only when they already express the shell-facing contract. Project internal state when exposing it would make the shell interpret model behavior."
+rationale = "Reusing an internal type is safe only when the shell does not need to interpret hidden model semantics."
 
 [rules.CRUX_VIEW_022.avoid]
 language = "text"
@@ -246,6 +268,7 @@ text = "`SyncViewModel { status, cancel }`"
 
 [rules.CRUX_VIEW_023]
 text = "Use `From<&Model>` only for infallible, context-free projection. Use a named projection function when projection needs locale, time, identifiers, domain readers, routing context, or joined state."
+rationale = "Projection APIs should reveal external context instead of hiding it behind a context-free conversion trait."
 
 [rules.CRUX_VIEW_023.avoid]
 language = "text"
@@ -257,6 +280,7 @@ text = "`workspace_view_model(workspace, today, locale)`"
 
 [rules.CRUX_VIEW_024]
 text = "Keep application logic as far from shell edges and as close to the model or domain core as appropriate. View projection selects and formats already-owned meaning; it does not recreate business decisions from raw state."
+rationale = "Keeping decisions in the core prevents shells from reimplementing business rules inconsistently."
 
 [rules.CRUX_VIEW_024.avoid]
 language = "text"

@@ -4,6 +4,7 @@ includes = []
 
 [rules.CRUX_EFFECTS_001]
 text = "Effects declare what side effects the model needs; they do not execute those effects. The shell owns execution."
+rationale = "Keeping execution in the shell preserves a deterministic, platform-independent model."
 
 [rules.CRUX_EFFECTS_001.avoid]
 language = "text"
@@ -15,6 +16,7 @@ text = '''Effect::http(request).then_send(Event::HttpCompleted)'''
 
 [rules.CRUX_EFFECTS_002]
 text = "Each effect owns its operation types and command construction. Keep transport execution and platform integration in the shell."
+rationale = "Effect-owned contracts prevent transport libraries and platform details from leaking into application logic."
 
 [rules.CRUX_EFFECTS_002.avoid]
 language = "text"
@@ -26,6 +28,7 @@ text = '''an operation containing only the request contract.'''
 
 [rules.CRUX_EFFECTS_003]
 text = "Each model returns `Command<Effect, ItsOwnEvent>`. The command's event type belongs to the state machine that produced it."
+rationale = "A command returning its owner's event type keeps state-machine boundaries composable and type checked."
 
 [rules.CRUX_EFFECTS_003.avoid]
 language = "text"
@@ -37,6 +40,7 @@ text = '''Command<Effect, Event>'''
 
 [rules.CRUX_EFFECTS_004]
 text = "Parents lift child commands into the parent event type with `map_event`. The `map_event` chain mirrors the model hierarchy."
+rationale = "Explicit event lifting preserves child ownership while making the parent routing path visible."
 
 [rules.CRUX_EFFECTS_004.avoid]
 language = "text"
@@ -48,6 +52,7 @@ text = '''child.update(event).map_event(ParentEvent::Child)'''
 
 [rules.CRUX_EFFECTS_005]
 text = "Resolve asynchronous effect output into an event with `then_send`; combine independent commands explicitly with `and`."
+rationale = "Declarative resolution and composition keep asynchronous causality inside the command value rather than hidden execution."
 
 [rules.CRUX_EFFECTS_005.avoid]
 language = "text"
@@ -59,6 +64,7 @@ text = '''Effect::http(operation).then_send(Event::Completed).and(render::render
 
 [rules.CRUX_EFFECTS_006]
 text = "Give each effect its own module containing public operation types and command construction."
+rationale = "A dedicated module makes each effect contract and its construction path easy to locate."
 
 [rules.CRUX_EFFECTS_006.avoid]
 language = "text"
@@ -70,6 +76,7 @@ text = '''`http/{mod.rs,types.rs,command/mod.rs}`.'''
 
 [rules.CRUX_EFFECTS_007]
 text = "Group command builders by domain route or operation family. Callers import the owning command module instead of reconstructing requests."
+rationale = "Owned builders centralize route semantics and prevent call sites from drifting into inconsistent requests."
 
 [rules.CRUX_EFFECTS_007.avoid]
 language = "text"
@@ -81,6 +88,7 @@ text = '''use effects::http::command::client; client::refresh(context)'''
 
 [rules.CRUX_EFFECTS_008]
 text = "Keep shared command-construction details, such as URL construction and error mapping, private to the owning effect module."
+rationale = "Private construction details can evolve without expanding the public effect API or encouraging duplication."
 
 [rules.CRUX_EFFECTS_008.avoid]
 language = "text"
@@ -92,6 +100,7 @@ text = '''private `build_url(base, ClientRoute)`.'''
 
 [rules.CRUX_EFFECTS_009]
 text = "Include everything the shell needs to execute an effect in its operation payload. The shell must not consult model state to complete the request."
+rationale = "Self-contained operations let the shell execute deterministically without reaching back into mutable model state."
 
 [rules.CRUX_EFFECTS_009.avoid]
 language = "text"
@@ -103,6 +112,7 @@ text = '''carry the ID and `EncryptedWorkspace` payload.'''
 
 [rules.CRUX_EFFECTS_010]
 text = "Express operation payloads in shell-independent domain types. Do not embed platform clients, handles, or UI types."
+rationale = "Shell-independent payloads keep effects portable across every platform implementation."
 
 [rules.CRUX_EFFECTS_010.avoid]
 language = "rust"

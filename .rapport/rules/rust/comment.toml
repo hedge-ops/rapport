@@ -1,11 +1,12 @@
 version = 1
 id = "RUST_COMMENT"
+purpose = "Standards for concise Rust documentation and meaningful comments."
+catalog_version = "1.0.0"
 includes = []
-
-[rules]
 
 [rules.RUST_COMMENT_001]
 text = "Use API documentation to explain ownership and intent that signatures and types do not fully express. Do not use method-body comments for ordinary narration."
+rationale = "Ownership and intent survive refactoring better than comments that merely narrate visible statements."
 
 [rules.RUST_COMMENT_001.avoid]
 language = "rust"
@@ -21,6 +22,7 @@ pub fn update(&mut self, event: Event);"""
 
 [rules.RUST_COMMENT_002]
 text = "Begin module documentation with a brief description. In a separate paragraph, explain what the module owns and, when useful, what it deliberately does not own."
+rationale = "A consistent opening gives maintainers both immediate orientation and a clear responsibility boundary."
 
 [rules.RUST_COMMENT_002.avoid]
 language = "text"
@@ -38,6 +40,7 @@ text = """
 
 [rules.RUST_COMMENT_003]
 text = "Use API documentation to preserve important responsibilities, collaborators, transitions, invariants, compatibility constraints, and accepted tradeoffs."
+rationale = "Recording non-obvious contracts prevents future changes from accidentally violating essential behavior."
 
 [rules.RUST_COMMENT_003.avoid]
 language = "rust"
@@ -54,6 +57,7 @@ pub struct Loading;"""
 
 [rules.RUST_COMMENT_004]
 text = "Keep public item documentation to one concise contract sentence by default. Add more only when callers need a real behavioral, error, or safety contract."
+rationale = "Concise contracts are faster to scan, while additional detail remains available for genuine caller obligations."
 
 [rules.RUST_COMMENT_004.avoid]
 language = "rust"
@@ -71,6 +75,7 @@ pub fn person(identifier: PersonId) -> Option<&Person>;"""
 
 [rules.RUST_COMMENT_005]
 text = "As an exception to avoiding method-body comments, place a comment immediately before code whose non-obvious reason, invariant, compatibility constraint, or tradeoff cannot be expressed through code shape."
+rationale = "A local reason comment preserves an invariant that code shape alone cannot make discoverable."
 
 [rules.RUST_COMMENT_005.avoid]
 language = "rust"
@@ -86,6 +91,7 @@ retry();"""
 
 [rules.RUST_COMMENT_006]
 text = "Avoid narrative tours that walk through an implementation."
+rationale = "Implementation tours become stale as steps change and obscure the stable contract."
 
 [rules.RUST_COMMENT_006.avoid]
 language = "text"
@@ -99,6 +105,7 @@ text = "/// Refreshes the authenticated client from the authoritative service."
 
 [rules.RUST_COMMENT_007]
 text = "Avoid documentation that inventories every dependency or collaborator."
+rationale = "Responsibility matters to maintainers; dependency inventories duplicate imports and couple prose to implementation."
 
 [rules.RUST_COMMENT_007.avoid]
 language = "text"
@@ -110,6 +117,7 @@ text = "/// Owns authenticated client refresh across the service and local store
 
 [rules.RUST_COMMENT_008]
 text = "Avoid backstory, marketing language, and agent-style summaries."
+rationale = "Neutral domain language communicates behavior without unverifiable claims or historical noise."
 
 [rules.RUST_COMMENT_008.avoid]
 language = "text"
@@ -123,6 +131,7 @@ text = "/// Coordinates synchronization until every required child is ready."
 
 [rules.RUST_COMMENT_009]
 text = "Avoid documentation that repeats the signature, type name, or obvious control flow."
+rationale = "Documentation earns its cost only when it adds meaning beyond names, types, and visible control flow."
 
 [rules.RUST_COMMENT_009.avoid]
 language = "rust"
@@ -138,6 +147,7 @@ pub fn is_ready(&self) -> bool;"""
 
 [rules.RUST_COMMENT_010]
 text = "Do not use documentation to compensate for unclear names or poor structure. Fix the code shape so the documentation can state a concise contract."
+rationale = "Clear structure carries meaning mechanically and prevents prose from becoming a permanent patch over confusing code."
 
 [rules.RUST_COMMENT_010.avoid]
 language = "rust"
@@ -153,6 +163,7 @@ fn apply_identity(identity: Identity, workspace: &mut Workspace);"""
 
 [rules.RUST_COMMENT_011]
 text = "Write documentation for maintainers and future agents working in the repository. Optimize for quick orientation rather than public-library completeness."
+rationale = "Repository maintainers need rapid ownership context more than exhaustive public-package exposition."
 
 [rules.RUST_COMMENT_011.avoid]
 language = "text"
@@ -166,6 +177,7 @@ text = "/// Owns synchronization progress for one workspace."
 
 [rules.RUST_COMMENT_012]
 text = "Include only the context needed to understand what enters, what leaves, what changes, who collaborates, or what must remain true."
+rationale = "Selective context keeps documentation useful and reduces the surface that can become stale."
 
 [rules.RUST_COMMENT_012.avoid]
 language = "text"
@@ -179,6 +191,7 @@ text = "/// Routes child events while preserving parent-owned workspace state."
 
 [rules.RUST_COMMENT_013]
 text = "Avoid section banners and prose headings inside source files. Let modules, types, functions, and their ordering provide structure."
+rationale = "Code structure is searchable and compiler-aware; decorative banners create noise without ownership."
 
 [rules.RUST_COMMENT_013.avoid]
 language = "rust"
@@ -198,6 +211,7 @@ impl Model {
 
 [rules.RUST_COMMENT_014]
 text = "Use structured logs for runtime narration. Documentation describes ownership and contracts; logs describe what a running operation is doing."
+rationale = "Separating stable contracts from runtime events keeps both documentation and diagnostics useful."
 
 [rules.RUST_COMMENT_014.avoid]
 language = "rust"
@@ -213,6 +227,7 @@ let workspace = client.fetch().await?;"""
 
 [rules.RUST_COMMENT_015]
 text = "Use current domain vocabulary consistently. When documentation uses stale or generic terminology, correct the vocabulary instead of adding more explanation."
+rationale = "Consistent domain vocabulary lets maintainers search, reason, and communicate without translating synonyms."
 
 [rules.RUST_COMMENT_015.avoid]
 language = "text"

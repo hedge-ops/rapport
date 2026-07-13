@@ -23,7 +23,7 @@ struct RulesetFile {
 #[serde(deny_unknown_fields)]
 struct RuleFile {
     text: String,
-    rationale: Option<String>,
+    rationale: String,
     avoid: ExampleFile,
     prefer: ExampleFile,
     reference: Option<String>,
@@ -44,7 +44,7 @@ pub(super) fn parse_repository(contents: &str, path: &Utf8Path) -> Result<Rulese
     let purpose = file.purpose.take().ok_or(Error::EmptyText {
         field: "Ruleset purpose",
     })?;
-    into_domain(file, purpose, None, false)
+    into_domain(file, purpose, None)
 }
 
 pub(super) fn parse_catalog(
@@ -54,12 +54,7 @@ pub(super) fn parse_catalog(
     catalog_version: &str,
 ) -> Result<Ruleset, Error> {
     let file = decode(contents, path)?;
-    into_domain(
-        file,
-        purpose.to_owned(),
-        Some(catalog_version.to_owned()),
-        true,
-    )
+    into_domain(file, purpose.to_owned(), Some(catalog_version.to_owned()))
 }
 
 fn decode(contents: &str, path: &Utf8Path) -> Result<RulesetFile, Error> {
@@ -80,22 +75,14 @@ fn into_domain(
     file: RulesetFile,
     purpose: String,
     catalog_version: Option<String>,
-    catalog: bool,
 ) -> Result<Ruleset, Error> {
-    let ruleset_id = file.id.clone();
     let rules = file
         .rules
         .into_iter()
         .map(|(id, rule)| NewRule {
             id,
             text: rule.text,
-            rationale: rule.rationale.unwrap_or_else(|| {
-                if catalog {
-                    format!("This expectation is part of the `{ruleset_id}` catalog standard.")
-                } else {
-                    String::new()
-                }
-            }),
+            rationale: rule.rationale,
             avoid_example: rule.avoid.text,
             avoid_language: rule.avoid.language,
             prefer_example: rule.prefer.text,
@@ -178,8 +165,9 @@ pub(super) fn path_for_repository_ruleset(root: &Utf8Path, ruleset: &Ruleset) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_repository, render};
-    use claims::assert_ok;
+    use super::{parse_catalog, parse_repository, render};
+    use crate::shared_ruleset::Error;
+    use claims::{assert_err, assert_ok};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -217,5 +205,37 @@ text = "let person_count = value;"
             round_trip, ruleset,
             "expecting canonical TOML to preserve the complete Ruleset"
         );
+    }
+
+    #[test]
+    fn parse_catalog_should_reject_rule_without_authored_rationale() {
+        let input = r#"
+version = 1
+id = "CODE"
+includes = []
+
+[rules.CODE_001]
+text = "Prefer explicit names."
+
+[rules.CODE_001.avoid]
+language = "rust"
+text = "let x = value;"
+
+[rules.CODE_001.prefer]
+language = "rust"
+text = "let person_count = value;"
+"#;
+
+        let error = assert_err!(parse_catalog(
+            input,
+            "/catalog/code.toml".into(),
+            "Shared coding expectations.",
+            "1.0.0",
+        ));
+
+        let Error::Decode { source, .. } = error else {
+            panic!("expecting a catalog decode error for a missing rationale");
+        };
+        assert!(source.to_string().contains("missing field `rationale`"));
     }
 }

@@ -4,6 +4,7 @@ includes = []
 
 [rules.RUST_CODING_001]
 text = "Use rustfmt for formatting. Formatting style belongs to rustfmt rather than manual review."
+rationale = "One formatter eliminates subjective style churn and keeps diffs focused on behavior."
 
 [rules.RUST_CODING_001.avoid]
 language = "text"
@@ -15,6 +16,7 @@ text = '''cargo fmt --all'''
 
 [rules.RUST_CODING_002]
 text = "Use Clippy for linting. When Clippy can enforce a Rust practice deterministically, configure the lint and let Clippy own the rule."
+rationale = "Deterministic lint policy is repeatable in every environment and does not depend on reviewers remembering conventions."
 
 [rules.RUST_CODING_002.avoid]
 language = "text"
@@ -27,6 +29,7 @@ unwrap_used = "deny"'''
 
 [rules.RUST_CODING_003]
 text = "Suppress Clippy with `#[expect(clippy::lint_name, reason = \"...\")]`, not `#[allow(...)]` or command-line lint disabling. The reason must explain the local invariant or compatibility constraint that makes the lint inapplicable."
+rationale = "An explicit expectation documents the local exception and lets Clippy report when the suppression stops matching code."
 
 [rules.RUST_CODING_003.avoid]
 language = "rust"
@@ -38,6 +41,7 @@ text = '''#[expect(clippy::too_many_arguments, reason = "the command mirrors the
 
 [rules.RUST_CODING_004]
 text = "Organize modules as a human-readable outline of the crate. Split a module when it owns unrelated behaviors or requires unrelated groups of tests."
+rationale = "A module outline lets maintainers locate ownership quickly and keeps unrelated changes from accumulating in one file."
 
 [rules.RUST_CODING_004.avoid]
 language = "text"
@@ -52,6 +56,7 @@ text = '''workspace/
 
 [rules.RUST_CODING_005]
 text = "Keep `lib.rs` focused on module declarations and intentional public API re-exports. Put implementation logic in owned modules."
+rationale = "A declarative crate root makes the public surface and high-level architecture visible without implementation noise."
 
 [rules.RUST_CODING_005.avoid]
 language = "text"
@@ -64,6 +69,7 @@ pub use synchronization::Synchronizer;'''
 
 [rules.RUST_CODING_006]
 text = "Use the `name/mod.rs` convention for modules containing submodules."
+rationale = "One directory convention makes nested module ownership unambiguous to tools and maintainers."
 
 [rules.RUST_CODING_006.avoid]
 language = "text"
@@ -75,6 +81,7 @@ text = '''`workspace/mod.rs` beside `workspace/storage.rs`.'''
 
 [rules.RUST_CODING_007]
 text = "Order a module by idea rather than item kind. Put the primary type first, followed by its inherent and trait implementations; then introduce supporting types with their implementations. Keep tests at the end."
+rationale = "Keeping a type beside its behavior reduces navigation and presents each domain idea as one coherent unit."
 
 [rules.RUST_CODING_007.avoid]
 language = "text"
@@ -86,6 +93,7 @@ text = '''`Workspace`, its inherent impl, its trait impls, then the next support
 
 [rules.RUST_CODING_008]
 text = "Default to the smallest useful visibility: private, then `pub(super)`, then `pub(crate)`, and finally `pub` for intentional public API. Public fields should be rare."
+rationale = "Narrow visibility limits coupling and preserves freedom to change internal representation."
 
 [rules.RUST_CODING_008.avoid]
 language = "rust"
@@ -97,6 +105,7 @@ text = '''a private `people` field exposed through `pub fn people(&self) -> impl
 
 [rules.RUST_CODING_009]
 text = "Put the crate's primary error type in `src/error.rs` and intentionally re-export it as `crate::Error`."
+rationale = "One primary error gives callers a stable failure contract while retaining typed source chains."
 
 [rules.RUST_CODING_009.avoid]
 language = "text"
@@ -109,6 +118,7 @@ pub use error::Error;'''
 
 [rules.RUST_CODING_010]
 text = "Keep functions as small, readable units. Readability and single ownership determine the boundary, not a fixed line count."
+rationale = "Small single-purpose functions make ownership, failure paths, and tests easier to understand."
 
 [rules.RUST_CODING_010.avoid]
 language = "text"
@@ -120,6 +130,7 @@ text = '''named `encrypt`, `upload`, and `publish` operations composed by the ow
 
 [rules.RUST_CODING_011]
 text = "Use a newtype when a value has domain meaning or invariants that a raw primitive cannot express."
+rationale = "A newtype lets the compiler distinguish domain identities and centralizes their invariants."
 
 [rules.RUST_CODING_011.avoid]
 language = "rust"
@@ -131,6 +142,7 @@ text = '''fn load_workspace(identifier: WorkspaceId)'''
 
 [rules.RUST_CODING_012]
 text = "Represent in-memory data with the strongest available domain type. Raw HTTP, storage, configuration, CLI, serialization, and third-party values may exist at boundaries, but validate and convert them before they enter core logic."
+rationale = "Validated domain types prevent malformed boundary data from becoming representable in core logic."
 
 [rules.RUST_CODING_012.avoid]
 language = "rust"
@@ -148,6 +160,7 @@ text = '''struct Person {
 
 [rules.RUST_CODING_013]
 text = "Use `From<T>` only for infallible, context-free, single-input conversions. When construction needs multiple inputs, use a named constructor beginning with `from_` and name it after the dominant input. Use the corresponding `try_from_*` name when construction is fallible."
+rationale = "Conversion names should expose fallibility and required context instead of hiding work behind a generic trait."
 
 [rules.RUST_CODING_013.avoid]
 language = "rust"
@@ -159,6 +172,7 @@ text = '''Person::try_from_record(record, &clock, &workspace)'''
 
 [rules.RUST_CODING_014]
 text = "Deserialize external formats into boundary DTOs only long enough to validate and convert them. Do not let loosely typed serialization structures leak into core code."
+rationale = "Early boundary conversion keeps transport and serialization concerns from coupling the domain to external schemas."
 
 [rules.RUST_CODING_014.avoid]
 language = "text"
@@ -170,6 +184,7 @@ text = '''converting it with `NewPerson::try_from(request)?` at the boundary.'''
 
 [rules.RUST_CODING_015]
 text = "Prefer exhaustive enum matching. Avoid wildcard arms when naming every variant would make newly added states visible to the compiler."
+rationale = "Exhaustive matches make newly introduced states a compiler-visible maintenance event."
 
 [rules.RUST_CODING_015.avoid]
 language = "rust"
@@ -181,6 +196,7 @@ text = '''explicit arms for `Pending`, `Ready`, and `Failed`.'''
 
 [rules.RUST_CODING_016]
 text = "Use `thiserror` for error types. Preserve error chains with `#[source]`, `#[from]`, or transparent variants. Do not stringify errors until presentation or logging."
+rationale = "Typed error chains preserve actionable causes for recovery, diagnosis, and presentation."
 
 [rules.RUST_CODING_016.avoid]
 language = "rust"
@@ -192,6 +208,7 @@ text = '''a `#[derive(thiserror::Error)]` variant carrying `#[source] source: st
 
 [rules.RUST_CODING_017]
 text = "Prefer `derive_more` for straightforward `Display` implementations. Write a manual implementation when formatting requires privacy protection or meaningful presentation logic."
+rationale = "Derived mechanical formatting avoids boilerplate and keeps simple display contracts consistent."
 
 [rules.RUST_CODING_017.avoid]
 language = "text"
@@ -203,6 +220,7 @@ text = '''`#[derive(derive_more::Display)]` with explicit `#[display(...)]` attr
 
 [rules.RUST_CODING_018]
 text = "Use builders when optional, ordered, or related inputs make a positional constructor obscure intent or permit invalid combinations."
+rationale = "Builders label optional inputs and can prevent invalid combinations before construction."
 
 [rules.RUST_CODING_018.avoid]
 language = "rust"
@@ -214,6 +232,7 @@ text = '''Person::builder(identifier, name).admitted_at(now).active().build()?''
 
 [rules.RUST_CODING_019]
 text = "Implement `Default` only when the default value is meaningful in the domain, not merely convenient for tests or setup."
+rationale = "A domain-meaningful default is safe for production callers; a test convenience often is not."
 
 [rules.RUST_CODING_019.avoid]
 language = "text"
@@ -224,29 +243,32 @@ language = "rust"
 text = '''WorkspaceBuilder::for_testing().build()'''
 
 [rules.RUST_CODING_020]
-text = "Types containing secrets, credentials, tokens, private content, or user-authored text must not expose raw values through `Debug`, `Display`, logs, panic messages, assertion messages, or errors. Use redacted or structural summaries."
+text = "Classify data as sensitive only when the domain identifies it as a secret, credential, token, PII, regulated data, or deliberately private content. Sensitive values must be redacted from diagnostics. Ordinary local developer-tool inputs, command output, paths, identifiers, and user-facing operational details may be logged or rendered when they help the user understand what happened."
+rationale = "Explicit sensitivity classification protects real secrets without hiding the local operational evidence users need to understand tool behavior."
 
 [rules.RUST_CODING_020.avoid]
 language = "text"
-text = '''`tracing::debug!(?token, ?private_note, "saving contact")`.'''
+text = '''redacting every local command argument and path even though the application does not classify them as sensitive.'''
 
 [rules.RUST_CODING_020.prefer]
 language = "text"
-text = '''logging `token_status` and `note_length` fields without their values.'''
+text = '''render local command output and changed paths, while redacting an explicitly classified access token.'''
 
 [rules.RUST_CODING_021]
-text = "Do not derive `Debug` for a privacy-bearing type unless every field's output is already safe. Prefer a manual implementation reporting kind, state, length, status, or a redacted marker."
+text = "Derive `Debug` freely for ordinary operational types. For a type containing explicitly classified sensitive data, derive `Debug` only when every field already has a safe representation; otherwise implement a focused redacted form."
+rationale = "Debug output is useful for ordinary operational state, while explicitly sensitive fields require a deliberate safe representation."
 
 [rules.RUST_CODING_021.avoid]
 language = "text"
-text = '''`#[derive(Debug)] struct AccessToken(String);`.'''
+text = '''`#[derive(Debug)] struct AccessToken(String);` when the inner string is the raw secret.'''
 
 [rules.RUST_CODING_021.prefer]
 language = "text"
-text = '''a manual `Debug` implementation emitting `AccessToken { value: "[redacted]" }`.'''
+text = '''derive `Debug` for `WorktreeStatus`, and redact only `AccessToken` through its own safe representation.'''
 
 [rules.RUST_CODING_022]
 text = "Do not introduce first-party `unsafe` code. If existing `unsafe` must be changed or new `unsafe` appears necessary, stop and obtain explicit approval."
+rationale = "First-party unsafe code expands the proof and review burden beyond ordinary Rust guarantees."
 
 [rules.RUST_CODING_022.avoid]
 language = "rust"
@@ -258,6 +280,7 @@ text = '''let value = safe_boundary.read()?;'''
 
 [rules.RUST_CODING_023]
 text = "Treat third-party types as boundary representations rather than implicit domain types. Convert them into owned domain types before core logic. When the exact third-party type is intentionally part of a public contract, re-export it explicitly; otherwise wrap or convert it."
+rationale = "Owned domain types preserve local invariants and insulate core code from vendor API changes."
 
 [rules.RUST_CODING_023.avoid]
 language = "text"
@@ -269,6 +292,7 @@ text = '''an owned `WorkspaceId` with an intentional boundary conversion.'''
 
 [rules.RUST_CODING_024]
 text = "Crate features must be additive. Do not make public fields, trait methods, or established behavior disappear under feature combinations. Document and test supported combinations."
+rationale = "Additive features keep downstream code valid across supported build configurations."
 
 [rules.RUST_CODING_024.avoid]
 language = "text"
@@ -280,6 +304,7 @@ text = '''a stable trait contract with feature-selected implementations.'''
 
 [rules.RUST_CODING_025]
 text = "Public traits should expose the smallest required method set. Provide convenience behavior as default implementations when it can be derived from required methods."
+rationale = "Minimal required traits are easier to implement, test, and evolve without duplicating derivable behavior."
 
 [rules.RUST_CODING_025.avoid]
 language = "text"
@@ -291,6 +316,7 @@ text = '''require `person` and implement `contains` as a default method.'''
 
 [rules.RUST_CODING_026]
 text = "Prefer generics, trait bounds, and `impl Trait` so relationships remain statically checked and dispatch remains explicit. Use `dyn Trait` only as a last resort when runtime type erasure or heterogeneous values are genuinely required."
+rationale = "Static relationships retain compiler checking and make dispatch costs explicit until genuine type erasure is needed."
 
 [rules.RUST_CODING_026.avoid]
 language = "rust"
@@ -302,6 +328,7 @@ text = '''fn synchronize(repository: &impl Repository)'''
 
 [rules.RUST_CODING_027]
 text = "Prefer explicitly named saturating or clamping domain operations when extreme values have sensible boundaries. Prefer these total operations over fallible arithmetic that forces callers to handle reasonable extremes. Reserve `Result` for invalid inputs or impossible states."
+rationale = "Named total operations make sensible extreme behavior explicit without forcing callers to handle impossible failures."
 
 [rules.RUST_CODING_027.avoid]
 language = "rust"
@@ -313,6 +340,7 @@ text = '''fn saturating_add_days(self, days: u64) -> Date'''
 
 [rules.RUST_CODING_028]
 text = "Name lifetime parameters after what they borrow rather than using generic names such as `'a`."
+rationale = "Descriptive lifetime names reveal the borrowing relationship in signatures with multiple roles."
 
 [rules.RUST_CODING_028.avoid]
 language = "rust"
@@ -324,6 +352,7 @@ text = '''struct Runner<'repository> { repository: &'repository Repository }'''
 
 [rules.RUST_CODING_029]
 text = "Avoid abbreviations unless the abbreviation is an established domain term. Prefer names that reveal ownership and responsibility."
+rationale = "Full domain names reduce translation effort and keep ownership legible during review."
 
 [rules.RUST_CODING_029.avoid]
 language = "rust"
@@ -335,6 +364,7 @@ text = '''let workspace_manager = WorkspaceManager::new();'''
 
 [rules.RUST_CODING_030]
 text = "Logs should tell the story of the operation or user journey. Write concise lowercase messages, usually beginning with an active gerund."
+rationale = "Action-oriented messages form a readable chronological story when several operations interleave."
 
 [rules.RUST_CODING_030.avoid]
 language = "rust"
@@ -346,6 +376,7 @@ text = '''tracing::debug!("fetching workspace")'''
 
 [rules.RUST_CODING_031]
 text = "Put searchable context in structured `tracing` fields rather than interpolating it into the message."
+rationale = "Structured fields remain searchable and machine-queryable without destabilizing the human-readable message."
 
 [rules.RUST_CODING_031.avoid]
 language = "rust"
