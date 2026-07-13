@@ -109,11 +109,14 @@ impl ObjectId {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidObjectId`] when the value is shorter than Git's minimum
-    /// abbreviation or contains non-hexadecimal characters.
+    /// Returns [`InvalidObjectId`] unless the value is a canonical lowercase
+    /// SHA-1 or SHA-256 object identifier.
     pub fn new(value: impl Into<String>) -> Result<Self, InvalidObjectId> {
         let value = value.into();
-        if value.len() < 4 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let canonical_hex = value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !matches!(value.len(), 40 | 64) || !canonical_hex {
             return Err(InvalidObjectId::new(value));
         }
         Ok(Self(value))

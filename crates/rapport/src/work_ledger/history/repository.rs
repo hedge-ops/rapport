@@ -274,6 +274,10 @@ mod tests {
     use rapport_git::{BranchName, ObjectId};
     use std::io;
 
+    const INITIAL_OBJECT_ID: &str = "1111111111111111111111111111111111111111";
+    const CHECKPOINT_OBJECT_ID: &str = "2222222222222222222222222222222222222222";
+    const LATER_OBJECT_ID: &str = "3333333333333333333333333333333333333333";
+
     fn branch(value: &str) -> BranchName {
         assert_ok!(BranchName::new(value))
     }
@@ -356,8 +360,8 @@ mod tests {
             "/repository".to_owned(),
             branch("feature"),
             branch("main"),
-            object_id("1111"),
-            object_id("1111"),
+            object_id(INITIAL_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T12:00:00Z".to_owned(),
         ));
         let mut task = Task::new(
@@ -382,8 +386,8 @@ mod tests {
             WorkOutcomeKind::Completed,
             "2026-07-13T12:01:00Z".to_owned(),
             "History is ready.".to_owned(),
-            object_id("2222"),
-            object_id("1111"),
+            object_id(CHECKPOINT_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         assert_ok!(active.save_work_and_task(&mut fs, &work, &task));
         let history = assert_ok!(HistoryStore::new(Utf8Path::new("/repository")));
@@ -424,8 +428,8 @@ mod tests {
             "/repository".to_owned(),
             branch("feature"),
             branch("main"),
-            object_id("1111"),
-            object_id("1111"),
+            object_id(INITIAL_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T12:00:00Z".to_owned(),
         ));
         let mut first = Task::new(
@@ -468,8 +472,8 @@ mod tests {
             WorkOutcomeKind::Completed,
             "2026-07-13T12:01:00Z".to_owned(),
             "Published the complete record.".to_owned(),
-            object_id("2222"),
-            object_id("1111"),
+            object_id(CHECKPOINT_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         let tasks = vec![first, second];
         assert_ok!(active.save_work_and_tasks(&mut fs, &work, &tasks));
@@ -515,8 +519,8 @@ mod tests {
             "/first-repository".to_owned(),
             branch("older"),
             branch("main"),
-            object_id("1111"),
-            object_id("1111"),
+            object_id(INITIAL_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T10:00:00Z".to_owned(),
         ));
         older.id = assert_ok!(Uuid::parse_str("019f5300-0000-4000-8000-000000000001"));
@@ -524,8 +528,8 @@ mod tests {
             WorkOutcomeKind::Completed,
             "2026-07-13T10:30:00Z".to_owned(),
             "Completed earlier.".to_owned(),
-            object_id("2222"),
-            object_id("1111"),
+            object_id(CHECKPOINT_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         let mut newer = assert_ok!(Work::new(
             "Newer Work".to_owned(),
@@ -537,8 +541,8 @@ mod tests {
             "/second-repository".to_owned(),
             branch("newer"),
             branch("main"),
-            object_id("3333"),
-            object_id("1111"),
+            object_id(LATER_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
             "2026-07-13T11:00:00Z".to_owned(),
         ));
         newer.id = assert_ok!(Uuid::parse_str("019f5300-0000-4000-8000-000000000002"));
@@ -546,8 +550,8 @@ mod tests {
             WorkOutcomeKind::Abandoned,
             "2026-07-13T11:30:00Z".to_owned(),
             "Stopped later.".to_owned(),
-            object_id("3333"),
-            object_id("1111"),
+            object_id(LATER_OBJECT_ID),
+            object_id(INITIAL_OBJECT_ID),
         ));
         assert_ok!(HistoryStore::write_record(
             &mut fs,

@@ -8,6 +8,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
+const SHA1_OBJECT_ID: &str = "0123456789abcdef0123456789abcdef01234567";
+const SHA256_OBJECT_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 #[derive(Debug)]
 struct TemporaryRepository {
@@ -156,9 +158,11 @@ fn branch_name_should_reject_values_that_are_only_valid_as_revisions() {
 }
 
 #[test]
-fn object_id_should_reject_non_hexadecimal_values() {
-    assert!(ObjectId::new("deadbeef").is_ok());
-    assert!(ObjectId::new("abc").is_err());
+fn object_id_should_reject_abbreviated_and_noncanonical_values() {
+    assert!(ObjectId::new(SHA1_OBJECT_ID).is_ok());
+    assert!(ObjectId::new(SHA256_OBJECT_ID).is_ok());
+    assert!(ObjectId::new("deadbeef").is_err());
+    assert!(ObjectId::new(SHA1_OBJECT_ID.to_ascii_uppercase()).is_err());
     assert!(ObjectId::new("not-an-object").is_err());
 }
 

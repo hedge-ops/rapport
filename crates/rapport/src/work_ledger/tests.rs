@@ -15,6 +15,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);
+const INITIAL_OBJECT_ID: &str = "1111111111111111111111111111111111111111";
+const CHECKPOINT_OBJECT_ID: &str = "2222222222222222222222222222222222222222";
+const MERGE_OBJECT_ID: &str = "feedface1234feedface1234feedface1234feed";
 
 fn branch(value: &str) -> BranchName {
     assert_ok!(BranchName::new(value))
@@ -35,8 +38,8 @@ fn stored_work() -> Work {
         "/repository".to_owned(),
         branch("feature"),
         branch("main"),
-        object_id("1111"),
-        object_id("2222"),
+        object_id(INITIAL_OBJECT_ID),
+        object_id(CHECKPOINT_OBJECT_ID),
         "2026-07-12T23:00:00Z".to_owned(),
     ))
 }
@@ -402,7 +405,7 @@ fn load_work_should_reject_invalid_object_identifiers() {
     let path = Utf8Path::new("/repository/.rapport/work.toml");
     let valid = assert_ok!(fs.read_to_string(path));
     let corrupted = valid.replace(
-        "starting_source = \"1111\"",
+        &format!("starting_source = \"{INITIAL_OBJECT_ID}\""),
         "starting_source = \"not-an-oid\"",
     );
     assert_ok!(fs.write_string(path, corrupted));
@@ -606,8 +609,8 @@ fn archive_writes_global_history_before_removing_local_state() {
         "/repository".to_owned(),
         branch("feature"),
         branch("main"),
-        object_id("1111"),
-        object_id("1111"),
+        object_id(INITIAL_OBJECT_ID),
+        object_id(INITIAL_OBJECT_ID),
         "2026-07-12T23:00:00Z".to_owned(),
     ));
     let mut task = Task::new(
@@ -632,8 +635,8 @@ fn archive_writes_global_history_before_removing_local_state() {
         WorkOutcomeKind::Completed,
         "2026-07-12T23:00:08Z".to_owned(),
         "Preserved the complete local ledger.".to_owned(),
-        object_id("2222"),
-        object_id("1111"),
+        object_id(CHECKPOINT_OBJECT_ID),
+        object_id(INITIAL_OBJECT_ID),
     ));
     assert_ok!(store.save_work_and_task(&mut fs, &work, &task));
 
@@ -1518,7 +1521,7 @@ fn integration_complete_archives_without_switching_local_git() {
     repository.succeeds_with(&["integrate", "start"], &start);
     let mut merged: serde_json::Value = assert_ok!(serde_json::from_str(&pull_request));
     merged["state"] = serde_json::Value::String("MERGED".to_owned());
-    merged["mergeCommit"] = serde_json::json!({"oid": "feedface1234"});
+    merged["mergeCommit"] = serde_json::json!({"oid": MERGE_OBJECT_ID});
     let complete = QueueRunner::new([
         successful(&pull_request),
         successful(""),
@@ -1527,7 +1530,10 @@ fn integration_complete_archives_without_switching_local_git() {
 
     let output = repository.succeeds_with(&["integrate", "complete"], &complete);
 
-    assert!(output.contains("feedface1234"), "{output}");
+    assert!(
+        output.contains(MERGE_OBJECT_ID),
+        "expecting completion to report the full merge object ID: {output}"
+    );
     assert!(!repository.root.join(".rapport/work.toml").is_file());
     assert!(
         repository
@@ -1547,7 +1553,7 @@ fn integration_complete_archives_without_switching_local_git() {
         "expecting Integration to finalize Work as integrated: {history}"
     );
     assert!(
-        history.contains("final target` — feedface1234"),
+        history.contains(&format!("final target` — {MERGE_OBJECT_ID}")),
         "expecting history to retain the confirmed squash commit: {history}"
     );
     assert!(
