@@ -2,9 +2,9 @@ version = 1
 
 [[rulesets]]
 id = "RUST_CODING"
-catalog_version = "1.0.0"
+catalog_version = "1.0.1"
 path = "rust/coding.toml"
-digest = "67453c23c571c9bdcae7c8d6caccdfcd42ac290745443b5ba2789404b03cc950"
+digest = "2ef0f176be5cada0a062a7a6d66284bca68bd0a93344f91916f14d913fbbb58c"
 
 [[rulesets]]
 id = "RUST_COMMENT"
@@ -14,9 +14,9 @@ digest = "66d1373a16db5c5d2652712612720562c6cab24778cf712e693ea6c52fbe6adf"
 
 [[rulesets]]
 id = "RUST_CRATE"
-catalog_version = "1.0.0"
+catalog_version = "1.0.1"
 path = "rust/crate.toml"
-digest = "6d4ae3d58912de729ab3f9ba0c0a4c6f9df8985377523b2dc60240bfa6d7abf2"
+digest = "fd90e4893081d7bb78a2a64ed240fc4e02ca46ff7fe5919ef8bcf24a89dbed2a"
 
 [[rulesets]]
 id = "RUST_TEST"

@@ -1,7 +1,7 @@
 version = 1
 id = "RUST_CODING"
 purpose = "Standards for clear, safe, and maintainable Rust implementation."
-catalog_version = "1.0.0"
+catalog_version = "1.0.1"
 includes = []
 
 [rules.RUST_CODING_001]
@@ -251,16 +251,16 @@ language = "rust"
 text = "WorkspaceBuilder::for_testing().build()"
 
 [rules.RUST_CODING_020]
-text = "Classify data as sensitive only when the domain identifies it as a secret, credential, token, PII, regulated data, or deliberately private content. Sensitive values must be redacted from diagnostics. Ordinary local developer-tool inputs, command output, paths, identifiers, and user-facing operational details may be logged or rendered when they help the user understand what happened."
-rationale = "Explicit sensitivity classification protects real secrets without hiding the local operational evidence users need to understand tool behavior."
+text = "Classify sensitivity from domain meaning. Secrets, credentials, tokens, PII, regulated data, and deliberately private content must not be emitted raw through diagnostics; values not classified as sensitive may be rendered when useful."
+rationale = "Domain-owned classification protects sensitive data without imposing application-specific assumptions about which ordinary values are private."
 
 [rules.RUST_CODING_020.avoid]
 language = "text"
-text = "redacting every local command argument and path even though the application does not classify them as sensitive."
+text = "redacting every `String` while accidentally displaying the raw value of an `AccessToken` newtype."
 
 [rules.RUST_CODING_020.prefer]
 language = "text"
-text = "render local command output and changed paths, while redacting an explicitly classified access token."
+text = "render a non-sensitive `JobId` while the `AccessToken` type supplies a focused redacted representation."
 
 [rules.RUST_CODING_021]
 text = "Derive `Debug` freely for ordinary operational types. For a type containing explicitly classified sensitive data, derive `Debug` only when every field already has a safe representation; otherwise implement a focused redacted form."
@@ -272,7 +272,7 @@ text = "`#[derive(Debug)] struct AccessToken(String);` when the inner string is 
 
 [rules.RUST_CODING_021.prefer]
 language = "text"
-text = "derive `Debug` for `WorktreeStatus`, and redact only `AccessToken` through its own safe representation."
+text = "derive `Debug` for `JobStatus`, and redact only `AccessToken` through its own safe representation."
 
 [rules.RUST_CODING_022]
 text = "Do not introduce first-party `unsafe` code. If existing `unsafe` must be changed or new `unsafe` appears necessary, stop and obtain explicit approval."
