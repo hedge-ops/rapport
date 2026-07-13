@@ -5,7 +5,7 @@ use super::domain::{BuildSignoff, ContextId};
 use crate::{CommandRunner, CommandSpec};
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 
-pub(super) const SHARED_PATH: &str = ".github/workflows/rapport-signoff.yml";
+pub(crate) const SHARED_PATH: &str = ".github/workflows/rapport-signoff.yml";
 
 const SHARED_CONTENTS: &str = r#"name: Rapport signoff request (reusable)
 
@@ -55,6 +55,11 @@ jobs:
               -f "target_url=${PR_URL}"
           fi
 "#;
+
+pub(crate) fn write_shared(fs: &mut impl FileSystem, repo_root: &Utf8Path) -> std::io::Result<()> {
+    fs.create_dir_all(repo_root.join(".github/workflows"))?;
+    fs.write_string(repo_root.join(SHARED_PATH), SHARED_CONTENTS)
+}
 
 pub(super) fn path(
     repo_root: &Utf8Path,

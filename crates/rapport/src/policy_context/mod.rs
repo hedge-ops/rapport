@@ -12,6 +12,7 @@ mod tests;
 
 pub(crate) use command::{Cli, doctor_all, run};
 pub(crate) use error::Error;
+pub(crate) use workflow::{SHARED_PATH as SHARED_WORKFLOW_PATH, write_shared};
 
 use rapport_files::{FileSystem, Utf8Path};
 use sha2::{Digest, Sha256};

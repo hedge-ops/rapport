@@ -8,7 +8,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use super::Error;
-use crate::ReviewGrade;
+use super::grade::ReviewGrade;
 
 pub(super) const WORK_SCHEMA_VERSION: u16 = 2;
 pub(super) const TASK_SCHEMA_VERSION: u16 = 1;

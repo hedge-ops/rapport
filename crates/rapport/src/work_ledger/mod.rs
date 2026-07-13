@@ -5,6 +5,7 @@ mod command;
 mod develop;
 mod domain;
 mod error;
+mod grade;
 mod history;
 mod integrate;
 mod repository;
