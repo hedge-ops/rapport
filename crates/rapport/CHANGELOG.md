@@ -47,6 +47,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rationales and exact validated Git branch, revision, and object identities.
 - Fixed integration cleanup to tolerate GitHub deleting a merged source branch
   between Rapport's existence check and deletion request.
+- Published the expanded filesystem contract as `rapport-files` 0.3.0 and
+  updated `rapport-git` 0.1.1 and `rapport` to require that version, ensuring
+  crates.io builds use the same APIs as workspace builds.
 
 ## [0.4.2] - 2026-07-10
 
