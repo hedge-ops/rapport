@@ -6,26 +6,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-13
+
 ### Added
 
-- Added Michael's versioned `rust` and `crux` rules packs, explicit installation
-  through `rapport rules add`, transitive Crux-to-Rust dependency installation,
+- Added the complete Git-backed golden path from repository policy through
+  Develop, Build, Review, Integrate, and immutable local Work History.
+- Added a durable Work ledger with request provenance, ordered Develop tasks,
+  cheap Git checkpoints, rebase recovery, exact candidate state, and resumable
+  workflow guidance.
+- Added exact-candidate Build proof with staged signoff execution, optional
+  machine resource groups, generated GitHub workflows, and aggregate
+  `Rapport Build` status publication.
+- Added independent Context-aware acceptance Review with structured grades,
+  evidence-bearing findings, corrective task reconciliation, and explicit
+  human-owned quality exceptions.
+- Added recoverable GitHub integration with proof-carrying pull requests,
+  target-freshness policies, conventional squash merging, remote branch
+  cleanup, and safe resumption after partial side effects.
+- Added folder-owned Context policy for purpose, ownership, boundaries,
+  inherited Rulesets, minimum Review grades, and required Build signoffs.
+- Added versioned `rust` and `crux` catalog Rulesets, repository and embedded
+  Context Rulesets, transitive composition, typed references, CLI management,
   and `.rapport/rules.lock` version and digest verification.
-- Added required language-tagged Avoid and Prefer examples to canonical keyed
-  rule definitions in standalone rulesets and embedded context rulesets.
-- Added typed repository and external rule references with optional labels,
-  offline validation, CLI list/add/remove operations, and migration from valid
-  legacy string references.
-- Added repository-owned standalone and composite rulesets under
-  `.rapport/rules/**/*.toml`, embedded context rulesets, ID-based transitive
-  includes, repository-wide validation, and CLI-managed ruleset mutations.
-- Added idempotent `rapport init` management that ignores Rapport runtime state
-  while keeping checked-in rulesets trackable.
+- Added dedicated command and Git crates for typed process execution,
+  concurrent jobs, machine resource locking, validated Git identities, and
+  repository operations.
 
 ### Changed
 
-- Changed context, work, review, integration, and doctor rule resolution to use
-  the shared repository ruleset catalog and stable ruleset IDs.
+- Changed Context, Work, Build, Review, Integrate, and doctor to resolve one
+  shared repository Ruleset catalog with stable IDs and exact policy digests.
+- Changed `rapport init` to manage ignored runtime state idempotently while
+  preserving checked-in Rulesets.
+
+### Fixed
+
+- Fixed the new command and Git crates to inherit the full `RUST_CRATE` policy,
+  removed obsolete workflow implementations, and enforced authored Rule
+  rationales and exact validated Git branch, revision, and object identities.
+- Fixed integration cleanup to tolerate GitHub deleting a merged source branch
+  between Rapport's existence check and deletion request.
 
 ## [0.4.2] - 2026-07-10
 
@@ -200,7 +221,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.2...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.0...HEAD
+[0.5.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.2...rapport-v0.5.0
 [0.4.2]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.1...rapport-v0.4.2
 [0.4.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.0...rapport-v0.4.1
 [0.4.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.3.0...rapport-v0.4.0
