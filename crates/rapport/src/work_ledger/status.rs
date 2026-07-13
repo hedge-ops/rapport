@@ -10,7 +10,7 @@ use super::repository::Store;
 use super::{Error, develop};
 use crate::context::{Clock, CommandContext};
 use rapport_files::{FileSystem, Utf8PathBuf};
-use rapport_git::{Operation, WorktreeStatus};
+use rapport_git::{BranchName, ObjectId, Operation, WorktreeStatus};
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::str::FromStr;
@@ -76,14 +76,14 @@ where
         work.request.value,
         work.source_branch,
         short(live.head().as_str()),
-        live.branch().unwrap_or("detached"),
+        live.branch().map_or("detached", BranchName::as_str),
         work.target_branch,
         short(target_head.as_str()),
-        short(&work.starting_source),
-        short(&work.starting_target),
+        short(work.starting_source.as_str()),
+        short(work.starting_target.as_str()),
         work.latest_checkpoint
-            .as_deref()
-            .map_or("none".to_owned(), short),
+            .as_ref()
+            .map_or("none".to_owned(), |checkpoint| short(checkpoint.as_str())),
         git.contains(&repository, &target)?,
         paths(live.staged()),
         paths(live.unstaged()),
@@ -311,9 +311,9 @@ fn next_workflow(
     }
     let checkpoint = work
         .latest_checkpoint
-        .as_deref()
+        .as_ref()
         .unwrap_or(&work.starting_source);
-    if !live.all_changed_paths().is_empty() || checkpoint != live.head().as_str() {
+    if !live.all_changed_paths().is_empty() || checkpoint != live.head() {
         "rapport work checkpoint start".to_owned()
     } else if develop::is_complete(work, tasks, live, operation) {
         if super::build::has_candidate_proof(tasks, live.head().as_str()) {
@@ -347,7 +347,7 @@ fn integration_blockers(
     operation: Option<Operation>,
 ) -> String {
     let mut blockers = Vec::new();
-    if live.branch() != Some(work.source_branch.as_str()) {
+    if live.branch() != Some(&work.source_branch) {
         blockers.push("source branch changed");
     }
     if !live.is_clean() {
@@ -356,7 +356,7 @@ fn integration_blockers(
     if operation.is_some() {
         blockers.push("source-control operation active");
     }
-    if effective_checkpoint(work) != live.head().as_str() {
+    if effective_checkpoint(work) != live.head() {
         blockers.push("source HEAD is not the latest checkpoint");
     }
     if tasks.iter().any(|task| !task.status.is_terminal()) {
@@ -380,8 +380,8 @@ fn integration_blockers(
     none(&blockers.join("; "))
 }
 
-pub(super) fn effective_checkpoint(work: &Work) -> &str {
+pub(super) fn effective_checkpoint(work: &Work) -> &ObjectId {
     work.latest_checkpoint
-        .as_deref()
+        .as_ref()
         .unwrap_or(&work.starting_source)
 }

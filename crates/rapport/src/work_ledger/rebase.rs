@@ -92,7 +92,9 @@ where
         store.save_work_and_task(context.fs, &work, &action)?;
         return Err(Error::DirtyWorktree);
     }
-    let (target, target_commit) = git.fetch_target(&repository, &work.target_branch)?;
+    let target_branch = git.fetch_target(&repository, &work.target_branch)?;
+    let target = target_branch.revision();
+    let target_commit = target_branch.head();
     let mut task = if let Some(index) = existing {
         if tasks[index]
             .payload
@@ -219,7 +221,7 @@ where
     match outcome {
         RebaseOutcome::Completed => {
             let live = git.status(repository)?;
-            work.latest_checkpoint = Some(live.head().as_str().to_owned());
+            work.latest_checkpoint = Some(live.head().clone());
             task.payload.insert(
                 "resulting_source_commit".to_owned(),
                 live.head().as_str().to_owned(),

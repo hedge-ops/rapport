@@ -529,8 +529,9 @@ fn ensure_acceptance_ready(
         || !live.is_clean()
         || work
             .latest_checkpoint
-            .as_deref()
+            .as_ref()
             .unwrap_or(&work.starting_source)
+            .as_str()
             != live.head().as_str()
     {
         return Err(Error::ReviewPrerequisite);

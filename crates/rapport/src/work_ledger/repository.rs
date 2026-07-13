@@ -3,8 +3,137 @@
 //! This module owns atomic active Work and Task files; domain types own state invariants and history owns finalized records.
 
 use super::Error;
-use super::domain::{TASK_SCHEMA_VERSION, Task, WORK_SCHEMA_VERSION, Work};
+use super::domain::{
+    RequestSource, TASK_SCHEMA_VERSION, Task, WORK_SCHEMA_VERSION, Work, WorkOutcome,
+    WorkOutcomeKind,
+};
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
+use rapport_git::{BranchName, ObjectId};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredWork {
+    version: u16,
+    id: uuid::Uuid,
+    repository: String,
+    title: String,
+    description: String,
+    request: RequestSource,
+    source_branch: String,
+    target_branch: String,
+    starting_source: String,
+    starting_target: String,
+    latest_checkpoint: Option<String>,
+    #[serde(default)]
+    development_sequence: Vec<String>,
+    next_task: u32,
+    #[serde(default = "default_counter")]
+    next_finding: u32,
+    created_at: String,
+    outcome: Option<StoredWorkOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredWorkOutcome {
+    kind: WorkOutcomeKind,
+    at: String,
+    summary: String,
+    source_commit: String,
+    target_commit: String,
+}
+
+fn default_counter() -> u32 {
+    1
+}
+
+impl TryFrom<StoredWork> for Work {
+    type Error = Error;
+
+    fn try_from(stored: StoredWork) -> Result<Self, Self::Error> {
+        Ok(Self {
+            version: stored.version,
+            id: stored.id,
+            repository: stored.repository,
+            title: stored.title,
+            description: stored.description,
+            request: stored.request,
+            source_branch: BranchName::new(stored.source_branch)?,
+            target_branch: BranchName::new(stored.target_branch)?,
+            starting_source: ObjectId::new(stored.starting_source)?,
+            starting_target: ObjectId::new(stored.starting_target)?,
+            latest_checkpoint: stored.latest_checkpoint.map(ObjectId::new).transpose()?,
+            development_sequence: stored.development_sequence,
+            next_task: stored.next_task,
+            next_finding: stored.next_finding,
+            created_at: stored.created_at,
+            outcome: stored.outcome.map(WorkOutcome::try_from).transpose()?,
+        })
+    }
+}
+
+impl TryFrom<StoredWorkOutcome> for WorkOutcome {
+    type Error = Error;
+
+    fn try_from(stored: StoredWorkOutcome) -> Result<Self, Self::Error> {
+        Ok(Self {
+            kind: stored.kind,
+            at: stored.at,
+            summary: stored.summary,
+            source_commit: ObjectId::new(stored.source_commit)?,
+            target_commit: ObjectId::new(stored.target_commit)?,
+        })
+    }
+}
+
+impl From<&Work> for StoredWork {
+    fn from(work: &Work) -> Self {
+        Self {
+            version: work.version,
+            id: work.id,
+            repository: work.repository.clone(),
+            title: work.title.clone(),
+            description: work.description.clone(),
+            request: work.request.clone(),
+            source_branch: work.source_branch.as_str().to_owned(),
+            target_branch: work.target_branch.as_str().to_owned(),
+            starting_source: work.starting_source.as_str().to_owned(),
+            starting_target: work.starting_target.as_str().to_owned(),
+            latest_checkpoint: work
+                .latest_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.as_str().to_owned()),
+            development_sequence: work.development_sequence.clone(),
+            next_task: work.next_task,
+            next_finding: work.next_finding,
+            created_at: work.created_at.clone(),
+            outcome: work.outcome.as_ref().map(StoredWorkOutcome::from),
+        }
+    }
+}
+
+impl From<&WorkOutcome> for StoredWorkOutcome {
+    fn from(outcome: &WorkOutcome) -> Self {
+        Self {
+            kind: outcome.kind,
+            at: outcome.at.clone(),
+            summary: outcome.summary.clone(),
+            source_commit: outcome.source_commit.as_str().to_owned(),
+            target_commit: outcome.target_commit.as_str().to_owned(),
+        }
+    }
+}
+
+pub(super) fn decode_work(contents: &str, path: &Utf8Path) -> Result<Work, Error> {
+    let stored = toml::from_str::<StoredWork>(contents).map_err(|source| Error::Decode {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    stored.try_into()
+}
+
+pub(super) fn encode_work(work: &Work) -> Result<String, Error> {
+    Ok(toml::to_string_pretty(&StoredWork::from(work))?)
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct Store {
@@ -41,10 +170,7 @@ impl Store {
             path: path.clone(),
             source,
         })?;
-        let work: Work = toml::from_str(&contents).map_err(|source| Error::Decode {
-            path: path.clone(),
-            source,
-        })?;
+        let work = decode_work(&contents, &path)?;
         if work.version != WORK_SCHEMA_VERSION {
             return Err(Error::SchemaVersion { kind: "Work", path });
         }
@@ -62,7 +188,7 @@ impl Store {
                 path: path.clone(),
                 source,
             })?;
-        fs.write_string(&path, toml::to_string_pretty(work)?)
+        fs.write_string(&path, encode_work(work)?)
             .map_err(|source| Error::Io { path, source })
     }
 

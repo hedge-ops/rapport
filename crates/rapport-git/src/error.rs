@@ -9,6 +9,17 @@ use std::collections::BTreeSet;
 use std::io;
 use std::str::Utf8Error;
 
+/// A value that cannot identify a local or remote Git branch.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid Git branch name: {0:?}")]
+pub struct InvalidBranchName(String);
+
+impl InvalidBranchName {
+    pub(crate) fn new(value: String) -> Self {
+        Self(value)
+    }
+}
+
 /// A revision that is unsafe or ambiguous as a command argument.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid Git revision: {0:?}")]
@@ -20,11 +31,26 @@ impl InvalidRevision {
     }
 }
 
+/// A value that cannot identify a Git object.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid Git object identifier: {0:?}")]
+pub struct InvalidObjectId(String);
+
+impl InvalidObjectId {
+    pub(crate) fn new(value: String) -> Self {
+        Self(value)
+    }
+}
+
 /// A failure while invoking or interpreting Git.
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error(transparent)]
+    InvalidBranchName(#[from] InvalidBranchName),
+    #[error(transparent)]
     InvalidRevision(#[from] InvalidRevision),
+    #[error(transparent)]
+    InvalidObjectId(#[from] InvalidObjectId),
     #[error("could not {operation}: {source}")]
     Invocation {
         operation: &'static str,
@@ -45,8 +71,6 @@ pub enum GitError {
     },
     #[error("could not {0}: Git returned no output")]
     MissingOutput(&'static str),
-    #[error("Git returned an invalid object identifier: {0:?}")]
-    InvalidObjectId(String),
 }
 
 pub(crate) fn command_failed(operation: &'static str, outcome: &CommandOutcome) -> GitError {

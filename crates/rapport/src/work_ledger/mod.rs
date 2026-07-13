@@ -34,5 +34,5 @@ pub(crate) fn active_target(
 ) -> Result<Option<String>, Error> {
     repository::Store::new(root)
         .load_work(fs)
-        .map(|work| work.map(|work| work.target_branch))
+        .map(|work| work.map(|work| work.target_branch.to_string()))
 }

@@ -113,13 +113,13 @@ where
 {
     let prior = work
         .latest_checkpoint
-        .as_deref()
+        .as_ref()
         .unwrap_or(&work.starting_source)
-        .to_owned();
-    if prior == live.head().as_str() {
+        .clone();
+    if prior == *live.head() {
         return Err(Error::EmptyCheckpoint);
     }
-    let prior_revision = Revision::new(prior.clone())?;
+    let prior_revision = Revision::new(prior.as_str())?;
     if !git.contains(repository, &prior_revision)? {
         return Err(Error::AmbiguousCheckpoint);
     }
@@ -137,7 +137,8 @@ where
         now.clone(),
         None,
     );
-    task.payload.insert("prior_commit".to_owned(), prior);
+    task.payload
+        .insert("prior_commit".to_owned(), prior.as_str().to_owned());
     task.payload.insert(
         "resulting_commit".to_owned(),
         live.head().as_str().to_owned(),
@@ -154,7 +155,7 @@ where
         format!("adopted checkpoint {}", short(live.head().as_str())),
         None,
     );
-    work.latest_checkpoint = Some(live.head().as_str().to_owned());
+    work.latest_checkpoint = Some(live.head().clone());
     store.save_work_and_task(context.fs, work, &task)?;
     Ok(format!(
         "# rapport work checkpoint start\n\n- `task` — {}\n- `status` — passed\n- `adopted commit` — {}\n- `files` — {}\n- `next` — `rapport work task next`",
@@ -207,7 +208,7 @@ where
     match git.commit(&repository, summary, description) {
         Ok(head) => {
             let after = git.status(&repository)?;
-            work.latest_checkpoint = Some(head.as_str().to_owned());
+            work.latest_checkpoint = Some(head.clone());
             let checkpoint_id = tasks[index].id.clone();
             for action in &mut tasks {
                 if action.kind == "action"

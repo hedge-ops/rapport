@@ -3,7 +3,7 @@
 //! This module owns repository, revision, object, worktree, and operation state;
 //! command execution remains a boundary concern.
 
-use crate::{GitError, InvalidRevision};
+use crate::{InvalidBranchName, InvalidObjectId, InvalidRevision};
 use rapport_files::{Utf8Path, Utf8PathBuf};
 use std::collections::BTreeSet;
 
@@ -20,8 +20,51 @@ impl Repository {
     }
 }
 
-/// A Git revision supplied by a caller.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A validated local or remote Git branch name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+pub struct BranchName(String);
+
+impl BranchName {
+    /// Validate a branch name using Git ref-format restrictions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidBranchName`] when the value is reserved, option-like,
+    /// or cannot form a `refs/heads/*` reference.
+    pub fn new(value: impl Into<String>) -> Result<Self, InvalidBranchName> {
+        let value = value.into();
+        let invalid_character = value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        });
+        let invalid_component = value.split('/').any(|component| {
+            component.is_empty()
+                || component.starts_with('.')
+                || component.as_bytes().ends_with(b".lock")
+        });
+        if value.is_empty()
+            || value == "HEAD"
+            || value.starts_with('-')
+            || value.ends_with('.')
+            || value.contains("..")
+            || value.contains("@{")
+            || invalid_character
+            || invalid_component
+        {
+            return Err(InvalidBranchName::new(value));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A Git revision expression supplied only where arbitrary revspecs are valid.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub struct Revision(String);
 
 impl Revision {
@@ -47,16 +90,31 @@ impl Revision {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub(crate) fn local_branch(branch: &BranchName) -> Self {
+        Self(format!("refs/heads/{}", branch.as_str()))
+    }
+
+    pub(crate) fn remote_tracking(remote: &str, branch: &BranchName) -> Self {
+        Self(format!("refs/remotes/{remote}/{}", branch.as_str()))
+    }
 }
 
 /// A Git object identifier.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
 pub struct ObjectId(String);
 
 impl ObjectId {
-    pub(crate) fn parse(value: String) -> Result<Self, GitError> {
+    /// Validate a hexadecimal Git object identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidObjectId`] when the value is shorter than Git's minimum
+    /// abbreviation or contains non-hexadecimal characters.
+    pub fn new(value: impl Into<String>) -> Result<Self, InvalidObjectId> {
+        let value = value.into();
         if value.len() < 4 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(GitError::InvalidObjectId(value));
+            return Err(InvalidObjectId::new(value));
         }
         Ok(Self(value))
     }
@@ -67,11 +125,65 @@ impl ObjectId {
     }
 }
 
+/// A resolved local branch and its current head.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBranch {
+    pub(crate) name: BranchName,
+    pub(crate) head: ObjectId,
+}
+
+impl LocalBranch {
+    #[must_use]
+    pub fn name(&self) -> &BranchName {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn head(&self) -> &ObjectId {
+        &self.head
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> Revision {
+        Revision::local_branch(&self.name)
+    }
+}
+
+/// A resolved remote-tracking branch and its current head.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteTrackingBranch {
+    pub(crate) remote: String,
+    pub(crate) name: BranchName,
+    pub(crate) head: ObjectId,
+}
+
+impl RemoteTrackingBranch {
+    #[must_use]
+    pub fn remote(&self) -> &str {
+        &self.remote
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &BranchName {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn head(&self) -> &ObjectId {
+        &self.head
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> Revision {
+        Revision::remote_tracking(&self.remote, &self.name)
+    }
+}
+
 /// Staged, unstaged, and untracked paths in a worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeStatus {
     pub(crate) head: ObjectId,
-    pub(crate) branch: Option<String>,
+    pub(crate) branch: Option<LocalBranch>,
     pub(crate) staged: BTreeSet<Utf8PathBuf>,
     pub(crate) unstaged: BTreeSet<Utf8PathBuf>,
     pub(crate) untracked: BTreeSet<Utf8PathBuf>,
@@ -85,8 +197,13 @@ impl WorktreeStatus {
     }
 
     #[must_use]
-    pub fn branch(&self) -> Option<&str> {
-        self.branch.as_deref()
+    pub fn branch(&self) -> Option<&BranchName> {
+        self.branch.as_ref().map(LocalBranch::name)
+    }
+
+    #[must_use]
+    pub fn local_branch(&self) -> Option<&LocalBranch> {
+        self.branch.as_ref()
     }
 
     #[must_use]

@@ -165,6 +165,10 @@ pub(crate) enum Error {
     #[error(transparent)]
     Revision(#[from] rapport_git::InvalidRevision),
     #[error(transparent)]
+    BranchName(#[from] rapport_git::InvalidBranchName),
+    #[error(transparent)]
+    ObjectId(#[from] rapport_git::InvalidObjectId),
+    #[error(transparent)]
     Context(#[from] crate::policy_context::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),

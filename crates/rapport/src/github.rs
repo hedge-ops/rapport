@@ -79,6 +79,7 @@ where
         .map_or_else(
             || {
                 git.default_target(&repository)
+                    .map(|branch| branch.to_string())
                     .map_err(|error| error.to_string())
             },
             Ok,

@@ -781,6 +781,8 @@ name = "rapport-git"
 version = "0.1.0"
 dependencies = [
  "claims",
+ "derive_more",
+ "pretty_assertions",
  "rapport-command",
  "rapport-files",
  "thiserror",

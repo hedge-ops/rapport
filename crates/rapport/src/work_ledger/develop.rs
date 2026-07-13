@@ -712,21 +712,24 @@ fn running_action_index(tasks: &[Task], id: &str) -> Result<usize, Error> {
 }
 
 fn ensure_source(work: &Work, status: &WorktreeStatus) -> Result<(), Error> {
-    let actual = status.branch().unwrap_or("detached");
-    if actual == work.source_branch {
+    let actual = status.branch();
+    if actual == Some(&work.source_branch) {
         Ok(())
     } else {
         Err(Error::SourceBranchChanged {
-            expected: work.source_branch.clone(),
-            actual: actual.to_owned(),
+            expected: work.source_branch.as_str().to_owned(),
+            actual: actual
+                .map_or("detached", rapport_git::BranchName::as_str)
+                .to_owned(),
         })
     }
 }
 
 fn effective_checkpoint(work: &Work) -> &str {
     work.latest_checkpoint
-        .as_deref()
+        .as_ref()
         .unwrap_or(&work.starting_source)
+        .as_str()
 }
 
 fn record_git_state(

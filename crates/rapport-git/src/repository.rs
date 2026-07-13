@@ -5,8 +5,8 @@
 
 use crate::error::{command_failed, single_line, zero_delimited_paths};
 use crate::{
-    GitError, ObjectId, Operation, RebaseOutcome, Repository, Revision, SourceSideChanges,
-    WorktreeStatus,
+    BranchName, GitError, LocalBranch, ObjectId, Operation, RebaseOutcome, RemoteTrackingBranch,
+    Repository, Revision, SourceSideChanges, WorktreeStatus,
 };
 use rapport_command::{CommandOutcome, CommandSpec, Runner, SystemRunner};
 use rapport_files::{Utf8Path, Utf8PathBuf};
@@ -57,7 +57,7 @@ impl<R: Runner> Git<R> {
     /// Returns [`GitError`] when Git cannot inspect the repository or emits a
     /// non-UTF-8 path.
     pub fn status(&self, repository: &Repository) -> Result<WorktreeStatus, GitError> {
-        let head = ObjectId::parse(single_line(
+        let head = ObjectId::new(single_line(
             &self.run_in(repository, ["rev-parse", "HEAD"], "read HEAD")?,
             "read HEAD",
         )?)?;
@@ -69,7 +69,11 @@ impl<R: Runner> Git<R> {
             "read branch",
         )?;
         let branch = if branch_outcome.success() {
-            Some(single_line(&branch_outcome, "read branch")?)
+            let name = BranchName::new(single_line(&branch_outcome, "read branch")?)?;
+            Some(LocalBranch {
+                name,
+                head: head.clone(),
+            })
         } else if branch_outcome.exit_code() == Some(1) {
             None
         } else {
@@ -134,14 +138,14 @@ impl<R: Runner> Git<R> {
         revision: &Revision,
     ) -> Result<ObjectId, GitError> {
         let commit = format!("{}^{{commit}}", revision.as_str());
-        ObjectId::parse(single_line(
+        Ok(ObjectId::new(single_line(
             &self.run_args(
                 repository,
                 ["rev-parse", "--verify", &commit],
                 "resolve revision",
             )?,
             "resolve revision",
-        )?)
+        )?)?)
     }
 
     /// Resolve the conventional default target branch without network access.
@@ -149,7 +153,7 @@ impl<R: Runner> Git<R> {
     /// # Errors
     ///
     /// Returns [`GitError`] when neither `origin/HEAD`, `main`, nor `master` resolves.
-    pub fn default_target(&self, repository: &Repository) -> Result<String, GitError> {
+    pub fn default_target(&self, repository: &Repository) -> Result<BranchName, GitError> {
         let remote = self.run_allowing_failure(
             &CommandSpec::new("git")
                 .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
@@ -157,13 +161,14 @@ impl<R: Runner> Git<R> {
             "read default branch",
         )?;
         if remote.success() {
-            return single_line(&remote, "read default branch")
-                .map(|branch| branch.strip_prefix("origin/").unwrap_or(&branch).to_owned());
+            let branch = single_line(&remote, "read default branch")?;
+            return BranchName::new(branch.strip_prefix("origin/").unwrap_or(&branch).to_owned())
+                .map_err(GitError::from);
         }
         for candidate in ["main", "master"] {
-            let revision = Revision::new(candidate).map_err(GitError::InvalidRevision)?;
-            if self.resolve(repository, &revision).is_ok() {
-                return Ok(candidate.to_owned());
+            let branch = BranchName::new(candidate)?;
+            if self.local_branch(repository, &branch).is_ok() {
+                return Ok(branch);
             }
         }
         Err(GitError::MissingOutput("read default branch"))
@@ -213,7 +218,7 @@ impl<R: Runner> Git<R> {
         output
             .lines()
             .filter(|line| !line.is_empty())
-            .map(|line| ObjectId::parse(line.to_owned()))
+            .map(|line| ObjectId::new(line.to_owned()).map_err(GitError::from))
             .collect()
     }
 
@@ -251,7 +256,45 @@ impl<R: Runner> Git<R> {
             spec = spec.args(["-m", description]);
         }
         self.run(&spec, "create checkpoint commit")?;
-        self.status(repository).map(|status| status.head)
+        self.status(repository).map(|status| status.head().clone())
+    }
+
+    /// Resolve a named local branch to its current head.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot resolve the branch to a commit.
+    pub fn local_branch(
+        &self,
+        repository: &Repository,
+        name: &BranchName,
+    ) -> Result<LocalBranch, GitError> {
+        let revision = Revision::local_branch(name);
+        let head = self.resolve(repository, &revision)?;
+        Ok(LocalBranch {
+            name: name.clone(),
+            head,
+        })
+    }
+
+    /// Resolve the named `origin` remote-tracking branch to its current head.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot resolve the branch to a commit.
+    pub fn remote_tracking_branch(
+        &self,
+        repository: &Repository,
+        name: &BranchName,
+    ) -> Result<RemoteTrackingBranch, GitError> {
+        let remote = "origin".to_owned();
+        let revision = Revision::remote_tracking(&remote, name);
+        let head = self.resolve(repository, &revision)?;
+        Ok(RemoteTrackingBranch {
+            remote,
+            name: name.clone(),
+            head,
+        })
     }
 
     /// Publish `HEAD` to the named same-repository branch without force.
@@ -260,8 +303,11 @@ impl<R: Runner> Git<R> {
     ///
     /// Returns [`GitError`] when the branch is unsafe or the remote rejects the
     /// non-force update.
-    pub fn push_branch(&self, repository: &Repository, branch: &str) -> Result<(), GitError> {
-        let branch = Revision::new(branch.to_owned()).map_err(GitError::InvalidRevision)?;
+    pub fn push_branch(
+        &self,
+        repository: &Repository,
+        branch: &BranchName,
+    ) -> Result<(), GitError> {
         let destination = format!("HEAD:refs/heads/{}", branch.as_str());
         self.run_args(
             repository,
@@ -280,9 +326,8 @@ impl<R: Runner> Git<R> {
     pub fn delete_remote_branch(
         &self,
         repository: &Repository,
-        branch: &str,
+        branch: &BranchName,
     ) -> Result<(), GitError> {
-        let branch = Revision::new(branch.to_owned()).map_err(GitError::InvalidRevision)?;
         let reference = format!("refs/heads/{}", branch.as_str());
         let exists = self.run_allowing_failure(
             &CommandSpec::new("git")
@@ -312,17 +357,14 @@ impl<R: Runner> Git<R> {
     pub fn fetch_target(
         &self,
         repository: &Repository,
-        target: &str,
-    ) -> Result<(Revision, ObjectId), GitError> {
+        target: &BranchName,
+    ) -> Result<RemoteTrackingBranch, GitError> {
         self.run_args(
             repository,
-            ["fetch", "origin", target],
+            ["fetch", "origin", target.as_str()],
             "update target branch",
         )?;
-        let remote = Revision::new(format!("refs/remotes/origin/{target}"))
-            .map_err(GitError::InvalidRevision)?;
-        let commit = self.resolve(repository, &remote)?;
-        Ok((remote, commit))
+        self.remote_tracking_branch(repository, target)
     }
 
     /// Rebase source `HEAD` onto a target revision.
@@ -412,14 +454,14 @@ impl<R: Runner> Git<R> {
         repository: &Repository,
         target: &Revision,
     ) -> Result<ObjectId, GitError> {
-        ObjectId::parse(single_line(
+        Ok(ObjectId::new(single_line(
             &self.run_in(
                 repository,
                 ["merge-base", target.as_str(), "HEAD"],
                 "find merge base",
             )?,
             "find merge base",
-        )?)
+        )?)?)
     }
 
     /// Collect committed source-side differences plus staged, unstaged, and

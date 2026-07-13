@@ -3,6 +3,7 @@
 //! This module owns durable Work, Task, Build, Review, and Integration state and their transition invariants.
 
 use chrono::DateTime;
+use rapport_git::{BranchName, ObjectId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -39,7 +40,7 @@ impl fmt::Debug for RequestSource {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Work {
     pub(super) version: u16,
     pub(super) id: Uuid,
@@ -47,15 +48,13 @@ pub(super) struct Work {
     pub(super) title: String,
     pub(super) description: String,
     pub(super) request: RequestSource,
-    pub(super) source_branch: String,
-    pub(super) target_branch: String,
-    pub(super) starting_source: String,
-    pub(super) starting_target: String,
-    pub(super) latest_checkpoint: Option<String>,
-    #[serde(default)]
+    pub(super) source_branch: BranchName,
+    pub(super) target_branch: BranchName,
+    pub(super) starting_source: ObjectId,
+    pub(super) starting_target: ObjectId,
+    pub(super) latest_checkpoint: Option<ObjectId>,
     pub(super) development_sequence: Vec<String>,
     pub(super) next_task: u32,
-    #[serde(default = "default_counter")]
     pub(super) next_finding: u32,
     pub(super) created_at: String,
     pub(super) outcome: Option<WorkOutcome>,
@@ -71,10 +70,10 @@ impl Work {
         description: String,
         request: RequestSource,
         repository: String,
-        source_branch: String,
-        target_branch: String,
-        starting_source: String,
-        starting_target: String,
+        source_branch: BranchName,
+        target_branch: BranchName,
+        starting_source: ObjectId,
+        starting_target: ObjectId,
         created_at: String,
     ) -> Result<Self, Error> {
         Ok(Self {
@@ -84,8 +83,8 @@ impl Work {
             title: required(title)?,
             description: required(description)?,
             request,
-            source_branch: required(source_branch)?,
-            target_branch: required(target_branch)?,
+            source_branch,
+            target_branch,
             starting_source,
             starting_target,
             latest_checkpoint: None,
@@ -102,8 +101,8 @@ impl Work {
         kind: WorkOutcomeKind,
         at: String,
         summary: String,
-        source_commit: String,
-        target_commit: String,
+        source_commit: ObjectId,
+        target_commit: ObjectId,
     ) -> Result<(), Error> {
         if let Some(outcome) = &self.outcome {
             if outcome.kind == kind {
@@ -115,8 +114,8 @@ impl Work {
             kind,
             at: required(at)?,
             summary: required(summary)?,
-            source_commit: required(source_commit)?,
-            target_commit: required(target_commit)?,
+            source_commit,
+            target_commit,
         });
         Ok(())
     }
@@ -175,13 +174,13 @@ pub(super) enum WorkOutcomeKind {
     Abandoned,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct WorkOutcome {
     pub(super) kind: WorkOutcomeKind,
     pub(super) at: String,
     pub(super) summary: String,
-    pub(super) source_commit: String,
-    pub(super) target_commit: String,
+    pub(super) source_commit: ObjectId,
+    pub(super) target_commit: ObjectId,
 }
 
 impl fmt::Debug for WorkOutcome {
@@ -622,10 +621,6 @@ impl fmt::Debug for Task {
             .field("has_integration", &self.integration.is_some())
             .finish()
     }
-}
-
-const fn default_counter() -> u32 {
-    1
 }
 
 fn required(value: String) -> Result<String, Error> {

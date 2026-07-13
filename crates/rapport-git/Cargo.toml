@@ -12,12 +12,14 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+derive_more.workspace = true
 rapport-command = { path = "../rapport-command", version = "0.1.0" }
 rapport-files = { path = "../rapport-files", version = "0.2.0" }
 thiserror.workspace = true
 
 [dev-dependencies]
 claims.workspace = true
+pretty_assertions.workspace = true
 
 [lints]
 workspace = true

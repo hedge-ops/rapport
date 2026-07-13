@@ -8,9 +8,10 @@ mod error;
 mod repository;
 
 pub use domain::{
-    ObjectId, Operation, RebaseOutcome, Repository, Revision, SourceSideChanges, WorktreeStatus,
+    BranchName, LocalBranch, ObjectId, Operation, RebaseOutcome, RemoteTrackingBranch, Repository,
+    Revision, SourceSideChanges, WorktreeStatus,
 };
-pub use error::{GitError, InvalidRevision};
+pub use error::{GitError, InvalidBranchName, InvalidObjectId, InvalidRevision};
 pub use repository::Git;
 
 #[cfg(test)]
