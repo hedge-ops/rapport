@@ -2,7 +2,10 @@
 
 use super::Error;
 use super::develop;
-use super::domain::{RequestKind, RequestSource, Task, TaskStatus, Work, Workflow};
+use super::domain::{
+    RequestKind, RequestSource, Task, TaskStatus, Work, WorkOutcomeKind, Workflow,
+};
+use super::history::HistoryStore;
 use super::repository::Store;
 use crate::context::{Clock, CommandContext};
 use clap::{ArgGroup, Args, Subcommand};
@@ -53,6 +56,8 @@ enum Action {
         #[arg(long)]
         reason: String,
     },
+    /// Inspect or permanently remove finalized Work History.
+    History(super::history::Cli),
 }
 
 impl Action {
@@ -65,6 +70,7 @@ impl Action {
             Self::Rebase(_) => "rebase",
             Self::Complete { .. } => "complete",
             Self::Abandon { .. } => "abandon",
+            Self::History(_) => "history",
         }
     }
 }
@@ -197,6 +203,7 @@ where
         Action::Rebase(args) => rebase(&args.command, context),
         Action::Complete { result } => end_work(context, result, true),
         Action::Abandon { reason } => end_work(context, reason, false),
+        Action::History(cli) => super::history::execute(cli, context),
     }
 }
 
@@ -256,6 +263,7 @@ where
         args.title.clone(),
         description,
         request,
+        context.repo_root.to_string(),
         source_branch,
         target_branch,
         status.head().as_str().to_owned(),
@@ -1197,6 +1205,25 @@ where
     let store = Store::new(&context.repo_root);
     let mut work = store.require_work(context.fs)?;
     let tasks = store.load_tasks(context.fs)?;
+    let outcome_kind = if completed {
+        WorkOutcomeKind::Completed
+    } else {
+        WorkOutcomeKind::Abandoned
+    };
+    if let Some(existing) = &work.outcome {
+        if existing.kind != outcome_kind {
+            return Err(Error::FinalizedWork(existing.kind.to_string()));
+        }
+        let history =
+            HistoryStore::new(&context.repo_root)?.archive(context.fs, &store, &work, &tasks)?;
+        return Ok(format!(
+            "# rapport work {}\n\n- `work` — {}\n- `outcome` — {}\n- `remaining Git changes` — preserved from finalized Work\n- `history` — {}\n- `Git state changed` — false",
+            if completed { "complete" } else { "abandon" },
+            work.id,
+            existing.summary,
+            history
+        ));
+    }
     let (git, repository) = git_repository(&context.repo_root)?;
     if git.operation(&repository)?.is_some() {
         return Err(Error::SourceOperationActive);
@@ -1235,14 +1262,21 @@ where
             return Err(Error::ReviewIncomplete);
         }
     }
-    work.outcome = Some(format!(
-        "{} at {}: {}",
-        if completed { "completed" } else { "abandoned" },
+    let final_target = target_revision(&git, &repository, &work.target_branch).map_or_else(
+        |_| work.starting_target.clone(),
+        |(_, commit)| commit.as_str().to_owned(),
+    );
+    work.finish(
+        outcome_kind,
         context.clock.now_rfc3339(),
-        outcome
-    ));
+        outcome.clone(),
+        live.head().as_str().to_owned(),
+        final_target,
+    )?;
+    store.save_work(context.fs, &work)?;
     let remaining = paths(&live.all_changed_paths());
-    let history = store.archive(context.fs, &work, &tasks)?;
+    let history =
+        HistoryStore::new(&context.repo_root)?.archive(context.fs, &store, &work, &tasks)?;
     Ok(format!(
         "# rapport work {}\n\n- `work` — {}\n- `outcome` — {}\n- `remaining Git changes` — {}\n- `history` — {}\n- `Git state changed` — false",
         if completed { "complete" } else { "abandon" },

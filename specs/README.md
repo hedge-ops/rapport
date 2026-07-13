@@ -81,6 +81,7 @@ Implementation status and unresolved decisions belong in
 - [WRK-003](./WRK-003.md) — Checkpoint and resume work
 - [WRK-004](./WRK-004.md) — Rebase work onto its target branch
 - [WRK-005](./WRK-005.md) — Prepare a candidate for integration
+- [WRK-006](./WRK-006.md) — Inspect finalized Work history
 
 ### Build
 

@@ -111,6 +111,31 @@ Every external side effect is recorded in the Integration Task. Repeating
 Start, Cancel, or Complete reconciles recorded and observed identities and
 continues only the missing safe transition.
 
+## Work History
+
+Successful Integration, explicit local completion, and abandonment move the
+finalized Work ledger into Rapport's cross-platform global state directory.
+The archive retains the human request, prose, and dates alongside exact Git
+identities, Tasks, Build proof, Review decisions, and Integration outcome.
+
+```bash
+rapport work history list
+rapport work history show <WORK_ID>
+rapport work history remove <WORK_ID>
+rapport work history remove <WORK_ID> --confirm
+rapport work history clear
+rapport work history clear --confirm
+```
+
+List uses six-character UUID prefixes and shows newest Work first. Show and
+remove accept any unique UUID prefix. Remove and clear preview their permanent
+effect before requiring `--confirm`; they never modify repositories, Git, pull
+requests, or GitHub statuses.
+
+History is schema-versioned transparent TOML, remains local, and is never
+uploaded implicitly or treated as telemetry. Archive publication is atomic;
+active worktree state is removed only after the global record is visible.
+
 ## Repository Policy
 
 Contexts describe meaningful repository areas. They declare purpose,
@@ -174,6 +199,8 @@ deletion.
 - `.rapport/rules.lock` records exact catalog versions and digests.
 - `.rapport/work.toml` and `.rapport/tasks/*.toml` contain ignored active local
   Work state.
+- the platform Rapport state directory contains immutable finalized Work
+  History outside every repository.
 - `.github/workflows/rapport-*-signoff-*.yml` contains generated proof-request
   workflows.
 - Git is the local source of truth; GitHub is the shared source of truth.

@@ -11,7 +11,9 @@ The product workflow is:
 Plan -> Develop -> Build -> Review -> Integrate -> Ship
 ```
 
-Work is the durable local ledger connecting Develop through Integrate.
+Work is the durable local ledger connecting Develop through Integrate. Once
+finalized, its human prose, dates, Tasks, proof, decisions, and Git identities
+remain inspectable through `rapport work history` in local cross-platform state.
 
 ## License
 
