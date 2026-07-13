@@ -53,6 +53,7 @@ where
         format!("found {git_marker}"),
     ));
 
+    let mut github_origin = false;
     match context.runner.run(
         &CommandSpec::new("git", ["remote", "get-url", "origin"]),
         context.paths.repo_root(),
@@ -67,6 +68,7 @@ where
             } else {
                 checks.push(DoctorCheck::pass("origin remote", origin.to_string()));
                 if origin_url_is_github(origin) {
+                    github_origin = true;
                     checks.push(DoctorCheck::pass(
                         "GitHub origin",
                         "origin host is github.com",
@@ -99,6 +101,13 @@ where
             Err(error) => DoctorCheck::fail(PROJECT_CONTEXT_CHECK, error.to_string()),
         },
     );
+
+    if github_origin {
+        checks.push(match crate::github::diagnose(context) {
+            Ok(detail) => DoctorCheck::pass("GitHub integration", detail),
+            Err(error) => DoctorCheck::fail("GitHub integration", error),
+        });
+    }
 
     DoctorReport { checks }
 }
@@ -234,9 +243,11 @@ where
 
 fn render_report(report: &DoctorReport) -> String {
     let next = if report.passed() {
-        RunHint::new("rapport integrate")
+        RunHint::new("rapport integrate start")
     } else if report.has_failed_check("origin remote") || report.has_failed_check("GitHub origin") {
         RunHint::new("configure GitHub origin, then run rapport doctor")
+    } else if report.has_failed_check("GitHub integration") {
+        RunHint::new("run rapport github setup, then rapport doctor")
     } else {
         RunHint::new("fix failed checks, then run rapport doctor")
     };

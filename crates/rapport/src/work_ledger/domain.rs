@@ -392,6 +392,82 @@ pub(super) struct ReviewTask {
     pub(super) proof: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum IntegrationStage {
+    Preparing,
+    Published,
+    Merging,
+    Merged,
+    Cancelling,
+    Cancelled,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum FreshnessPolicy {
+    Strict,
+    #[default]
+    Loose,
+    MergeQueue,
+}
+
+impl fmt::Display for FreshnessPolicy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Strict => "strict",
+            Self::Loose => "loose",
+            Self::MergeQueue => "merge_queue",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct PublishedBuildStatus {
+    pub(super) identity: String,
+    pub(super) build_task: String,
+    pub(super) contract_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "durable booleans record independently resumable external side effects"
+)]
+pub(super) struct IntegrationTask {
+    pub(super) stage: IntegrationStage,
+    pub(super) repository: Option<String>,
+    pub(super) source_branch: String,
+    pub(super) target_branch: String,
+    pub(super) candidate: String,
+    pub(super) target_commit: String,
+    pub(super) policy_digest: String,
+    #[serde(default)]
+    pub(super) freshness_policy: FreshnessPolicy,
+    pub(super) build_task: String,
+    pub(super) review_task: String,
+    pub(super) review_grade: String,
+    pub(super) quality_override: Option<String>,
+    #[serde(default)]
+    pub(super) review_findings: Vec<String>,
+    #[serde(default)]
+    pub(super) pushed: bool,
+    #[serde(default)]
+    pub(super) published_builds: Vec<PublishedBuildStatus>,
+    #[serde(default)]
+    pub(super) aggregate_build_published: bool,
+    pub(super) pull_request_number: Option<u64>,
+    pub(super) pull_request_url: Option<String>,
+    pub(super) pull_request_head: Option<String>,
+    pub(super) pull_request_base: Option<String>,
+    #[serde(default)]
+    pub(super) pull_request_closed: bool,
+    #[serde(default)]
+    pub(super) remote_branch_deleted: bool,
+    pub(super) merge_commit: Option<String>,
+    pub(super) cancellation_reason: Option<String>,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Task {
     pub(super) version: u16,
@@ -417,6 +493,8 @@ pub(super) struct Task {
     pub(super) build: Option<BuildTask>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) review: Option<ReviewTask>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) integration: Option<IntegrationTask>,
 }
 
 impl Task {
@@ -455,6 +533,7 @@ impl Task {
             payload: BTreeMap::new(),
             build: None,
             review: None,
+            integration: None,
         }
     }
 
@@ -513,6 +592,7 @@ impl fmt::Debug for Task {
             .field("payload_keys", &self.payload.keys().collect::<Vec<_>>())
             .field("has_build", &self.build.is_some())
             .field("has_review", &self.review.is_some())
+            .field("has_integration", &self.integration.is_some())
             .finish()
     }
 }

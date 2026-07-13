@@ -2,6 +2,7 @@
 
 use super::Error;
 use super::domain::{TASK_SCHEMA_VERSION, Task, WORK_SCHEMA_VERSION, Work};
+#[cfg(not(test))]
 use directories::ProjectDirs;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 
@@ -172,13 +173,21 @@ impl Store {
         work: &Work,
         tasks: &[Task],
     ) -> Result<Utf8PathBuf, Error> {
-        let project = ProjectDirs::from("com", "Hedge Ops", "Rapport")
-            .ok_or(Error::MissingHistoryDirectory)?;
-        let state = project
-            .state_dir()
-            .unwrap_or_else(|| project.data_local_dir());
-        let history = Utf8PathBuf::from_path_buf(state.join("work").join(work.id.to_string()))
-            .map_err(|_| Error::NonUtf8Path)?;
+        #[cfg(test)]
+        let history = self
+            .root
+            .join(".rapport/test-history/work")
+            .join(work.id.to_string());
+        #[cfg(not(test))]
+        let history = {
+            let project = ProjectDirs::from("com", "Hedge Ops", "Rapport")
+                .ok_or(Error::MissingHistoryDirectory)?;
+            let state = project
+                .state_dir()
+                .unwrap_or_else(|| project.data_local_dir());
+            Utf8PathBuf::from_path_buf(state.join("work").join(work.id.to_string()))
+                .map_err(|_| Error::NonUtf8Path)?
+        };
         fs.create_dir_all(&history).map_err(|source| Error::Io {
             path: history.clone(),
             source,
