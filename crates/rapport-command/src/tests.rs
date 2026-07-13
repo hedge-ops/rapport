@@ -38,7 +38,7 @@ fn unique_lock_directory(test_name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn debug_output_redacts_arguments_environment_and_output() {
+fn debug_output_includes_operations_and_redacts_environment_values() {
     let spec = CommandSpec::new("tool")
         .arg("PRIVATE ARGUMENT")
         .env("TOKEN", "PRIVATE TOKEN");
@@ -52,10 +52,11 @@ fn debug_output_redacts_arguments_environment_and_output() {
 
     let debug = format!("{spec:?} {outcome:?}");
 
-    assert!(!debug.contains("PRIVATE"));
-    assert!(debug.contains("argument_count: 1"));
-    assert!(debug.contains("environment_variable_count: 1"));
-    assert!(debug.contains("stdout_bytes: 14"));
+    assert!(debug.contains("PRIVATE ARGUMENT"));
+    assert!(debug.contains("PRIVATE STDOUT"));
+    assert!(debug.contains("PRIVATE STDERR"));
+    assert!(debug.contains("TOKEN"));
+    assert!(!debug.contains("PRIVATE TOKEN"));
 }
 
 #[test]

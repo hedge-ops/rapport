@@ -115,12 +115,8 @@ impl Catalog {
         let mut entries = BTreeMap::new();
         for file in CATALOG_FILES {
             let source_path = Utf8Path::new(file.path);
-            let ruleset = boundary::parse_catalog(
-                file.contents,
-                source_path,
-                file.purpose,
-                file.version,
-            )?;
+            let ruleset =
+                boundary::parse_catalog(file.contents, source_path, file.purpose, file.version)?;
             if ruleset.id().as_str() != file.id {
                 return Err(Error::UnknownRuleset(file.id.to_owned()));
             }
@@ -427,7 +423,7 @@ impl std::fmt::Debug for LockedRuleset {
             .field("id", &self.id)
             .field("catalog_version", &self.catalog_version)
             .field("path", &self.path)
-            .field("digest", &"[redacted]")
+            .field("digest", &self.digest)
             .finish()
     }
 }

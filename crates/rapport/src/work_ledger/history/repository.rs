@@ -20,7 +20,7 @@ impl fmt::Debug for HistoryStore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("HistoryStore")
-            .field("root", &"[redacted]")
+            .field("root", &self.root)
             .finish()
     }
 }
@@ -250,7 +250,7 @@ impl fmt::Debug for HistoryRecord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("HistoryRecord")
-            .field("path", &"[redacted]")
+            .field("path", &self.path)
             .field("work", &self.work)
             .field("task_count", &self.tasks.len())
             .finish()
