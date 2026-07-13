@@ -125,7 +125,7 @@ where
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-    use rapport_files::{InMemoryFileSystem, Utf8Path};
+    use rapport_files::InMemoryFileSystem;
     use std::collections::VecDeque;
     use std::io;
     use std::sync::Mutex;
@@ -659,7 +659,9 @@ mod tests {
         let signoff = fs
             .read_to_string("/repo/.github/workflows/rapport-signoff.yml")
             .unwrap();
-        assert!(signoff.contains("context=signoff: ${TARGET}"));
+        assert!(signoff.contains("workflow_call:"));
+        assert!(signoff.contains("context=${IDENTITY}"));
+        assert!(signoff.contains("context=${AGGREGATE}"));
         let event = first_event(&fs);
 
         assert_eq!(event.command, "init");
