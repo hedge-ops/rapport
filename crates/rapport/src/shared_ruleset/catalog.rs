@@ -12,59 +12,67 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 const LOCK_VERSION: u16 = 1;
-const CATALOG_VERSION: &str = "1.0.0";
 
 const CATALOG_FILES: &[CatalogFile] = &[
     CatalogFile::new(
         "RUST_CODING",
+        "1.0.1",
         "Standards for clear, safe, and maintainable Rust implementation.",
         "rust/coding.toml",
         include_str!("../../catalog/rust/coding.toml"),
     ),
     CatalogFile::new(
         "RUST_TEST",
+        "1.0.0",
         "Standards for Rust tests as readable executable specifications.",
         "rust/test.toml",
         include_str!("../../catalog/rust/test.toml"),
     ),
     CatalogFile::new(
         "RUST_COMMENT",
+        "1.0.0",
         "Standards for concise Rust documentation and meaningful comments.",
         "rust/comment.toml",
         include_str!("../../catalog/rust/comment.toml"),
     ),
     CatalogFile::new(
         "RUST_CRATE",
+        "1.0.1",
         "Complete coding, testing, and documentation policy for a Rust crate.",
         "rust/crate.toml",
         include_str!("../../catalog/rust/crate.toml"),
     ),
     CatalogFile::new(
         "CRUX_EFFECTS",
+        "1.0.0",
         "Standards for typed Crux effects and shell-owned execution.",
         "crux/effects.toml",
         include_str!("../../catalog/crux/effects.toml"),
     ),
     CatalogFile::new(
         "CRUX_MODEL",
+        "1.0.0",
         "Standards for explicit Crux state-machine ownership and transitions.",
         "crux/model.toml",
         include_str!("../../catalog/crux/model.toml"),
     ),
     CatalogFile::new(
         "CRUX_VIEW",
+        "1.0.0",
         "Standards for shell-facing Crux ViewModels and projections.",
         "crux/view.toml",
         include_str!("../../catalog/crux/view.toml"),
     ),
     CatalogFile::new(
         "CRUX_TEST",
+        "1.0.0",
         "Standards for testing Crux commands, effects, and model transitions.",
         "crux/test.toml",
         include_str!("../../catalog/crux/test.toml"),
     ),
     CatalogFile::new(
         "CRUX_APP",
+        "1.0.1",
         "Complete Rust and Crux policy for a cross-platform application.",
         "crux/app.toml",
         include_str!("../../catalog/crux/app.toml"),
@@ -73,6 +81,7 @@ const CATALOG_FILES: &[CatalogFile] = &[
 
 struct CatalogFile {
     id: &'static str,
+    version: &'static str,
     purpose: &'static str,
     path: &'static str,
     contents: &'static str,
@@ -81,12 +90,14 @@ struct CatalogFile {
 impl CatalogFile {
     const fn new(
         id: &'static str,
+        version: &'static str,
         purpose: &'static str,
         path: &'static str,
         contents: &'static str,
     ) -> Self {
         Self {
             id,
+            version,
             purpose,
             path,
             contents,
@@ -104,8 +115,12 @@ impl Catalog {
         let mut entries = BTreeMap::new();
         for file in CATALOG_FILES {
             let source_path = Utf8Path::new(file.path);
-            let ruleset =
-                boundary::parse_catalog(file.contents, source_path, file.purpose, CATALOG_VERSION)?;
+            let ruleset = boundary::parse_catalog(
+                file.contents,
+                source_path,
+                file.purpose,
+                file.version,
+            )?;
             if ruleset.id().as_str() != file.id {
                 return Err(Error::UnknownRuleset(file.id.to_owned()));
             }
@@ -314,6 +329,10 @@ fn write_entries(
     let mut changed = Vec::new();
     for entry in entries {
         let path = repo_root.join(".rapport/rules").join(entry.relative_path());
+        let catalog_version = entry
+            .ruleset
+            .catalog_version()
+            .ok_or_else(|| Error::InvalidCatalogLock(entry.ruleset.id().to_string()))?;
         if let Some(parent) = path.parent() {
             fs.create_dir_all(parent).map_err(|source| Error::Io {
                 path: parent.to_path_buf(),
@@ -327,7 +346,7 @@ fn write_entries(
             })?;
         lock.replace(LockedRuleset {
             id: entry.ruleset.id().to_string(),
-            catalog_version: CATALOG_VERSION.to_owned(),
+            catalog_version: catalog_version.to_owned(),
             path: entry.relative_path.to_string(),
             digest: entry.digest(),
         });
@@ -502,6 +521,40 @@ mod tests {
         assert!(
             fs.read_to_string("/repo/.rapport/rules/rust/coding.toml")
                 .is_ok_and(|contents| contents.contains("purpose ="))
+        );
+    }
+
+    #[test]
+    fn catalog_should_version_only_changed_rulesets_and_effective_aggregates() {
+        let catalog = assert_ok!(Catalog::load());
+
+        assert_eq!(
+            assert_ok!(catalog.get("RUST_CODING"))
+                .ruleset()
+                .catalog_version(),
+            Some("1.0.1"),
+            "expecting the changed Rust coding policy to receive the patch version"
+        );
+        assert_eq!(
+            assert_ok!(catalog.get("RUST_CRATE"))
+                .ruleset()
+                .catalog_version(),
+            Some("1.0.1"),
+            "expecting the Rust aggregate to version its changed effective policy"
+        );
+        assert_eq!(
+            assert_ok!(catalog.get("CRUX_APP"))
+                .ruleset()
+                .catalog_version(),
+            Some("1.0.1"),
+            "expecting the Crux aggregate to version its changed effective policy"
+        );
+        assert_eq!(
+            assert_ok!(catalog.get("RUST_TEST"))
+                .ruleset()
+                .catalog_version(),
+            Some("1.0.0"),
+            "expecting unchanged component policy to retain its version"
         );
     }
 
