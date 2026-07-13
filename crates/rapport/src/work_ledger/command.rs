@@ -354,7 +354,11 @@ where
         } else {
             "missing or stale"
         };
-    let review_proof = workflow_state(&tasks, Workflow::Review);
+    let review_proof = if super::review::has_candidate_proof(&tasks, live.head().as_str()) {
+        "current"
+    } else {
+        "missing or stale"
+    };
     let blockers = integration_blockers(&work, &tasks, &live, operation);
     let next = select_next(&work, &tasks).map_or_else(
         || next_workflow(&work, &tasks, &live, operation),
@@ -1227,6 +1231,9 @@ where
         if !super::build::current_proof(&tasks, live.head().as_str(), &policy_digest, &signoffs) {
             return Err(Error::BuildIncomplete);
         }
+        if !super::review::has_candidate_proof(&tasks, live.head().as_str()) {
+            return Err(Error::ReviewIncomplete);
+        }
     }
     work.outcome = Some(format!(
         "{} at {}: {}",
@@ -1291,7 +1298,11 @@ fn next_workflow(
         "rapport work checkpoint start".to_owned()
     } else if develop::is_complete(work, tasks, live, operation) {
         if super::build::has_candidate_proof(tasks, live.head().as_str()) {
-            "rapport review start".to_owned()
+            if super::review::has_candidate_proof(tasks, live.head().as_str()) {
+                "rapport integrate start".to_owned()
+            } else {
+                "rapport review start".to_owned()
+            }
         } else {
             "rapport build".to_owned()
         }
@@ -1330,7 +1341,7 @@ fn active_task(tasks: &[Task], task_type: &str) -> Result<usize, Error> {
         .ok_or_else(|| Error::MissingTask(format!("active {task_type}")))
 }
 
-fn change_snapshot(
+pub(super) fn change_snapshot(
     repository: &Repository,
     status: &WorktreeStatus,
     fs: &impl FileSystem,
@@ -1383,17 +1394,6 @@ fn task_state(tasks: &[Task]) -> String {
             .collect::<Vec<_>>()
             .join("; "),
     )
-}
-
-fn workflow_state(tasks: &[Task], workflow: Workflow) -> String {
-    tasks
-        .iter()
-        .rev()
-        .find(|task| task.workflow == workflow)
-        .map_or_else(
-            || "missing".to_owned(),
-            |task| format!("{} ({})", task.status, task.id),
-        )
 }
 
 fn integration_blockers(

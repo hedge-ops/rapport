@@ -61,9 +61,14 @@ rapport build                              # acceptance proof for active Work; o
 rapport build <path>                       # ad hoc just dev feedback
 rapport build <path> --target <just-target>
 rapport build status [task-id]
-rapport review start [path...]
-rapport review start --json [path...] # optional machine-readable request
+rapport review start                   # acceptance Review; otherwise ad hoc without Work
+rapport review start <path>            # ad hoc feedback
 rapport review complete --result /tmp/review-result.json
+rapport review status [task-id]
+rapport review reconcile REV_001 --accept
+rapport review reconcile REV_001 --dismiss --reason "..."
+rapport review override --reason "..."
+rapport review cancel --reason "..."
 rapport integrate --summary "..." --message "..."
 rapport integrate # retry signoff for the recorded PR
 ```

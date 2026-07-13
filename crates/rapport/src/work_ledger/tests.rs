@@ -91,6 +91,45 @@ fn failing(stderr: &str) -> CommandOutcome {
     }
 }
 
+fn review_result(checksum: &str, grade: &str, action: bool) -> String {
+    let categories = [
+        "Intent and correctness",
+        "Architecture and boundaries",
+        "Rules and code quality",
+        "Tests and reliability",
+        "Security and privacy",
+        "Documentation and operability",
+        "Compatibility and dependencies",
+    ]
+    .into_iter()
+    .map(|category| serde_json::json!({"category":category,"grade":grade,"explanation":"Concrete inspection found no unresolved category risk."}))
+    .collect::<Vec<_>>();
+    let actions = if action {
+        vec![serde_json::json!({
+            "title":"Clarify behavior", "explanation":"The behavior needs a clearer contract.",
+            "rule_ids":[], "evidence":[{"path":"src/lib.rs","line":1,"description":"The public boundary is ambiguous."}],
+            "impact":"Users may misunderstand the behavior.", "recommended_correction":"Document and test the contract."
+        })]
+    } else {
+        Vec::new()
+    };
+    assert_ok!(serde_json::to_string_pretty(&serde_json::json!({
+        "input_checksum":checksum,"overall_grade":grade,"overall_explanation":"The grade follows the concrete findings.",
+        "categories":categories,"proposed_actions":actions,"suggested_rule_improvements":[]
+    })))
+}
+
+fn request_checksum(request: &str) -> &str {
+    let checksum = request
+        .split("input_checksum `")
+        .nth(1)
+        .and_then(|value| value.split('`').next());
+    let Some(checksum) = checksum else {
+        panic!("request omitted its checksum")
+    };
+    checksum
+}
+
 #[derive(Debug)]
 struct TemporaryRepository {
     root: Utf8PathBuf,
@@ -876,4 +915,81 @@ fn acceptance_build_generated_changes_invalidate_proof() {
         develop.contains("Reconcile build-generated changes"),
         "{develop}"
     );
+}
+
+#[test]
+/// Acceptance Review keeps the minimum private and binds passing proof to the exact candidate (REV-001, WRK-005).
+fn acceptance_review_passes_and_routes_work_to_integrate() {
+    let repository = TemporaryRepository::new();
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Review the candidate.",
+        "--title",
+        "Acceptance Review",
+        "--target",
+        "main",
+    ]);
+    repository.succeeds(&["build"]);
+
+    let request = repository.succeeds(&["review", "start"]);
+    assert!(request.contains("Rapport Independent Review"), "{request}");
+    assert!(!request.contains("effective review minimum"), "{request}");
+    let result_path = std::env::temp_dir().join(format!(
+        "rapport-review-result-{}.json",
+        NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    assert_ok!(std::fs::write(
+        &result_path,
+        review_result(request_checksum(&request), "A", false)
+    ));
+    let result_path_string = result_path.to_string_lossy().into_owned();
+    let completed = repository.succeeds(&["review", "complete", "--result", &result_path_string]);
+    assert!(completed.contains("status` — passed"), "{completed}");
+    assert!(completed.contains("proof` — true"), "{completed}");
+    let next = repository.succeeds(&["work", "task", "next"]);
+    assert!(next.contains("rapport integrate start"), "{next}");
+    let _ = std::fs::remove_file(result_path);
+}
+
+#[test]
+/// Review findings receive durable IDs and require an explicit risk or corrective-work decision (REV-001).
+fn review_finding_dismissal_records_reason_and_completes_policy() {
+    let repository = TemporaryRepository::new();
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Review findings.",
+        "--title",
+        "Finding Review",
+        "--target",
+        "main",
+    ]);
+    repository.succeeds(&["build"]);
+    let request = repository.succeeds(&["review", "start"]);
+    let result_path = std::env::temp_dir().join(format!(
+        "rapport-review-finding-{}.json",
+        NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    assert_ok!(std::fs::write(
+        &result_path,
+        review_result(request_checksum(&request), "B", true)
+    ));
+    let result_path_string = result_path.to_string_lossy().into_owned();
+    let blocked = repository.succeeds(&["review", "complete", "--result", &result_path_string]);
+    assert!(blocked.contains("REV_001"), "{blocked}");
+    assert!(blocked.contains("status` — blocked"), "{blocked}");
+    let dismissed = repository.succeeds(&[
+        "review",
+        "reconcile",
+        "REV_001",
+        "--dismiss",
+        "--reason",
+        "The current behavior is intentionally narrow.",
+    ]);
+    assert!(dismissed.contains("status` — passed"), "{dismissed}");
+    assert!(dismissed.contains("proof` — true"), "{dismissed}");
+    let _ = std::fs::remove_file(result_path);
 }

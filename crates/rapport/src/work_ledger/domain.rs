@@ -8,6 +8,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use super::Error;
+use crate::ReviewGrade;
 
 pub(super) const WORK_SCHEMA_VERSION: u16 = 1;
 pub(super) const TASK_SCHEMA_VERSION: u16 = 1;
@@ -51,6 +52,8 @@ pub(super) struct Work {
     #[serde(default)]
     pub(super) development_sequence: Vec<String>,
     pub(super) next_task: u32,
+    #[serde(default = "default_counter")]
+    pub(super) next_finding: u32,
     pub(super) created_at: String,
     pub(super) outcome: Option<String>,
 }
@@ -83,6 +86,7 @@ impl Work {
             latest_checkpoint: None,
             development_sequence: Vec::new(),
             next_task: 1,
+            next_finding: 1,
             created_at,
             outcome: None,
         })
@@ -92,6 +96,15 @@ impl Work {
         let id = format!("TASK_{:03}", self.next_task);
         self.next_task = self
             .next_task
+            .checked_add(1)
+            .ok_or(Error::TaskIdExhausted)?;
+        Ok(id)
+    }
+
+    pub(super) fn allocate_finding_id(&mut self) -> Result<String, Error> {
+        let id = format!("REV_{:03}", self.next_finding);
+        self.next_finding = self
+            .next_finding
             .checked_add(1)
             .ok_or(Error::TaskIdExhausted)?;
         Ok(id)
@@ -114,6 +127,7 @@ impl fmt::Debug for Work {
             .field("has_checkpoint", &self.latest_checkpoint.is_some())
             .field("development_tasks", &self.development_sequence.len())
             .field("next_task", &self.next_task)
+            .field("next_finding", &self.next_finding)
             .field("created_at", &self.created_at)
             .field("has_outcome", &self.outcome.is_some())
             .finish()
@@ -282,6 +296,102 @@ pub(super) struct BuildTask {
     pub(super) proof: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ReviewMode {
+    Feedback,
+    Acceptance,
+}
+
+impl fmt::Display for ReviewMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Feedback => "feedback",
+            Self::Acceptance => "acceptance",
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum FindingStatus {
+    #[default]
+    Pending,
+    Accepted,
+    Dismissed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReviewEvidence {
+    pub(super) path: String,
+    pub(super) line: u32,
+    pub(super) description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReviewFinding {
+    #[serde(default)]
+    pub(super) id: Option<String>,
+    pub(super) title: String,
+    pub(super) explanation: String,
+    pub(super) rule_ids: Vec<String>,
+    pub(super) evidence: Vec<ReviewEvidence>,
+    pub(super) impact: String,
+    pub(super) recommended_correction: String,
+    #[serde(default)]
+    pub(super) status: FindingStatus,
+    #[serde(default)]
+    pub(super) decision_reason: Option<String>,
+    #[serde(default)]
+    pub(super) corrective_task: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReviewCategory {
+    pub(super) category: String,
+    pub(super) grade: Option<ReviewGrade>,
+    #[serde(default)]
+    pub(super) not_applicable: bool,
+    pub(super) explanation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReviewResult {
+    pub(super) input_checksum: String,
+    pub(super) overall_grade: ReviewGrade,
+    pub(super) overall_explanation: String,
+    pub(super) categories: Vec<ReviewCategory>,
+    #[serde(default)]
+    pub(super) proposed_actions: Vec<ReviewFinding>,
+    #[serde(default)]
+    pub(super) suggested_rule_improvements: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReviewUnit {
+    pub(super) id: String,
+    pub(super) input_checksum: String,
+    pub(super) request: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ReviewTask {
+    pub(super) mode: ReviewMode,
+    pub(super) base: String,
+    pub(super) candidate: String,
+    pub(super) policy_digest: String,
+    pub(super) content_digest: String,
+    pub(super) reviewed_paths: Vec<String>,
+    pub(super) build_task: Option<String>,
+    pub(super) minimum_grade: Option<ReviewGrade>,
+    pub(super) rule_ids: Vec<String>,
+    pub(super) units: Vec<ReviewUnit>,
+    pub(super) result: Option<ReviewResult>,
+    pub(super) findings: Vec<ReviewFinding>,
+    pub(super) quality_override: Option<String>,
+    pub(super) proof: bool,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Task {
     pub(super) version: u16,
@@ -305,6 +415,8 @@ pub(super) struct Task {
     pub(super) payload: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) build: Option<BuildTask>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) review: Option<ReviewTask>,
 }
 
 impl Task {
@@ -342,6 +454,7 @@ impl Task {
             continuation,
             payload: BTreeMap::new(),
             build: None,
+            review: None,
         }
     }
 
@@ -399,8 +512,13 @@ impl fmt::Debug for Task {
             .field("continuation", &self.continuation)
             .field("payload_keys", &self.payload.keys().collect::<Vec<_>>())
             .field("has_build", &self.build.is_some())
+            .field("has_review", &self.review.is_some())
             .finish()
     }
+}
+
+const fn default_counter() -> u32 {
+    1
 }
 
 fn required(value: String) -> Result<String, Error> {

@@ -51,6 +51,30 @@ pub(crate) enum Error {
     BuildFailed(String),
     #[error("ad hoc Build failed; no proof was recorded")]
     AdHocBuildFailed,
+    #[error("acceptance Review requires current Develop and Build proof")]
+    ReviewPrerequisite,
+    #[error("another Review Task is already running or awaiting decision")]
+    ActiveReview,
+    #[error("no current Review Task is awaiting this operation")]
+    MissingReview,
+    #[error("review result is invalid: {0}")]
+    InvalidReviewResult(String),
+    #[error("Review path must stay inside the repository")]
+    InvalidReviewPath,
+    #[error("review input changed; cancel or restart Review")]
+    StaleReview,
+    #[error("review finding `{0}` was not found or is already reconciled")]
+    MissingFinding(String),
+    #[error("quality override is unavailable for this Review result")]
+    OverrideUnavailable,
+    #[error("Work cannot complete while Review proof is missing or stale")]
+    ReviewIncomplete,
+    #[error("could not decode review result `{path}`")]
+    ReviewDecode {
+        path: Utf8PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("a title or description update is required")]
     EmptyTaskUpdate,
     #[error("the before/after position must name a Develop Action Task")]
