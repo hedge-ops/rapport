@@ -11,14 +11,18 @@ use crate::repository_files::find_named_files;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) struct Store<'a, F> {
-    fs: &'a mut F,
-    repo_root: &'a Utf8Path,
-    catalog: &'a Catalog,
+pub(super) struct Store<'store, F> {
+    fs: &'store mut F,
+    repo_root: &'store Utf8Path,
+    catalog: &'store Catalog,
 }
 
-impl<'a, F: FileSystem> Store<'a, F> {
-    pub(super) fn new(fs: &'a mut F, repo_root: &'a Utf8Path, catalog: &'a Catalog) -> Self {
+impl<'store, F: FileSystem> Store<'store, F> {
+    pub(super) fn new(
+        fs: &'store mut F,
+        repo_root: &'store Utf8Path,
+        catalog: &'store Catalog,
+    ) -> Self {
         Self {
             fs,
             repo_root,
@@ -386,19 +390,12 @@ impl std::fmt::Debug for StoredRuleset {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub(super) enum Source {
+    #[display("repository")]
     Repository,
+    #[display("catalog {version}")]
     Catalog { version: String },
-}
-
-impl std::fmt::Display for Source {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Repository => formatter.write_str("repository"),
-            Self::Catalog { version } => write!(formatter, "catalog {version}"),
-        }
-    }
 }
 
 fn insert_unique(

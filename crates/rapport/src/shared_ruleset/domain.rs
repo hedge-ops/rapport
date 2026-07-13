@@ -10,7 +10,8 @@ use std::str::FromStr;
 
 pub(crate) const SCHEMA_VERSION: u16 = 1;
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+#[display("{_0}")]
 pub(crate) struct RulesetId(String);
 
 impl RulesetId {
@@ -45,13 +46,8 @@ impl fmt::Debug for RulesetId {
     }
 }
 
-impl fmt::Display for RulesetId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+#[display("{_0}")]
 pub(crate) struct RuleId(String);
 
 impl RuleId {
@@ -79,12 +75,6 @@ impl RuleId {
 impl fmt::Debug for RuleId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_tuple("RuleId").field(&self.0).finish()
-    }
-}
-
-impl fmt::Display for RuleId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
     }
 }
 

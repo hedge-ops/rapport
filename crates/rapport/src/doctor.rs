@@ -1,3 +1,8 @@
+//! Repository prerequisite diagnostics.
+//!
+//! This module owns read-only GitHub, Context, and active-Work checks and their
+//! combined user-facing report.
+
 use crate::context::{Clock, CommandContext};
 use crate::runner::{CommandOutcome, CommandSpec};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
@@ -160,19 +165,12 @@ impl DoctorCheck {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 enum CheckStatus {
+    #[display("pass")]
     Pass,
+    #[display("fail")]
     Fail,
-}
-
-impl std::fmt::Display for CheckStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pass => f.write_str("pass"),
-            Self::Fail => f.write_str("fail"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

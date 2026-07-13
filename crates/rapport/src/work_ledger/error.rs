@@ -1,4 +1,6 @@
 //! Work ledger failures.
+//!
+//! This module owns the primary failure contract for active Work and every Task workflow.
 
 use rapport_files::Utf8PathBuf;
 use std::io;

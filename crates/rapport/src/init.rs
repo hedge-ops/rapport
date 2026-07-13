@@ -1,3 +1,8 @@
+//! Repository initialization command.
+//!
+//! This module owns idempotent agent instructions, local rules ignore policy,
+//! shared signoff workflow creation, and init telemetry.
+
 use crate::context::{Clock, CommandContext};
 use crate::policy_context;
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};

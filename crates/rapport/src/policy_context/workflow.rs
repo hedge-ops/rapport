@@ -1,4 +1,6 @@
 //! Generated Build-signoff workflows.
+//!
+//! This module owns generated GitHub workflow contracts and local validation for Context Build signoffs.
 
 use super::Error;
 use super::domain::{BuildSignoff, ContextId};

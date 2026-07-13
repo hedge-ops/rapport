@@ -110,11 +110,12 @@ pub(super) struct ReviewGradeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use claims::assert_ok;
 
     #[test]
     fn grades_preserve_quality_order() {
-        let passing = "A-".parse::<ReviewGrade>().expect("valid passing grade");
-        let failing = "B+".parse::<ReviewGrade>().expect("valid failing grade");
+        let passing = assert_ok!("A-".parse::<ReviewGrade>());
+        let failing = assert_ok!("B+".parse::<ReviewGrade>());
 
         assert!(passing.meets(failing));
         assert!(!failing.meets(passing));

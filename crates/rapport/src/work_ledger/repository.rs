@@ -1,4 +1,6 @@
 //! Work and Task persistence.
+//!
+//! This module owns atomic active Work and Task files; domain types own state invariants and history owns finalized records.
 
 use super::Error;
 use super::domain::{TASK_SCHEMA_VERSION, Task, WORK_SCHEMA_VERSION, Work};

@@ -3,7 +3,7 @@
 //! This module validates resource identities and maps them to advisory lock
 //! files held for the lifetime of a guard.
 
-use std::fmt;
+use crate::InvalidResourceKey;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ impl ResourceKey {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
         {
-            return Err(InvalidResourceKey(value));
+            return Err(InvalidResourceKey::new(value));
         }
         Ok(Self(value))
     }
@@ -36,18 +36,6 @@ impl ResourceKey {
         &self.0
     }
 }
-
-/// A resource key that cannot safely identify a lock file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidResourceKey(String);
-
-impl fmt::Display for InvalidResourceKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "invalid machine resource key: {:?}", self.0)
-    }
-}
-
-impl std::error::Error for InvalidResourceKey {}
 
 /// Coordinates named exclusive resources across processes on one machine.
 #[derive(Debug, Clone)]

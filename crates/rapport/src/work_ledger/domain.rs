@@ -1,4 +1,6 @@
 //! Phase 3 Work and Task domain values.
+//!
+//! This module owns durable Work, Task, Build, Review, and Integration state and their transition invariants.
 
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
@@ -162,22 +164,15 @@ impl fmt::Debug for Work {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum WorkOutcomeKind {
+    #[display("integrated")]
     Integrated,
+    #[display("completed")]
     Completed,
+    #[display("abandoned")]
     Abandoned,
-}
-
-impl fmt::Display for WorkOutcomeKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Integrated => "integrated",
-            Self::Completed => "completed",
-            Self::Abandoned => "abandoned",
-        })
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,33 +197,28 @@ impl fmt::Debug for WorkOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, derive_more::Display,
+)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum TaskStatus {
+    #[display("pending")]
     Pending,
+    #[display("running")]
     Running,
+    #[display("blocked")]
     Blocked,
+    #[display("passed")]
     Passed,
+    #[display("failed")]
     Failed,
+    #[display("cancelled")]
     Cancelled,
 }
 
 impl TaskStatus {
     pub(super) fn is_terminal(self) -> bool {
         matches!(self, Self::Passed | Self::Failed | Self::Cancelled)
-    }
-}
-
-impl fmt::Display for TaskStatus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Pending => "pending",
-            Self::Running => "running",
-            Self::Blocked => "blocked",
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-        })
     }
 }
 
@@ -248,26 +238,21 @@ impl FromStr for TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, derive_more::Display,
+)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Workflow {
+    #[display("develop")]
     Develop,
+    #[display("build")]
     Build,
+    #[display("review")]
     Review,
+    #[display("rebase")]
     Rebase,
+    #[display("integrate")]
     Integrate,
-}
-
-impl fmt::Display for Workflow {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Develop => "develop",
-            Self::Build => "build",
-            Self::Review => "review",
-            Self::Rebase => "rebase",
-            Self::Integrate => "integrate",
-        })
-    }
 }
 
 impl FromStr for Workflow {
@@ -285,42 +270,28 @@ impl FromStr for Workflow {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum BuildMode {
+    #[display("feedback")]
     Feedback,
+    #[display("acceptance")]
     Acceptance,
 }
 
-impl fmt::Display for BuildMode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Feedback => "feedback",
-            Self::Acceptance => "acceptance",
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum BuildOperationStatus {
+    #[display("waiting")]
     Waiting,
+    #[display("running")]
     Running,
+    #[display("blocked")]
     Blocked,
+    #[display("passed")]
     Passed,
+    #[display("failed")]
     Failed,
-}
-
-impl fmt::Display for BuildOperationStatus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Waiting => "waiting",
-            Self::Running => "running",
-            Self::Blocked => "blocked",
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,20 +335,13 @@ pub(super) struct BuildTask {
     pub(super) proof: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum ReviewMode {
+    #[display("feedback")]
     Feedback,
+    #[display("acceptance")]
     Acceptance,
-}
-
-impl fmt::Display for ReviewMode {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Feedback => "feedback",
-            Self::Acceptance => "acceptance",
-        })
-    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,23 +435,18 @@ pub(super) enum IntegrationStage {
     Cancelled,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display,
+)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum FreshnessPolicy {
+    #[display("strict")]
     Strict,
     #[default]
+    #[display("loose")]
     Loose,
+    #[display("merge_queue")]
     MergeQueue,
-}
-
-impl fmt::Display for FreshnessPolicy {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Strict => "strict",
-            Self::Loose => "loose",
-            Self::MergeQueue => "merge_queue",
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

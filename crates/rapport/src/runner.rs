@@ -1,3 +1,8 @@
+//! Backward-compatible command runner facade.
+//!
+//! This module owns the UTF-8 adapter between Rapport command workflows and the
+//! typed process execution crate.
+
 use rapport_files::Utf8Path;
 use std::io;
 

@@ -1,3 +1,8 @@
+//! Root Rapport command-line grammar.
+//!
+//! This module owns top-level command routing types; each workflow module owns
+//! its detailed grammar and execution.
+
 use crate::{policy_context, shared_ruleset, work_ledger};
 use clap::{Parser, Subcommand};
 

@@ -1,4 +1,6 @@
 //! Contextual repository policy.
+//!
+//! This module composes Context storage, effective policy projection, signoff requirements, commands, and diagnostics.
 
 mod boundary;
 mod cli;

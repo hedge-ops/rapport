@@ -1,4 +1,6 @@
 //! Ruleset failures.
+//!
+//! This module owns the primary failure contract shared by catalog, repository, domain, and command boundaries.
 
 use rapport_files::Utf8PathBuf;
 use std::io;

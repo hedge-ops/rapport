@@ -1,4 +1,6 @@
 //! Atomic persistence for finalized Work History.
+//!
+//! This module owns global archive publication and resumable cleanup of active repository-local state.
 
 use super::super::Error;
 use super::super::domain::{TASK_SCHEMA_VERSION, Task, WORK_SCHEMA_VERSION, Work};

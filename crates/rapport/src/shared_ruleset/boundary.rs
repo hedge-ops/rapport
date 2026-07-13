@@ -1,4 +1,6 @@
 //! TOML boundary for shared Rulesets.
+//!
+//! This module owns canonical TOML decoding and rendering; domain validation remains with Ruleset values.
 
 use super::Error;
 use super::domain::{NewRule, Ruleset, SCHEMA_VERSION};
@@ -94,31 +96,31 @@ fn into_domain(
 }
 
 #[derive(Serialize)]
-struct RulesetFileRef<'a> {
+struct RulesetFileRef<'ruleset> {
     version: u16,
-    id: &'a str,
-    purpose: &'a str,
+    id: &'ruleset str,
+    purpose: &'ruleset str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    catalog_version: Option<&'a str>,
-    includes: Vec<&'a str>,
+    catalog_version: Option<&'ruleset str>,
+    includes: Vec<&'ruleset str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    rules: BTreeMap<&'a str, RuleFileRef<'a>>,
+    rules: BTreeMap<&'ruleset str, RuleFileRef<'ruleset>>,
 }
 
 #[derive(Serialize)]
-struct RuleFileRef<'a> {
-    text: &'a str,
-    rationale: &'a str,
-    avoid: ExampleFileRef<'a>,
-    prefer: ExampleFileRef<'a>,
+struct RuleFileRef<'ruleset> {
+    text: &'ruleset str,
+    rationale: &'ruleset str,
+    avoid: ExampleFileRef<'ruleset>,
+    prefer: ExampleFileRef<'ruleset>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reference: Option<String>,
 }
 
 #[derive(Serialize)]
-struct ExampleFileRef<'a> {
-    language: &'a str,
-    text: &'a str,
+struct ExampleFileRef<'ruleset> {
+    language: &'ruleset str,
+    text: &'ruleset str,
 }
 
 pub(super) fn render(ruleset: &Ruleset) -> Result<String, Error> {

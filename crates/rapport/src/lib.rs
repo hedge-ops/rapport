@@ -1,3 +1,8 @@
+//! Rapport repository workflow library.
+//!
+//! This crate root exposes the intentional embedding API and delegates CLI,
+//! policy, work-ledger, filesystem, and presentation behavior to owned modules.
+
 mod cli;
 mod context;
 mod doctor;
@@ -121,7 +126,10 @@ where
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "CLI acceptance tests unwrap deterministic in-memory files and fake-runner queues"
+)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;

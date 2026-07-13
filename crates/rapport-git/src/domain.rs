@@ -3,10 +3,9 @@
 //! This module owns repository, revision, object, worktree, and operation state;
 //! command execution remains a boundary concern.
 
-use crate::GitError;
+use crate::{GitError, InvalidRevision};
 use rapport_files::{Utf8Path, Utf8PathBuf};
 use std::collections::BTreeSet;
-use std::fmt;
 
 /// A discovered Git worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +38,7 @@ impl Revision {
             || value.chars().any(char::is_whitespace)
             || value.contains('\0')
         {
-            return Err(InvalidRevision(value));
+            return Err(InvalidRevision::new(value));
         }
         Ok(Self(value))
     }
@@ -49,18 +48,6 @@ impl Revision {
         &self.0
     }
 }
-
-/// A revision that is unsafe or ambiguous as a command argument.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidRevision(String);
-
-impl fmt::Display for InvalidRevision {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "invalid Git revision: {:?}", self.0)
-    }
-}
-
-impl std::error::Error for InvalidRevision {}
 
 /// A Git object identifier.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

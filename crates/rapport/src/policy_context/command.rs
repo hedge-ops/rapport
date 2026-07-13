@@ -3,7 +3,10 @@
 //! This module dispatches parsed Context actions into repository mutations and
 //! renders their user-facing outcomes.
 
-use super::cli::*;
+use super::cli::{
+    Action, BoundaryAction, Cli, ComposeAction, ContextRuleAction, OwnershipAction, ReviewAction,
+    RulesetAction,
+};
 use super::domain::{BoundaryOwnerUpdate, BuildSignoff, ContextId, Grade};
 use super::render::or_none;
 use super::repository::{Record, Repository};

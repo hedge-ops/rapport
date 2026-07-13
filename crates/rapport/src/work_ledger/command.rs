@@ -4,7 +4,7 @@
 //! focused modules own persistence, Build, Review, and Integration behavior.
 
 use super::Error;
-use super::cli::*;
+use super::cli::{Action, Cli, StartArgs};
 use super::develop;
 use super::domain::{RequestKind, RequestSource, Task, TaskStatus, Work, WorkOutcomeKind};
 use super::history::HistoryStore;

@@ -1,3 +1,8 @@
+//! Repository file discovery helpers.
+//!
+//! This module owns recursive named-file discovery and the directories Rapport
+//! deliberately excludes from policy scans.
+
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 use std::io;
 
@@ -39,7 +44,10 @@ fn should_skip_directory(path: &Utf8Path) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "repository traversal tests unwrap paths created by their in-memory fixtures"
+)]
 mod tests {
     use super::*;
     use rapport_files::InMemoryFileSystem;

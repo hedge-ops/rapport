@@ -1,4 +1,6 @@
 //! Build feedback and acceptance proof recorded in the Work Task ledger.
+//!
+//! This module owns Build command execution and proof transitions; repository Just targets own build behavior.
 
 use super::Error;
 use super::develop;

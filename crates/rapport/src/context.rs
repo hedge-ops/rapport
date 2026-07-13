@@ -1,3 +1,8 @@
+//! Shared command execution context.
+//!
+//! This module owns repository discovery, injected boundary collaborators, and
+//! the clock contract used by command workflows.
+
 use crate::paths::RapportPaths;
 use crate::runner::CommandRunner;
 use chrono::{SecondsFormat, Utc};
@@ -18,7 +23,7 @@ impl Clock for SystemClock {
     }
 }
 
-pub struct CommandContext<'a, F, C, O, E>
+pub struct CommandContext<'context, F, C, O, E>
 where
     F: FileSystem,
     C: Clock,
@@ -28,14 +33,14 @@ where
     pub repo_root: Utf8PathBuf,
     pub cwd: Utf8PathBuf,
     pub paths: RapportPaths,
-    pub fs: &'a mut F,
-    pub clock: &'a C,
-    pub runner: &'a dyn CommandRunner,
-    pub out: &'a mut O,
-    pub err: &'a mut E,
+    pub fs: &'context mut F,
+    pub clock: &'context C,
+    pub runner: &'context dyn CommandRunner,
+    pub out: &'context mut O,
+    pub err: &'context mut E,
 }
 
-impl<'a, F, C, O, E> CommandContext<'a, F, C, O, E>
+impl<'context, F, C, O, E> CommandContext<'context, F, C, O, E>
 where
     F: FileSystem,
     C: Clock,
@@ -44,11 +49,11 @@ where
 {
     pub fn new(
         cwd: Utf8PathBuf,
-        fs: &'a mut F,
-        clock: &'a C,
-        runner: &'a dyn CommandRunner,
-        out: &'a mut O,
-        err: &'a mut E,
+        fs: &'context mut F,
+        clock: &'context C,
+        runner: &'context dyn CommandRunner,
+        out: &'context mut O,
+        err: &'context mut E,
     ) -> Self {
         let repo_root = find_repo_root(fs, &cwd);
         let paths = RapportPaths::new(repo_root.clone());

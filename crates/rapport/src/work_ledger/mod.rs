@@ -1,4 +1,6 @@
 //! Worktree-local Work and Task ledger.
+//!
+//! This module composes active Work, development Tasks, validation proofs, integration, and finalized history.
 
 mod build;
 mod checkpoint;

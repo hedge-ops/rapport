@@ -1,4 +1,6 @@
 //! Independent feedback and acceptance Review recorded in the Work ledger.
+//!
+//! This module owns Review requests, result validation, findings, corrective Tasks, and acceptance proof.
 
 use super::domain::{
     FindingStatus, ReviewMode, ReviewResult, ReviewTask, ReviewUnit, Task, TaskStatus, Work,

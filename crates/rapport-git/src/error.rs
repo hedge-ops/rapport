@@ -3,79 +3,50 @@
 //! This module owns the crate's primary error and the output-parsing helpers
 //! that consistently translate command failures into it.
 
-use crate::InvalidRevision;
 use rapport_command::CommandOutcome;
 use rapport_files::Utf8PathBuf;
 use std::collections::BTreeSet;
-use std::fmt;
 use std::io;
 use std::str::Utf8Error;
 
+/// A revision that is unsafe or ambiguous as a command argument.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid Git revision: {0:?}")]
+pub struct InvalidRevision(String);
+
+impl InvalidRevision {
+    pub(crate) fn new(value: String) -> Self {
+        Self(value)
+    }
+}
+
 /// A failure while invoking or interpreting Git.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum GitError {
-    InvalidRevision(InvalidRevision),
+    #[error(transparent)]
+    InvalidRevision(#[from] InvalidRevision),
+    #[error("could not {operation}: {source}")]
     Invocation {
         operation: &'static str,
+        #[source]
         source: io::Error,
     },
+    #[error("could not {operation}: Git exited {exit_code:?}: {}", stderr.trim())]
     CommandFailed {
         operation: &'static str,
         exit_code: Option<i32>,
         stderr: String,
     },
+    #[error("could not {operation}: Git returned non-UTF-8 data: {source}")]
     InvalidUtf8 {
         operation: &'static str,
+        #[source]
         source: Utf8Error,
     },
+    #[error("could not {0}: Git returned no output")]
     MissingOutput(&'static str),
+    #[error("Git returned an invalid object identifier: {0:?}")]
     InvalidObjectId(String),
-}
-
-impl fmt::Display for GitError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidRevision(source) => source.fmt(formatter),
-            Self::Invocation { operation, source } => {
-                write!(formatter, "could not {operation}: {source}")
-            }
-            Self::CommandFailed {
-                operation,
-                exit_code,
-                stderr,
-            } => write!(
-                formatter,
-                "could not {operation}: Git exited {exit_code:?}: {}",
-                stderr.trim()
-            ),
-            Self::InvalidUtf8 { operation, source } => {
-                write!(
-                    formatter,
-                    "could not {operation}: Git returned non-UTF-8 data: {source}"
-                )
-            }
-            Self::MissingOutput(operation) => {
-                write!(formatter, "could not {operation}: Git returned no output")
-            }
-            Self::InvalidObjectId(value) => {
-                write!(
-                    formatter,
-                    "Git returned an invalid object identifier: {value:?}"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for GitError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidRevision(source) => Some(source),
-            Self::Invocation { source, .. } => Some(source),
-            Self::InvalidUtf8 { source, .. } => Some(source),
-            Self::CommandFailed { .. } | Self::MissingOutput(_) | Self::InvalidObjectId(_) => None,
-        }
-    }
 }
 
 pub(crate) fn command_failed(operation: &'static str, outcome: &CommandOutcome) -> GitError {

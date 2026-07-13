@@ -1,3 +1,8 @@
+//! Agent workflow orientation command.
+//!
+//! This module owns the concise operational instructions printed before agents
+//! plan, change, validate, or integrate repository work.
+
 use crate::context::{Clock, CommandContext};
 use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
