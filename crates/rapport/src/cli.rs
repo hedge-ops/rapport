@@ -64,7 +64,7 @@ pub enum Command {
     /// Validate active work with existing repository Just conventions.
     Build(work_ledger::BuildCli),
     /// Request or record an independent adversarial review of active work.
-    Review(ReviewArgs),
+    Review(work_ledger::ReviewCli),
     /// Turn validated local work into Git/GitHub integration state.
     Integrate(IntegrateArgs),
 }
@@ -649,34 +649,34 @@ pub(crate) struct LegacyBuildArgs {
 
 #[derive(Debug, Args)]
 #[command(arg_required_else_help = true)]
-pub struct ReviewArgs {
+pub(crate) struct LegacyReviewArgs {
     #[command(subcommand)]
-    pub command: ReviewCommand,
+    pub(crate) command: LegacyReviewCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ReviewCommand {
+pub(crate) enum LegacyReviewCommand {
     /// Start an independent review and emit its host-neutral request.
-    Start(ReviewStartArgs),
+    Start(LegacyReviewStartArgs),
     /// Validate and record a reviewer's structured result.
-    Complete(ReviewCompleteArgs),
+    Complete(LegacyReviewCompleteArgs),
 }
 
 #[derive(Debug, Args)]
-pub struct ReviewStartArgs {
+pub(crate) struct LegacyReviewStartArgs {
     /// Optional paths to review instead of all active work paths.
     #[arg(value_name = "PATH")]
-    pub paths: Vec<Utf8PathBuf>,
+    pub(crate) paths: Vec<Utf8PathBuf>,
     /// Emit the request packet as JSON instead of the default Markdown prompt.
     #[arg(long)]
-    pub json: bool,
+    pub(crate) json: bool,
 }
 
 #[derive(Debug, Args)]
-pub struct ReviewCompleteArgs {
+pub(crate) struct LegacyReviewCompleteArgs {
     /// Structured JSON review result to validate and record.
     #[arg(long, value_name = "FILE")]
-    pub result: Utf8PathBuf,
+    pub(crate) result: Utf8PathBuf,
 }
 
 #[derive(Debug, Args)]

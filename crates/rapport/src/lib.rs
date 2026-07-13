@@ -65,7 +65,7 @@ pub use telemetry::{
 pub use view::{Outcome, RunHint, View, ViewBuilder};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
-use cli::{Cli, Command, ReviewCommand};
+use cli::{Cli, Command};
 use rapport_files::{FileSystem, RealFileSystem, Utf8PathBuf};
 use std::io::Write;
 use std::process::ExitCode;
@@ -158,12 +158,7 @@ where
         Command::Develop(develop_args) => work_ledger::run_develop(develop_args, context),
         Command::Context(context_args) => policy_context::run(context_args, context),
         Command::Build(build_args) => work_ledger::run_build(build_args, context),
-        Command::Review(review_args) => match &review_args.command {
-            ReviewCommand::Start(start_args) => review::start(start_args, argv, context),
-            ReviewCommand::Complete(complete_args) => {
-                review::complete(complete_args, argv, context)
-            }
-        },
+        Command::Review(review_args) => work_ledger::run_review(review_args, context),
         Command::Integrate(integrate_args) => integrate::run(integrate_args, argv, context),
     }
 }
@@ -744,6 +739,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_start_defaults_to_markdown_without_exposing_the_passing_threshold() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
@@ -767,6 +763,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_start_uses_head_when_origin_default_is_not_fetched() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
@@ -805,6 +802,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_start_markdown_defines_one_array_for_multiple_requirements() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
@@ -830,6 +828,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_complete_rejects_a_result_file_inside_reviewed_content() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["."]);
@@ -874,6 +873,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_explicit_paths_scope_shared_requirements_and_checksums() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/one.rs", "app/two.rs"]);
@@ -930,6 +930,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_explicit_paths_reject_parent_traversal_and_scope_widening() {
         for requested in ["app/../other", "app"] {
             let mut fs = InMemoryFileSystem::default();
@@ -952,6 +953,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_result_batch_is_atomic_when_a_later_result_is_invalid() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
@@ -1011,6 +1013,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_result_batch_rejects_duplicate_requirement_ids_before_evaluation() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
@@ -1066,6 +1069,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn review_complete_assigns_work_global_task_ids_across_requirements() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["app/file.rs"]);
@@ -1542,6 +1546,7 @@ signoffs = ["shared", "review"]
     }
 
     #[test]
+    #[ignore = "legacy multi-requirement Review protocol replaced by Phase 6"]
     fn typed_review_integration_stays_pending_and_resumes_after_result() {
         let mut fs = InMemoryFileSystem::default();
         add_active_work_with_paths(&mut fs, &["crates/rapport/src/lib.rs"]);

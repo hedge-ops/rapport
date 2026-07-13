@@ -13,7 +13,7 @@ mod repository;
 
 pub(crate) use command::{Cli, run};
 pub(crate) use domain::{
-    ExampleUpdate, NewRule, Reference, ReferenceUpdate, RuleUpdate, Ruleset, RulesetId,
+    ExampleUpdate, NewRule, Reference, ReferenceUpdate, Rule, RuleUpdate, Ruleset, RulesetId,
 };
 pub(crate) use error::Error;
 pub(crate) use policy::SharedRulesets;

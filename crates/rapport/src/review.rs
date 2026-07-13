@@ -1,4 +1,6 @@
-use crate::cli::{ReviewCompleteArgs, ReviewStartArgs};
+use crate::cli::{
+    LegacyReviewCompleteArgs as ReviewCompleteArgs, LegacyReviewStartArgs as ReviewStartArgs,
+};
 use crate::context::{Clock, CommandContext};
 use crate::project_context::{
     ResolvedContextRule, SignoffRequirement, required_signoff_requirements_for_paths,
