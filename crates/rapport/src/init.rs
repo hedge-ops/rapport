@@ -1,11 +1,10 @@
 //! Repository initialization command.
 //!
 //! This module owns idempotent agent instructions, local rules ignore policy,
-//! shared signoff workflow creation, and init telemetry.
+//! and shared signoff workflow creation.
 
 use crate::context::{Clock, CommandContext};
 use crate::policy_context;
-use crate::telemetry::{CommandEvent, CommandEventOutcome, TelemetryError, TelemetryWriter};
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
@@ -13,7 +12,6 @@ use std::io;
 use std::io::Write;
 use std::process::ExitCode;
 
-const SUCCESS: u8 = 0;
 const FAILURE: u8 = 2;
 const AGENTS_FILE: &str = "AGENTS.md";
 const START_MARKER: &str = "<!-- rapport:init:start -->";
@@ -22,10 +20,7 @@ const GITIGNORE_FILE: &str = ".gitignore";
 const RULES_START_MARKER: &str = "# rapport:init-rules:start";
 const RULES_END_MARKER: &str = "# rapport:init-rules:end";
 
-pub fn run<F, C, O, E>(
-    arguments: Vec<String>,
-    context: &mut CommandContext<'_, F, C, O, E>,
-) -> ExitCode
+pub fn run<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
 where
     F: FileSystem,
     C: Clock,
@@ -33,7 +28,7 @@ where
     E: Write,
 {
     let path = context.paths.repo_root().join(AGENTS_FILE);
-    let result = match load_agents(context.fs, &path) {
+    match load_agents(context.fs, &path) {
         Ok(existing) => {
             let contents = upsert_rapport_section(existing.as_deref());
             match context.fs.write_string(&path, contents) {
@@ -44,12 +39,7 @@ where
                                 write_rules_gitignore(context.fs, context.paths.repo_root())
                             {
                                 let _ = writeln!(context.err, "{}", render_init_error(&error));
-                                return finish(
-                                    "init",
-                                    arguments,
-                                    context,
-                                    CommandResult::failure(),
-                                );
+                                return ExitCode::from(FAILURE);
                             }
                             let status = if existing.is_some() {
                                 "updated"
@@ -57,26 +47,25 @@ where
                                 "created"
                             };
                             let _ = writeln!(context.out, "{}", render_initialized(status));
-                            CommandResult::success()
+                            ExitCode::SUCCESS
                         }
                         Err(error) => {
                             let _ = writeln!(context.err, "{}", render_init_error(&error));
-                            CommandResult::failure()
+                            ExitCode::from(FAILURE)
                         }
                     }
                 }
                 Err(error) => {
                     let _ = writeln!(context.err, "{}", render_init_error(&error));
-                    CommandResult::failure()
+                    ExitCode::from(FAILURE)
                 }
             }
         }
         Err(error) => {
             let _ = writeln!(context.err, "{}", render_init_error(&error));
-            CommandResult::failure()
+            ExitCode::from(FAILURE)
         }
-    };
-    finish("init", arguments, context, result)
+    }
 }
 
 fn write_rules_gitignore(
@@ -193,56 +182,6 @@ fn rapport_section() -> String {
     )
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CommandResult {
-    outcome: CommandEventOutcome,
-    exit_code: u8,
-}
-
-impl CommandResult {
-    fn success() -> Self {
-        Self {
-            outcome: CommandEventOutcome::Success,
-            exit_code: SUCCESS,
-        }
-    }
-
-    fn failure() -> Self {
-        Self {
-            outcome: CommandEventOutcome::Failure,
-            exit_code: FAILURE,
-        }
-    }
-}
-
-fn finish<F, C, O, E>(
-    command: &'static str,
-    arguments: Vec<String>,
-    context: &mut CommandContext<'_, F, C, O, E>,
-    result: CommandResult,
-) -> ExitCode
-where
-    F: FileSystem,
-    C: Clock,
-    O: Write,
-    E: Write,
-{
-    let event = CommandEvent::new(
-        context.clock.now_rfc3339(),
-        arguments,
-        command,
-        result.outcome,
-        result.exit_code,
-    );
-    match TelemetryWriter::new(context.paths.clone()).append(context.fs, &event) {
-        Ok(()) => ExitCode::from(result.exit_code),
-        Err(error) => {
-            let _ = writeln!(context.err, "{}", render_telemetry_error(&error));
-            ExitCode::FAILURE
-        }
-    }
-}
-
 fn render_initialized(status: &str) -> String {
     ViewBuilder::new()
         .title("rapport init")
@@ -265,15 +204,6 @@ fn render_init_error(error: &io::Error) -> String {
         .paragraph("Could not update repository agent instructions.")
         .paragraph(error)
         .next_actions(nonempty![RunHint::new("check repository file permissions")])
-        .build()
-}
-
-fn render_telemetry_error(error: &TelemetryError) -> String {
-    ViewBuilder::new()
-        .title("rapport telemetry")
-        .paragraph("Command completed, but telemetry could not be written.")
-        .paragraph(error)
-        .next_actions(nonempty![RunHint::new("rapport work status")])
         .build()
 }
 

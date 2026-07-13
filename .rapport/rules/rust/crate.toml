@@ -1,7 +1,7 @@
 version = 1
 id = "RUST_CRATE"
 purpose = "Complete coding, testing, and documentation policy for a Rust crate."
-catalog_version = "1.0.0"
+catalog_version = "1.0.1"
 includes = [
     "RUST_CODING",
     "RUST_TEST",

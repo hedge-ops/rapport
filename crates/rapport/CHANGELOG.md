@@ -6,6 +6,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-13
+
+### Added
+
+- Added repository-owned `RAPPORT_PRIVACY` policy that classifies local paths,
+  revisions, Work metadata, command details, and captured output as actionable
+  operational evidence while retaining narrow redaction for actual secrets.
+- Added per-Ruleset catalog versions, advancing `RUST_CODING`, `RUST_CRATE`,
+  and the transitively affected `CRUX_APP` aggregate to 1.0.1 without
+  relabeling unchanged component policy.
+
+### Changed
+
+- Made catalog Rust privacy guidance domain-neutral so repositories classify
+  their own sensitive data instead of inheriting Rapport-specific assumptions.
+- Changed Debug output to preserve non-sensitive repository paths, identifiers,
+  revisions, policy, command arguments, captured output, and Work/Task state.
+
+### Removed
+
+- Removed the obsolete `events.jsonl` command telemetry subsystem and its
+  public event types; Work, Tasks, proof, and immutable Work History own durable
+  workflow evidence.
+
+### Fixed
+
+- Fixed `rapport prime` to direct agents to the existing read-only
+  `rapport work task next` command.
+- Fixed Context and Ruleset decoding errors to include their TOML cause, and
+  identified legacy Rapport 0.4 Context fields with an actionable all-Context
+  migration message.
+
 ## [0.5.0] - 2026-07-13
 
 ### Added
@@ -224,7 +256,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.0...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.1...HEAD
+[0.5.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.0...rapport-v0.5.1
 [0.5.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.2...rapport-v0.5.0
 [0.4.2]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.1...rapport-v0.4.2
 [0.4.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.0...rapport-v0.4.1

@@ -93,6 +93,11 @@ struct SignoffFile {
 }
 
 pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
+    if uses_legacy_schema(contents) {
+        return Err(Error::LegacySchema {
+            path: path.to_path_buf(),
+        });
+    }
     let file: ContextFile = toml::from_str(contents).map_err(|source| Error::Decode {
         path: path.to_path_buf(),
         source,
@@ -180,6 +185,38 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
         minimum_grade,
         signoffs,
     )
+}
+
+fn uses_legacy_schema(contents: &str) -> bool {
+    let Ok(value) = toml::from_str::<toml::Value>(contents) else {
+        return false;
+    };
+    let Some(context) = value.as_table() else {
+        return false;
+    };
+    let legacy_ownership = context
+        .get("ownership")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|ownership| {
+            ownership.get("owns").is_some_and(toml::Value::is_array)
+                || ownership
+                    .get("boundaries")
+                    .is_some_and(toml::Value::is_array)
+        });
+    let legacy_signoff = context
+        .get("signoffs")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|signoffs| {
+            signoffs.iter().any(|signoff| {
+                signoff
+                    .as_table()
+                    .is_some_and(|signoff| signoff.contains_key("kind"))
+            })
+        });
+    context.contains_key("rule_includes")
+        || context.get("rules").is_some_and(toml::Value::is_array)
+        || legacy_ownership
+        || legacy_signoff
 }
 
 #[derive(Serialize)]
@@ -324,4 +361,35 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
             .collect(),
     };
     toml_edit::ser::to_string_pretty(&file).map_err(Error::Encode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+    use crate::policy_context::Error;
+    use claims::assert_err;
+    use rapport_files::Utf8Path;
+
+    #[test]
+    fn parse_should_identify_legacy_context_schema() {
+        let legacy = r#"
+version = 1
+purpose = "Legacy policy."
+rule_includes = ["/rules/rust.toml"]
+
+[ownership]
+owns = ["Legacy ownership."]
+boundaries = ["Legacy boundary."]
+
+[[signoffs]]
+kind = "build"
+target = "ci"
+"#;
+
+        let error = assert_err!(parse(legacy, Utf8Path::new("/repo/context.toml")));
+
+        assert!(matches!(error, Error::LegacySchema { .. }), "{error:?}");
+        assert!(error.to_string().contains("migrate every legacy"));
+        assert!(error.to_string().contains("rule_includes"));
+    }
 }

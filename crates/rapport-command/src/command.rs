@@ -78,9 +78,12 @@ impl fmt::Debug for CommandSpec {
         formatter
             .debug_struct("CommandSpec")
             .field("program", &self.program)
-            .field("argument_count", &self.args.len())
+            .field("args", &self.args)
             .field("current_dir", &self.current_dir)
-            .field("environment_variable_count", &self.environment.len())
+            .field(
+                "environment_variables",
+                &self.environment.keys().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -155,8 +158,8 @@ impl fmt::Debug for CommandOutcome {
             .debug_struct("CommandOutcome")
             .field("success", &self.success)
             .field("exit_code", &self.exit_code)
-            .field("stdout_bytes", &self.stdout.len())
-            .field("stderr_bytes", &self.stderr.len())
+            .field("stdout", &self.stdout_lossy())
+            .field("stderr", &self.stderr_lossy())
             .field("elapsed", &self.elapsed)
             .finish()
     }

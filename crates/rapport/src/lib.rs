@@ -14,16 +14,12 @@ mod prime;
 mod repository_files;
 mod runner;
 mod shared_ruleset;
-mod telemetry;
 mod view;
 mod work_ledger;
 
 pub use context::{Clock, CommandContext, SystemClock, find_repo_root};
 pub use paths::RapportPaths;
 pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
-pub use telemetry::{
-    CommandEvent, CommandEventOutcome, EVENT_SCHEMA_VERSION, TelemetryError, TelemetryWriter,
-};
 pub use view::{Outcome, RunHint, View, ViewBuilder};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
@@ -72,10 +68,10 @@ where
         let _ = write!(out, "{}", Cli::command().render_help());
         return ExitCode::SUCCESS;
     }
-    match Cli::try_parse_from(std::iter::once(String::from("rapport")).chain(arguments.clone())) {
+    match Cli::try_parse_from(std::iter::once(String::from("rapport")).chain(arguments)) {
         Ok(cli) => {
             let mut context = CommandContext::new(cwd, fs, clock, runner, out, err);
-            execute_command(&cli, arguments, &mut context)
+            execute_command(&cli, &mut context)
         }
         Err(error) if error.kind() == ErrorKind::DisplayHelp => {
             let _ = write!(out, "{error}");
@@ -99,11 +95,7 @@ fn current_utf8_dir() -> Result<Utf8PathBuf, String> {
         .map_err(|path| format!("current dir is not valid UTF-8: {}", path.to_string_lossy()))
 }
 
-fn execute_command<F, C, O, E>(
-    cli: &Cli,
-    argv: Vec<String>,
-    context: &mut CommandContext<'_, F, C, O, E>,
-) -> ExitCode
+fn execute_command<F, C, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
 where
     F: FileSystem,
     C: Clock,
@@ -111,10 +103,10 @@ where
     E: Write,
 {
     match &cli.command {
-        Command::Prime => prime::run(argv, context),
-        Command::Doctor => doctor::run(argv, context),
+        Command::Prime => prime::run(context),
+        Command::Doctor => doctor::run(context),
         Command::Github(github_args) => github::run(github_args, context),
-        Command::Init => init::run(argv, context),
+        Command::Init => init::run(context),
         Command::Ruleset(ruleset_args) => shared_ruleset::run(ruleset_args, context),
         Command::Work(work_args) => work_ledger::run(work_args, context),
         Command::Develop(develop_args) => work_ledger::run_develop(develop_args, context),
@@ -284,27 +276,21 @@ mod tests {
     }
 
     #[test]
-    fn prime_renders_workflow_and_records_telemetry() {
-        let mut fs = InMemoryFileSystem::default();
-
-        let (code, out, err) = run_with_fs(&["prime"], &mut fs);
+    fn prime_renders_workflow() {
+        let (code, out, err) = run_with(&["prime"]);
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("rapport prime"));
         assert!(out.contains("planning, coding, testing, building, reviewing"));
         assert!(out.contains("rapport work start"));
         assert!(out.contains("rapport context show"));
-        assert!(out.contains("rapport develop task next"));
+        assert!(out.contains("rapport work task next"));
         assert!(out.contains("rapport work checkpoint start"));
         assert!(out.contains("rapport doctor"));
         assert!(out.contains("rapport build"));
         assert!(out.contains("rapport integrate"));
         assert!(out.contains("rapport integrate complete"));
         assert_eq!(err, "");
-        let event = first_event(&fs);
-
-        assert_eq!(event.command, "prime");
-        assert_eq!(event.outcome, CommandEventOutcome::Success);
     }
 
     #[test]
@@ -349,10 +335,6 @@ mod tests {
         assert!(out.contains("rapport integrate"));
         assert_eq!(err, "");
         assert_eq!(runner.calls().len(), 4);
-        let event = first_event(&fs);
-
-        assert_eq!(event.command, "doctor");
-        assert_eq!(event.outcome, CommandEventOutcome::Success);
     }
 
     #[test]
@@ -367,10 +349,6 @@ mod tests {
         assert!(err.contains("origin remote"));
         assert!(err.contains("No such remote"));
         assert!(err.contains("configure GitHub origin"));
-        let event = first_event(&fs);
-
-        assert_eq!(event.command, "doctor");
-        assert_eq!(event.outcome, CommandEventOutcome::Failure);
     }
 
     #[test]
@@ -385,10 +363,6 @@ mod tests {
         assert!(err.contains("GitHub origin"));
         assert!(err.contains("does not point at GitHub"));
         assert!(err.contains("https://gitlab.com/hedge-ops/rapport.git"));
-        let event = first_event(&fs);
-
-        assert_eq!(event.command, "doctor");
-        assert_eq!(event.outcome, CommandEventOutcome::Failure);
     }
 
     /// Phase 1 manages catalog and repository Rulesets through the public CLI grammar.
@@ -645,7 +619,6 @@ mod tests {
         assert_eq!(out, "");
         assert!(err.contains("no active Work exists"));
         assert!(runner.calls().is_empty());
-        assert!(!fs.is_file("/repo/.rapport/events.jsonl"));
     }
 
     #[test]
@@ -670,10 +643,6 @@ mod tests {
         assert!(signoff.contains("workflow_call:"));
         assert!(signoff.contains("context=${IDENTITY}"));
         assert!(signoff.contains("context=${AGGREGATE}"));
-        let event = first_event(&fs);
-
-        assert_eq!(event.command, "init");
-        assert_eq!(event.outcome, CommandEventOutcome::Success);
     }
 
     #[test]
@@ -702,28 +671,6 @@ mod tests {
             second_agents.matches("<!-- rapport:init:start -->").count(),
             1
         );
-        assert_eq!(events(&fs).len(), 2);
-    }
-
-    #[test]
-    fn help_does_not_write_telemetry() {
-        let mut fs = InMemoryFileSystem::default();
-        let (code, _out, _err) = run_with_fs(&["work", "--help"], &mut fs);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(!fs.is_file("/repo/.rapport/events.jsonl"));
-    }
-
-    fn first_event(fs: &InMemoryFileSystem) -> CommandEvent {
-        events(fs).into_iter().next().unwrap()
-    }
-
-    fn events(fs: &InMemoryFileSystem) -> Vec<CommandEvent> {
-        let events = fs.read_to_string("/repo/.rapport/events.jsonl").unwrap();
-        events
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
     }
 
     type FakeOutcome = io::Result<CommandOutcome>;

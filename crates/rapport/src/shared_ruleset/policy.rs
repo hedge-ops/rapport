@@ -99,11 +99,11 @@ impl std::fmt::Debug for SharedRulesetSummary {
         formatter
             .debug_struct("SharedRulesetSummary")
             .field("id", &self.id)
-            .field("purpose_length", &self.purpose.len())
+            .field("purpose", &self.purpose)
             .field("source", &self.source)
-            .field("transitive_count", &self.transitive.len())
+            .field("transitive", &self.transitive)
             .field("rule_count", &self.rule_count)
-            .field("digest", &"[redacted]")
+            .field("digest", &self.digest)
             .finish()
     }
 }

@@ -111,7 +111,7 @@ impl fmt::Debug for Entry {
         formatter
             .debug_struct("ContextEntry")
             .field("id", &self.id)
-            .field("text_length", &self.text.len())
+            .field("text", &self.text)
             .finish()
     }
 }
@@ -564,14 +564,14 @@ impl fmt::Debug for Context {
         formatter
             .debug_struct("Context")
             .field("id", &self.id)
-            .field("purpose_length", &self.purpose.len())
+            .field("purpose", &self.purpose)
             .field("next_ownership", &self.next_ownership)
             .field("next_boundary", &self.next_boundary)
-            .field("ownership_count", &self.ownership.len())
-            .field("boundary_count", &self.boundaries.len())
+            .field("ownership", &self.ownership)
+            .field("boundaries", &self.boundaries)
             .field("ruleset", &self.ruleset)
             .field("minimum_grade", &self.minimum_grade)
-            .field("signoff_count", &self.signoffs.len())
+            .field("signoffs", &self.signoffs)
             .finish()
     }
 }

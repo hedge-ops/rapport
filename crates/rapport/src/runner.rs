@@ -20,7 +20,7 @@ impl std::fmt::Debug for CommandSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CommandSpec")
             .field("program", &self.program)
-            .field("argument_count", &self.args.len())
+            .field("args", &self.args)
             .finish()
     }
 }
@@ -54,8 +54,8 @@ impl std::fmt::Debug for CommandOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CommandOutcome")
             .field("success", &self.success)
-            .field("stdout_bytes", &self.stdout.len())
-            .field("stderr_bytes", &self.stderr.len())
+            .field("stdout", &self.stdout)
+            .field("stderr", &self.stderr)
             .finish()
     }
 }
@@ -95,18 +95,18 @@ mod tests {
     use super::{CommandOutcome, CommandSpec};
 
     #[test]
-    fn command_spec_debug_redacts_arguments() {
+    fn command_spec_debug_includes_operational_arguments() {
         let spec = CommandSpec::new("gh", ["pr", "create", "PRIVATE PR BODY"]);
 
         let debug = format!("{spec:?}");
 
-        assert!(!debug.contains("PRIVATE"));
+        assert!(debug.contains("PRIVATE PR BODY"));
         assert!(debug.contains("program: \"gh\""));
-        assert!(debug.contains("argument_count: 3"));
+        assert!(debug.contains("args:"));
     }
 
     #[test]
-    fn command_outcome_debug_summarizes_captured_output() {
+    fn command_outcome_debug_includes_captured_output() {
         let outcome = CommandOutcome {
             success: false,
             stdout: String::from("PRIVATE STDOUT"),
@@ -115,8 +115,7 @@ mod tests {
 
         let debug = format!("{outcome:?}");
 
-        assert!(!debug.contains("PRIVATE"));
-        assert!(debug.contains("stdout_bytes: 14"));
-        assert!(debug.contains("stderr_bytes: 14"));
+        assert!(debug.contains("PRIVATE STDOUT"));
+        assert!(debug.contains("PRIVATE STDERR"));
     }
 }

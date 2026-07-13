@@ -172,7 +172,7 @@ impl fmt::Debug for Example {
         formatter
             .debug_struct("Example")
             .field("language", &self.language)
-            .field("text_length", &self.text.len())
+            .field("text", &self.text)
             .finish()
     }
 }
@@ -211,8 +211,8 @@ impl fmt::Debug for Reference {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Reference")
-            .field("label_length", &self.label.len())
-            .field("target_length", &self.target.len())
+            .field("label", &self.label)
+            .field("target", &self.target)
             .finish()
     }
 }
@@ -292,11 +292,11 @@ impl fmt::Debug for Rule {
         formatter
             .debug_struct("Rule")
             .field("id", &self.id)
-            .field("text_length", &self.text.len())
-            .field("rationale_length", &self.rationale.len())
+            .field("text", &self.text)
+            .field("rationale", &self.rationale)
             .field("avoid", &self.avoid)
             .field("prefer", &self.prefer)
-            .field("has_reference", &self.reference.is_some())
+            .field("reference", &self.reference)
             .finish()
     }
 }
@@ -442,10 +442,10 @@ impl fmt::Debug for Ruleset {
         formatter
             .debug_struct("Ruleset")
             .field("id", &self.id)
-            .field("purpose_length", &self.purpose.len())
+            .field("purpose", &self.purpose)
             .field("catalog_version", &self.catalog_version)
-            .field("include_count", &self.includes.len())
-            .field("rule_count", &self.rules.len())
+            .field("includes", &self.includes)
+            .field("rules", &self.rules)
             .finish()
     }
 }

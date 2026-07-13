@@ -1,0 +1,40 @@
+version = 1
+id = "RAPPORT_PRIVACY"
+purpose = "Rapport-specific classification and diagnostic handling for local developer-tool data."
+includes = []
+
+[rules.RAPPORT_PRIVACY_001]
+text = "Treat repository paths, branch names, commit IDs, Context and Ruleset IDs, Work and Task metadata, Just targets, and ordinary command details as local operational evidence, not sensitive data."
+rationale = "Rapport is a local developer tool, and users need exact operational evidence to understand state and diagnose failures."
+
+[rules.RAPPORT_PRIVACY_001.avoid]
+language = "text"
+text = "reporting that a build failed in [redacted] on revision [redacted]"
+
+[rules.RAPPORT_PRIVACY_001.prefer]
+language = "text"
+text = "reporting that just ci failed in /workspace/rapport on branch work/policy at revision 7f3466a"
+
+[rules.RAPPORT_PRIVACY_002]
+text = "Redact only values the Rapport domain explicitly classifies as sensitive, including credentials, authentication tokens, secret environment values, and encryption material; preserve the non-sensitive operation surrounding them."
+rationale = "Narrow redaction protects actual secrets without erasing the context required to remediate a local tool failure."
+
+[rules.RAPPORT_PRIVACY_002.avoid]
+language = "text"
+text = "authentication failed with token ghp_example_secret"
+
+[rules.RAPPORT_PRIVACY_002.prefer]
+language = "text"
+text = "authentication failed for api.github.com with token [redacted]"
+
+[rules.RAPPORT_PRIVACY_003]
+text = "Debug output, errors, logs, and command-failure reports retain actionable non-sensitive values; do not replace them with lengths, counts, or redacted markers solely as a generic privacy precaution."
+rationale = "Concrete local values make Rapport state inspectable and failures reproducible, while generic summaries conceal the evidence the user invoked Rapport to obtain."
+
+[rules.RAPPORT_PRIVACY_003.avoid]
+language = "text"
+text = 'Work { repository: "[redacted]", title_length: 18, starting_source: "[redacted]" }'
+
+[rules.RAPPORT_PRIVACY_003.prefer]
+language = "text"
+text = 'Work { repository: "/workspace/rapport", title: "tighten catalog rules", starting_source: "7f3466a" }'
