@@ -5,8 +5,10 @@ name: Publish
 # Rapport's release also includes the prebuilt archives that cargo binstall
 # discovers from GitHub Releases.
 #
-# Publish rapport-files before rapport when its version changes. rapport-prose
-# and rapport-temporal can be published independently.
+# Publish changed dependencies before dependents: rapport-command and
+# rapport-files before rapport-git; rapport-command, rapport-files, rapport-git,
+# and rapport-prose before rapport. rapport-temporal can be published
+# independently.
 
 on:
   workflow_dispatch:
@@ -17,7 +19,9 @@ on:
         required: true
         options:
           - rapport
+          - rapport-command
           - rapport-files
+          - rapport-git
           - rapport-prose
           - rapport-temporal
 
