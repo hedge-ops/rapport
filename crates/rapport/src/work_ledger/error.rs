@@ -111,6 +111,16 @@ pub(crate) enum Error {
     NonterminalTasks,
     #[error("Work cannot end before source HEAD equals its latest checkpoint")]
     UncheckpointedHead,
+    #[error("Work is already finalized as {0}")]
+    FinalizedWork(String),
+    #[error("Work must have a final outcome before it can enter Work History")]
+    UnfinalizedHistory,
+    #[error("no Work History record matches `{0}`")]
+    MissingHistory(String),
+    #[error("Work History prefix `{0}` matches more than one record; use more characters")]
+    AmbiguousHistory(String),
+    #[error("immutable Work History already exists for `{0}` with different contents")]
+    HistoryConflict(String),
     #[error("the global Work history directory is unavailable")]
     #[cfg_attr(
         test,

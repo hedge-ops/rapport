@@ -101,6 +101,22 @@ pub trait FileSystem {
     /// Returns the underlying filesystem error when the file cannot be removed.
     fn remove_file(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()>;
 
+    /// Atomically rename a file or directory within one filesystem.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the source cannot be
+    /// renamed or the destination already exists.
+    fn rename(&mut self, from: impl AsRef<Utf8Path>, to: impl AsRef<Utf8Path>) -> io::Result<()>;
+
+    /// Remove a directory and every descendant.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error when the directory cannot be
+    /// removed.
+    fn remove_dir_all(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()>;
+
     fn exists(&self, path: impl AsRef<Utf8Path>) -> bool {
         self.is_dir(path.as_ref()) || self.is_file(path)
     }
@@ -198,6 +214,14 @@ impl FileSystem for RealFileSystem {
 
     fn remove_file(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()> {
         std::fs::remove_file(path.as_ref())
+    }
+
+    fn rename(&mut self, from: impl AsRef<Utf8Path>, to: impl AsRef<Utf8Path>) -> io::Result<()> {
+        std::fs::rename(from.as_ref(), to.as_ref())
+    }
+
+    fn remove_dir_all(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()> {
+        std::fs::remove_dir_all(path.as_ref())
     }
 }
 
@@ -317,6 +341,72 @@ impl FileSystem for InMemoryFileSystem {
             },
             |_| Ok(()),
         )
+    }
+
+    fn rename(&mut self, from: impl AsRef<Utf8Path>, to: impl AsRef<Utf8Path>) -> io::Result<()> {
+        let from = from.as_ref().to_path_buf();
+        let to = to.as_ref().to_path_buf();
+        if self.exists(&to) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{to} already exists"),
+            ));
+        }
+        if let Some(contents) = self.files.remove(&from) {
+            if let Some(parent) = to.parent() {
+                self.add_directory(parent);
+            }
+            self.files.insert(to, contents);
+            return Ok(());
+        }
+        if !self.directories.contains(&from) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{from} not found"),
+            ));
+        }
+
+        let directories = self
+            .directories
+            .iter()
+            .filter(|path| **path == from || path.starts_with(&from))
+            .cloned()
+            .collect::<Vec<_>>();
+        let files = self
+            .files
+            .iter()
+            .filter(|(path, _)| path.starts_with(&from))
+            .map(|(path, contents)| (path.clone(), contents.clone()))
+            .collect::<Vec<_>>();
+        self.directories
+            .retain(|path| *path != from && !path.starts_with(&from));
+        self.files.retain(|path, _| !path.starts_with(&from));
+        if let Some(parent) = to.parent() {
+            self.add_directory(parent);
+        }
+        for path in directories {
+            let relative = path.strip_prefix(&from).map_err(io::Error::other)?;
+            self.directories.insert(to.join(relative));
+        }
+        for (path, contents) in files {
+            let relative = path.strip_prefix(&from).map_err(io::Error::other)?;
+            self.files.insert(to.join(relative), contents);
+        }
+        Ok(())
+    }
+
+    fn remove_dir_all(&mut self, path: impl AsRef<Utf8Path>) -> io::Result<()> {
+        let path = path.as_ref();
+        if !self.directories.contains(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{path} not found"),
+            ));
+        }
+        self.files.retain(|file, _| !file.starts_with(path));
+        self.directories
+            .retain(|directory| directory != path && !directory.starts_with(path));
+        Ok(())
     }
 }
 
@@ -440,5 +530,50 @@ mod tests {
         assert_ok!(fs.remove_file("/work/.rapport/work.toml"));
 
         assert!(!fs.is_file("/work/.rapport/work.toml"));
+    }
+
+    #[test]
+    fn rename_should_move_a_complete_directory_tree() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_file_with_contents("/history/pending/work.toml", "version = 2\n");
+        fs.add_file_with_contents("/history/pending/tasks/TASK_001.toml", "version = 1\n");
+
+        assert_ok!(fs.rename("/history/pending", "/history/019f53"));
+
+        assert!(
+            !fs.exists("/history/pending"),
+            "expecting atomic rename to remove the pending tree"
+        );
+        assert_eq!(
+            assert_ok!(fs.read_to_string("/history/019f53/work.toml")),
+            "version = 2\n",
+            "expecting atomic rename to preserve file contents"
+        );
+        assert!(
+            fs.is_file("/history/019f53/tasks/TASK_001.toml"),
+            "expecting atomic rename to preserve nested Task files"
+        );
+    }
+
+    #[test]
+    fn remove_dir_all_should_remove_every_descendant() {
+        let mut fs = InMemoryFileSystem::default();
+        fs.add_file("/history/019f53/work.toml");
+        fs.add_file("/history/019f53/tasks/TASK_001.toml");
+
+        assert_ok!(fs.remove_dir_all("/history/019f53"));
+
+        assert!(
+            !fs.exists("/history/019f53"),
+            "expecting recursive removal to delete the selected record"
+        );
+        assert!(
+            !fs.exists("/history/019f53/tasks/TASK_001.toml"),
+            "expecting recursive removal to delete nested Task files"
+        );
+        assert!(
+            fs.is_dir("/history"),
+            "expecting recursive removal to preserve the parent history directory"
+        );
     }
 }

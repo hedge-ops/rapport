@@ -9,8 +9,9 @@ use super::command;
 use super::develop;
 use super::domain::{
     FreshnessPolicy, IntegrationStage, IntegrationTask, PublishedBuildStatus, ReviewMode, Task,
-    TaskStatus, Work, Workflow,
+    TaskStatus, Work, WorkOutcomeKind, Workflow,
 };
+use super::history::HistoryStore;
 use super::repository::Store;
 use crate::{Clock, CommandContext, CommandSpec};
 use clap::{Args, Subcommand};
@@ -614,6 +615,17 @@ where
     let store = Store::new(&context.repo_root);
     let mut work = store.require_work(context.fs)?;
     let mut tasks = store.load_tasks(context.fs)?;
+    if let Some(outcome) = &work.outcome {
+        if outcome.kind != WorkOutcomeKind::Integrated {
+            return Err(Error::FinalizedWork(outcome.kind.to_string()));
+        }
+        let archive =
+            HistoryStore::new(&context.repo_root)?.archive(context.fs, &store, &work, &tasks)?;
+        return Ok(format!(
+            "# rapport integrate complete\n\n- `status` — passed\n- `target commit` — {}\n- `remote branch deleted` — preserved in Work History\n- `Work` — archived {}",
+            outcome.target_commit, archive
+        ));
+    }
     let index = current_integration_index(&tasks).ok_or(Error::MissingIntegration)?;
     let mut task = tasks[index].clone();
     let integration = task.integration.as_ref().ok_or(Error::MissingIntegration)?;
@@ -664,16 +676,28 @@ where
         git.delete_remote_branch(&repository, &integration.source_branch)?;
         integration.remote_branch_deleted = true;
     }
+    let final_source = integration.candidate.clone();
+    let completed_at = context.clock.now_rfc3339();
     task.finish(
         TaskStatus::Passed,
-        context.clock.now_rfc3339(),
+        completed_at.clone(),
         format!("squash-merged as {merge_commit}"),
         Some(observed_pull_request.url.clone()),
     );
-    work.outcome = Some(format!("integrated as {merge_commit}"));
+    work.finish(
+        WorkOutcomeKind::Integrated,
+        completed_at,
+        format!(
+            "squash-merged pull request #{} as {merge_commit}",
+            observed_pull_request.number
+        ),
+        final_source,
+        merge_commit.clone(),
+    )?;
     tasks[index] = task.clone();
     store.save_work_and_task(context.fs, &work, &task)?;
-    let archive = store.archive(context.fs, &work, &tasks)?;
+    let archive =
+        HistoryStore::new(&context.repo_root)?.archive(context.fs, &store, &work, &tasks)?;
     Ok(format!(
         "# rapport integrate complete\n\n- `task` — {}\n- `pull request` — {}\n- `status` — passed\n- `target commit` — {}\n- `remote branch deleted` — true\n- `Work` — archived {}",
         task.id, observed_pull_request.url, merge_commit, archive

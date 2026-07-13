@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::Error;
 use crate::ReviewGrade;
 
-pub(super) const WORK_SCHEMA_VERSION: u16 = 1;
+pub(super) const WORK_SCHEMA_VERSION: u16 = 2;
 pub(super) const TASK_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +41,7 @@ impl fmt::Debug for RequestSource {
 pub(super) struct Work {
     pub(super) version: u16,
     pub(super) id: Uuid,
+    pub(super) repository: String,
     pub(super) title: String,
     pub(super) description: String,
     pub(super) request: RequestSource,
@@ -55,7 +56,7 @@ pub(super) struct Work {
     #[serde(default = "default_counter")]
     pub(super) next_finding: u32,
     pub(super) created_at: String,
-    pub(super) outcome: Option<String>,
+    pub(super) outcome: Option<WorkOutcome>,
 }
 
 impl Work {
@@ -67,6 +68,7 @@ impl Work {
         title: String,
         description: String,
         request: RequestSource,
+        repository: String,
         source_branch: String,
         target_branch: String,
         starting_source: String,
@@ -76,6 +78,7 @@ impl Work {
         Ok(Self {
             version: WORK_SCHEMA_VERSION,
             id: Uuid::new_v4(),
+            repository: required(repository)?,
             title: required(title)?,
             description: required(description)?,
             request,
@@ -90,6 +93,30 @@ impl Work {
             created_at,
             outcome: None,
         })
+    }
+
+    pub(super) fn finish(
+        &mut self,
+        kind: WorkOutcomeKind,
+        at: String,
+        summary: String,
+        source_commit: String,
+        target_commit: String,
+    ) -> Result<(), Error> {
+        if let Some(outcome) = &self.outcome {
+            if outcome.kind == kind {
+                return Ok(());
+            }
+            return Err(Error::FinalizedWork(outcome.kind.to_string()));
+        }
+        self.outcome = Some(WorkOutcome {
+            kind,
+            at: required(at)?,
+            summary: required(summary)?,
+            source_commit: required(source_commit)?,
+            target_commit: required(target_commit)?,
+        });
+        Ok(())
     }
 
     pub(super) fn allocate_task_id(&mut self) -> Result<String, Error> {
@@ -117,6 +144,7 @@ impl fmt::Debug for Work {
             .debug_struct("Work")
             .field("version", &self.version)
             .field("id", &self.id)
+            .field("repository", &"[redacted]")
             .field("title_length", &self.title.len())
             .field("description_length", &self.description.len())
             .field("request", &self.request)
@@ -130,6 +158,46 @@ impl fmt::Debug for Work {
             .field("next_finding", &self.next_finding)
             .field("created_at", &self.created_at)
             .field("has_outcome", &self.outcome.is_some())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum WorkOutcomeKind {
+    Integrated,
+    Completed,
+    Abandoned,
+}
+
+impl fmt::Display for WorkOutcomeKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Integrated => "integrated",
+            Self::Completed => "completed",
+            Self::Abandoned => "abandoned",
+        })
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct WorkOutcome {
+    pub(super) kind: WorkOutcomeKind,
+    pub(super) at: String,
+    pub(super) summary: String,
+    pub(super) source_commit: String,
+    pub(super) target_commit: String,
+}
+
+impl fmt::Debug for WorkOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WorkOutcome")
+            .field("kind", &self.kind)
+            .field("at", &self.at)
+            .field("summary_length", &self.summary.len())
+            .field("source_commit", &"[redacted]")
+            .field("target_commit", &"[redacted]")
             .finish()
     }
 }

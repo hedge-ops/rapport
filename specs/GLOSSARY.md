@@ -32,6 +32,13 @@ candidate being evaluated.
 The durable local ledger of the request, repository identities, Tasks, results,
 proofs, decisions, and current state of one body of work.
 
+## Work History
+
+The local, cross-repository collection of finalized Work logs. Each immutable,
+schema-versioned record preserves human prose, dates, Git identities, Tasks,
+proof, and decisions as transparent TOML outside every repository. History is
+not telemetry and is never uploaded implicitly.
+
 ## Context
 
 The repository-owned description of a folder's purpose, ownership, boundaries,

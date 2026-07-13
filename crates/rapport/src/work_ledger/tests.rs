@@ -1,7 +1,10 @@
-use super::domain::{RequestKind, RequestSource, Task, TaskStatus, Work, Workflow};
+use super::domain::{
+    RequestKind, RequestSource, Task, TaskStatus, Work, WorkOutcomeKind, Workflow,
+};
+use super::history::HistoryStore;
 use super::repository::Store;
 use crate::{Clock, CommandOutcome, CommandRunner, CommandSpec, run_with_environment};
-use claims::assert_ok;
+use claims::{assert_ok, assert_some};
 use rapport_files::{FileSystem, InMemoryFileSystem, RealFileSystem, Utf8Path, Utf8PathBuf};
 use std::collections::VecDeque;
 use std::io;
@@ -521,6 +524,7 @@ fn archive_writes_global_history_before_removing_local_state() {
             kind: RequestKind::Ticket,
             value: "#106".to_owned(),
         },
+        "/repository".to_owned(),
         "feature".to_owned(),
         "main".to_owned(),
         "1111".to_owned(),
@@ -545,9 +549,18 @@ fn archive_writes_global_history_before_removing_local_state() {
         "created checkpoint 2222".to_owned(),
         None,
     );
+    assert_ok!(work.finish(
+        WorkOutcomeKind::Completed,
+        "2026-07-12T23:00:08Z".to_owned(),
+        "Preserved the complete local ledger.".to_owned(),
+        "2222".to_owned(),
+        "1111".to_owned(),
+    ));
     assert_ok!(store.save_work_and_task(&mut fs, &work, &task));
 
-    let history = assert_ok!(store.archive(&mut fs, &work, std::slice::from_ref(&task)));
+    let history_store = assert_ok!(HistoryStore::new(Utf8Path::new("/repository")));
+    let history =
+        assert_ok!(history_store.archive(&mut fs, &store, &work, std::slice::from_ref(&task)));
 
     assert!(fs.is_file(history.join("work.toml")));
     assert!(fs.is_file(history.join("tasks/TASK_001.toml")));
@@ -555,6 +568,173 @@ fn archive_writes_global_history_before_removing_local_state() {
     assert!(!fs.is_file("/repository/.rapport/tasks/TASK_001.toml"));
     let archived_task = assert_ok!(fs.read_to_string(history.join("tasks/TASK_001.toml")));
     assert!(archived_task.contains("duration_seconds = \"8\""));
+}
+
+#[test]
+/// When finalized Work is inspected or removed, history stays global and destructive actions require confirmation (WRK-006).
+fn work_history_should_list_show_and_remove_finalized_work() {
+    let repository = TemporaryRepository::new();
+    repository.succeeds(&[
+        "work",
+        "start",
+        "--ad-hoc",
+        "Record an abandoned experiment.",
+        "--title",
+        "Abandoned experiment",
+        "--target",
+        "main",
+    ]);
+    let fs = RealFileSystem;
+    let first = assert_ok!(Store::new(&repository.root).require_work(&fs));
+    repository.succeeds(&[
+        "work",
+        "abandon",
+        "--reason",
+        "The experiment did not support the product direction.",
+    ]);
+
+    let listed = repository.succeeds(&["work", "history", "list"]);
+    let first_prefix = first.id.to_string().chars().take(6).collect::<String>();
+    assert!(
+        listed.contains(&first_prefix),
+        "expecting list to use the six-character Work prefix: {listed}"
+    );
+    assert!(
+        listed.contains("Abandoned experiment"),
+        "expecting list to preserve the human title: {listed}"
+    );
+    let shown = repository.succeeds(&["work", "history", "show", &first.id.to_string()]);
+    assert!(
+        shown.contains("outcome` — abandoned"),
+        "expecting show to identify the final outcome: {shown}"
+    );
+    assert!(
+        shown.contains("The experiment did not support the product direction."),
+        "expecting show to preserve the human reason: {shown}"
+    );
+    assert!(
+        shown.contains(repository.root.as_str()),
+        "expecting show to identify the source repository and raw archive: {shown}"
+    );
+
+    let preview = repository.succeeds(&["work", "history", "remove", &first.id.to_string()]);
+    assert!(
+        preview.contains("removed` — false"),
+        "expecting remove to preview before permanent deletion: {preview}"
+    );
+    assert!(
+        repository
+            .root
+            .join(format!(".rapport/test-history/work/{}/work.toml", first.id))
+            .is_file(),
+        "expecting preview to preserve the historical record"
+    );
+    repository.succeeds(&[
+        "work",
+        "history",
+        "remove",
+        &first.id.to_string(),
+        "--confirm",
+    ]);
+    let empty = repository.succeeds(&["work", "history", "list"]);
+    assert!(
+        empty.contains("none"),
+        "expecting confirmed removal to leave no records: {empty}"
+    );
+    assert_eq!(
+        repository.git(["status", "--short"]),
+        "",
+        "expecting history removal to leave repository and Git state unchanged"
+    );
+}
+
+#[test]
+/// When all Work History is cleared, Rapport reports the count and requires explicit confirmation (WRK-006).
+fn work_history_clear_should_preview_and_remove_every_record() {
+    let repository = TemporaryRepository::new();
+    for title in ["First retained Work", "Second retained Work"] {
+        repository.succeeds(&[
+            "work",
+            "start",
+            "--ad-hoc",
+            "Retain this result until history is cleared.",
+            "--title",
+            title,
+            "--target",
+            "main",
+        ]);
+        repository.succeeds(&[
+            "work",
+            "abandon",
+            "--reason",
+            "Recorded for the clear operation.",
+        ]);
+    }
+    let clear_preview = repository.succeeds(&["work", "history", "clear"]);
+    assert!(
+        clear_preview.contains("records` — 2"),
+        "expecting clear to report the number of permanent removals: {clear_preview}"
+    );
+    assert!(
+        clear_preview.contains("removed` — false"),
+        "expecting clear to require explicit confirmation: {clear_preview}"
+    );
+    repository.succeeds(&["work", "history", "clear", "--confirm"]);
+    let cleared = repository.succeeds(&["work", "history", "list"]);
+    assert!(
+        cleared.contains("none"),
+        "expecting confirmed clear to remove all Work History: {cleared}"
+    );
+    assert_eq!(
+        repository.git(["status", "--short"]),
+        "",
+        "expecting history removal to leave repository and Git state unchanged"
+    );
+}
+
+#[test]
+/// When completed Work is shown, its exact candidate, Build proof, Review grade, and Task prose remain inspectable (WRK-006).
+fn work_history_show_should_render_complete_build_and_review_evidence() {
+    let repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    let candidate = assert_some!(work.latest_checkpoint.clone());
+
+    repository.succeeds(&[
+        "work",
+        "complete",
+        "--result",
+        "The accepted local-only candidate is complete.",
+    ]);
+    let shown = repository.succeeds(&["work", "history", "show", &work.id.to_string()]);
+
+    assert!(
+        shown.contains("outcome` — completed"),
+        "expecting the explicit completion outcome: {shown}"
+    );
+    assert!(
+        shown.contains(&format!("final source` — {candidate}")),
+        "expecting the exact final candidate identity: {shown}"
+    );
+    assert!(
+        shown.contains("### Build evidence"),
+        "expecting the complete Build Task evidence: {shown}"
+    );
+    assert!(
+        shown.contains("proof` — true"),
+        "expecting accepted Build and Review proof: {shown}"
+    );
+    assert!(
+        shown.contains("### Review evidence"),
+        "expecting the complete Review Task evidence: {shown}"
+    );
+    assert!(
+        shown.contains("grade` — A"),
+        "expecting the independent Review grade: {shown}"
+    );
+    assert!(
+        shown.contains("The accepted local-only candidate is complete."),
+        "expecting the human completion prose: {shown}"
+    );
 }
 
 #[test]
@@ -1281,5 +1461,18 @@ fn integration_complete_archives_without_switching_local_git() {
         repository
             .git(["ls-remote", "--heads", "origin", "feature"])
             .is_empty()
+    );
+    let history = repository.succeeds(&["work", "history", "show", &work.id.to_string()]);
+    assert!(
+        history.contains("outcome` — integrated"),
+        "expecting Integration to finalize Work as integrated: {history}"
+    );
+    assert!(
+        history.contains("final target` — feedface1234"),
+        "expecting history to retain the confirmed squash commit: {history}"
+    );
+    assert!(
+        history.contains("pull request` — #115"),
+        "expecting history to retain the Integration identity: {history}"
     );
 }

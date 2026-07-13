@@ -2,8 +2,6 @@
 
 use super::Error;
 use super::domain::{TASK_SCHEMA_VERSION, Task, WORK_SCHEMA_VERSION, Work};
-#[cfg(not(test))]
-use directories::ProjectDirs;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 
 #[derive(Debug, Clone)]
@@ -167,53 +165,11 @@ impl Store {
         Ok(())
     }
 
-    pub(super) fn archive(
+    pub(super) fn clear_local(
         &self,
         fs: &mut impl FileSystem,
-        work: &Work,
         tasks: &[Task],
-    ) -> Result<Utf8PathBuf, Error> {
-        #[cfg(test)]
-        let history = self
-            .root
-            .join(".rapport/test-history/work")
-            .join(work.id.to_string());
-        #[cfg(not(test))]
-        let history = {
-            let project = ProjectDirs::from("com", "Hedge Ops", "Rapport")
-                .ok_or(Error::MissingHistoryDirectory)?;
-            let state = project
-                .state_dir()
-                .unwrap_or_else(|| project.data_local_dir());
-            Utf8PathBuf::from_path_buf(state.join("work").join(work.id.to_string()))
-                .map_err(|_| Error::NonUtf8Path)?
-        };
-        fs.create_dir_all(&history).map_err(|source| Error::Io {
-            path: history.clone(),
-            source,
-        })?;
-        let work_archive = history.join("work.toml");
-        fs.write_string(&work_archive, toml::to_string_pretty(work)?)
-            .map_err(|source| Error::Io {
-                path: work_archive,
-                source,
-            })?;
-        let tasks_archive = history.join("tasks");
-        fs.create_dir_all(&tasks_archive)
-            .map_err(|source| Error::Io {
-                path: tasks_archive.clone(),
-                source,
-            })?;
-        for task in tasks {
-            let path = tasks_archive.join(format!("{}.toml", task.id));
-            fs.write_string(&path, toml::to_string_pretty(task)?)
-                .map_err(|source| Error::Io { path, source })?;
-        }
-        self.clear_local(fs, tasks)?;
-        Ok(history)
-    }
-
-    fn clear_local(&self, fs: &mut impl FileSystem, tasks: &[Task]) -> Result<(), Error> {
+    ) -> Result<(), Error> {
         for task in tasks {
             let path = self.task_path(&task.id);
             if fs.is_file(&path) {

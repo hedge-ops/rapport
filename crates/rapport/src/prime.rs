@@ -87,11 +87,13 @@ fn render_prime() -> String {
                 "`rapport integrate start` - publish accepted Work and create its evidence-carrying pull request",
                 "`rapport integrate status` - inspect GitHub state without changing it",
                 "`rapport integrate complete` - revalidate, squash-merge, delete the remote branch, and archive Work",
+                "`rapport work history list` - find finalized Work; use `rapport work history show <id>` for its complete record",
             ])
         })
         .section("Boundaries", |b| {
             b.items([
                 "Keep `.rapport/work.toml` local; it is working memory, not project source.",
+                "Work History remains local in Rapport's platform state directory and is never uploaded implicitly.",
                 "Prefer repository tools and rules discovered by Rapport over ad hoc workflow guesses.",
                 "When changing Rapport itself, run an installed or copied Rapport binary for dogfooding builds.",
             ])
@@ -127,5 +129,6 @@ mod tests {
         assert!(view.contains("rapport review"));
         assert!(view.contains("rapport integrate"));
         assert!(view.contains("rapport integrate complete"));
+        assert!(view.contains("rapport work history list"));
     }
 }
