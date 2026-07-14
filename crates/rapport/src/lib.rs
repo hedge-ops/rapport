@@ -126,6 +126,7 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use rapport_files::InMemoryFileSystem;
+    use rstest::rstest;
     use std::collections::VecDeque;
     use std::io;
     use std::sync::Mutex;
@@ -303,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn github_help_documents_applying_setup_and_dry_run() {
+    fn github_setup_help_should_document_applying_setup_and_dry_run() {
         let (code, out, err) = run_with(&["github", "setup", "--help"]);
 
         assert_eq!(code, ExitCode::SUCCESS);
@@ -313,29 +314,26 @@ mod tests {
         assert_eq!(err, "");
     }
 
-    #[test]
-    fn github_setup_applies_by_default_and_accepts_legacy_confirm() {
-        for arguments in [
-            &["github", "setup"][..],
-            &["github", "setup", "--confirm"][..],
-        ] {
-            let mut fs = InMemoryFileSystem::default();
-            let runner = github_setup_runner();
+    #[rstest]
+    #[case::default(&["github", "setup"])]
+    #[case::legacy_confirm(&["github", "setup", "--confirm"])]
+    fn github_setup_should_apply_by_default_and_accept_legacy_confirm(#[case] arguments: &[&str]) {
+        let mut fs = InMemoryFileSystem::default();
+        let runner = github_setup_runner();
 
-            let (code, out, err) = run_with_runner(arguments, &mut fs, &runner);
+        let (code, out, err) = run_with_runner(arguments, &mut fs, &runner);
 
-            assert_eq!(code, ExitCode::SUCCESS);
-            assert!(out.contains("`applied` — true"));
-            assert_eq!(err, "");
-            let calls = runner.calls();
-            assert_eq!(calls.len(), 5);
-            assert_eq!(calls[3].0.args[0..3], ["api", "--method", "POST"]);
-            assert_eq!(calls[4].0.args[0..2], ["repo", "edit"]);
-        }
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("`applied` — true"));
+        assert_eq!(err, "");
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 5);
+        assert_eq!(calls[3].0.args[0..3], ["api", "--method", "POST"]);
+        assert_eq!(calls[4].0.args[0..2], ["repo", "edit"]);
     }
 
     #[test]
-    fn github_setup_dry_run_shows_changes_without_mutating_github() {
+    fn github_setup_should_show_changes_without_mutating_github_when_dry_run() {
         let mut fs = InMemoryFileSystem::default();
         let runner = FakeRunner::with_outcomes([
             successful_result("authenticated\n"),
@@ -397,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_recommends_applying_github_setup_when_configuration_is_missing() {
+    fn doctor_should_recommend_applying_github_setup_when_configuration_is_missing() {
         let mut fs = InMemoryFileSystem::default();
         let runner = FakeRunner::with_outcomes([
             successful_result("git@github.com:hedge-ops/rapport.git\n"),
