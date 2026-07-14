@@ -224,3 +224,17 @@ text = '''workspace.set_limit(42); workspace.admit(person("abc", "Michael", true
 language = "rust"
 text = '''workspace.set_limit(PLAN_PERSON_LIMIT);
 workspace.admit(michael());'''
+
+[rules.RUST_TEST_019]
+text = "Test logic rather than static string data. Do not assert fragments of checked-in strings; assert text when production logic generates or transforms it."
+rationale = "Tests should specify behavior. Searching an included fixture only proves the fixture contains data; it does not exercise production logic. Generated or transformed text is observable behavior and should be tested."
+
+[rules.RUST_TEST_019.avoid]
+language = "rust"
+text = '''let guide = include_str!("../prime.md");
+assert!(guide.contains("rapport review start"));'''
+
+[rules.RUST_TEST_019.prefer]
+language = "rust"
+text = '''let generated = facet_generate(schema);
+assert!(generated.contains("pub struct Person"));'''
