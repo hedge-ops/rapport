@@ -23,7 +23,7 @@ const CATALOG_FILES: &[CatalogFile] = &[
     ),
     CatalogFile::new(
         "RUST_TEST",
-        "1.0.0",
+        "1.0.1",
         "Standards for Rust tests as readable executable specifications.",
         "rust/test.toml",
         include_str!("../../catalog/rust/test.toml"),
@@ -37,7 +37,7 @@ const CATALOG_FILES: &[CatalogFile] = &[
     ),
     CatalogFile::new(
         "RUST_CRATE",
-        "1.0.1",
+        "1.0.2",
         "Complete coding, testing, and documentation policy for a Rust crate.",
         "rust/crate.toml",
         include_str!("../../catalog/rust/crate.toml"),
@@ -535,7 +535,7 @@ mod tests {
             assert_ok!(catalog.get("RUST_CRATE"))
                 .ruleset()
                 .catalog_version(),
-            Some("1.0.1"),
+            Some("1.0.2"),
             "expecting the Rust aggregate to version its changed effective policy"
         );
         assert_eq!(
@@ -549,8 +549,8 @@ mod tests {
             assert_ok!(catalog.get("RUST_TEST"))
                 .ruleset()
                 .catalog_version(),
-            Some("1.0.0"),
-            "expecting unchanged component policy to retain its version"
+            Some("1.0.1"),
+            "expecting the changed Rust test policy to receive the patch version"
         );
     }
 
