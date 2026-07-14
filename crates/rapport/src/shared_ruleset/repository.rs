@@ -491,7 +491,7 @@ mod tests {
 
         assert_eq!(
             rules.len(),
-            64,
+            65,
             "expecting the repository aggregate to resolve every Rust Rule once"
         );
     }
