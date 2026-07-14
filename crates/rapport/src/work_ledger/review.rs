@@ -13,9 +13,9 @@ use crate::{Clock, CommandContext};
 use clap::{ArgGroup, Args, Subcommand};
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 use rapport_git::{Git, Repository, WorktreeStatus};
+use rapport_prose::OutputBuilder;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::fmt::Write;
 use std::io;
 use std::process::ExitCode;
 use std::str::FromStr;
@@ -768,24 +768,43 @@ fn render_request(
     policy: &str,
     build: Option<&str>,
 ) -> String {
-    format!(
-        "# Rapport Independent Review\n\n## Intent\n\n{}\n\n## Candidate\n\n- Base: `{}`\n- Candidate: `{}`\n- Build proof: `{}`\n\n{}\n\n## Host Instruction\n\nDelegate this request to a fresh independent review agent. The implementing agent must not review or certify its own candidate. Save the returned JSON outside the repository, then run `rapport review complete --result <FILE>`.\n\n## Grading Rubric\n\nA is excellent and exemplary; B is good and releasable; C has meaningful weaknesses; D has serious release-blocking flaws; F is unacceptable. Grade from the highest-impact unresolved risk. Inspect relevant source, tests, manifests, build files, and documentation. Form findings independently, cite Rule IDs and concrete file/line evidence, and keep suggested Rule improvements separate.\n",
-        work.map_or("Ad hoc repository review".to_owned(), |w| format!(
+    let intent = work.map_or("Ad hoc repository review".to_owned(), |w| {
+        format!(
             "{}\n\n{}\n\nSource: {:?} {}",
             w.title, w.description, w.request.kind, w.request.value
-        )),
-        short(base),
-        short(candidate),
-        build.unwrap_or("feedback only"),
-        policy
-    )
+        )
+    });
+    OutputBuilder::new()
+        .h1("Rapport Independent Review")
+        .h2("Intent")
+        .text(intent)
+        .blank()
+        .h2("Candidate")
+        .text(format!(
+            "- Base: `{}`\n- Candidate: `{}`\n- Build proof: `{}`",
+            short(base),
+            short(candidate),
+            build.unwrap_or("feedback only")
+        ))
+        .blank()
+        .text(policy)
+        .blank()
+        .h2("Host Instruction")
+        .text("Delegate this request to a fresh independent review agent. The implementing agent must not review or certify its own candidate. Save the returned JSON outside the repository, then run `rapport review complete --result <FILE>`.")
+        .blank()
+        .h2("Grading Rubric")
+        .text("A is excellent and exemplary; B is good and releasable; C has meaningful weaknesses; D has serious release-blocking flaws; F is unacceptable. Grade from the highest-impact unresolved risk. Inspect relevant source, tests, manifests, build files, and documentation. Form findings independently, cite Rule IDs and concrete file/line evidence, and keep suggested Rule improvements separate.")
+        .build()
 }
-fn with_contract(mut request: String, checksum: &str) -> String {
-    let _ = write!(
-        request,
-        "\n## Result Contract\n\nReturn JSON with input_checksum `{checksum}`, overall_grade, overall_explanation, categories (the seven named categories, grade or not_applicable, and explanation), proposed_actions (title, explanation, rule_ids, evidence objects with path/line/description, impact, recommended_correction), and suggested_rule_improvements. Do not assign finding IDs.\n"
-    );
-    request
+fn with_contract(request: String, checksum: &str) -> String {
+    OutputBuilder::new()
+        .text(request)
+        .blank()
+        .h2("Result Contract")
+        .text(format!(
+            "Return JSON with input_checksum `{checksum}`, overall_grade, overall_explanation, categories (the seven named categories, grade or not_applicable, and explanation), proposed_actions (title, explanation, rule_ids, evidence objects with path/line/description, impact, recommended_correction), and suggested_rule_improvements. Do not assign finding IDs."
+        ))
+        .build()
 }
 fn render_task(task: &Task) -> String {
     let Some(r) = &task.review else {
