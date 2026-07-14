@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-07-13
+
+### Added
+
+- Added `RUST_TEST_019`, which keeps tests focused on production logic rather
+  than static fixture text while allowing assertions on generated or
+  transformed output.
+
+### Changed
+
+- Made independent Review requests explicitly direct agent-capable hosts to
+  delegate to a fresh reviewer and prohibit self-certification.
+- Rendered Review requests and result contracts through `rapport-prose`.
+
 ## [0.5.2] - 2026-07-13
 
 ### Fixed
@@ -263,7 +277,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.2...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.3...HEAD
+[0.5.3]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.2...rapport-v0.5.3
 [0.5.2]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.1...rapport-v0.5.2
 [0.5.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.0...rapport-v0.5.1
 [0.5.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.4.2...rapport-v0.5.0
