@@ -6,7 +6,6 @@
 use crate::{Clock, CommandContext, CommandSpec};
 use clap::{Args, Subcommand};
 use rapport_files::FileSystem;
-use rapport_git::Git;
 use serde::Deserialize;
 use std::io::Write;
 use std::process::ExitCode;
@@ -22,10 +21,14 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Action {
-    /// Propose or apply Rapport's target-branch integration ruleset.
+    /// Apply Rapport's target-branch integration ruleset.
     Setup {
-        /// Apply the displayed repository changes.
+        /// Display the complete proposed changes without applying them.
         #[arg(long)]
+        dry_run: bool,
+        /// Deprecated compatibility flag; setup now applies by default.
+        #[arg(long, hide = true)]
+        #[expect(dead_code, reason = "accepted as a compatibility no-op")]
         confirm: bool,
     },
 }
@@ -38,7 +41,7 @@ where
     E: Write,
 {
     let result = match cli.action {
-        Action::Setup { confirm } => setup(context, confirm),
+        Action::Setup { dry_run, .. } => setup(context, dry_run),
     };
     match result {
         Ok(output) => {
@@ -54,7 +57,7 @@ where
 
 fn setup<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
-    confirm: bool,
+    dry_run: bool,
 ) -> Result<String, String>
 where
     F: FileSystem,
@@ -70,20 +73,15 @@ where
     ) {
         return Err("GitHub identity cannot publish commit statuses".to_owned());
     }
-    let git = Git::default();
-    let repository = git
-        .discover(&context.repo_root)
-        .map_err(|error| error.to_string())?;
     let target = crate::work_ledger::active_target(context.fs, &context.repo_root)
         .map_err(|error| error.to_string())?
-        .map_or_else(
-            || {
-                git.default_target(&repository)
-                    .map(|branch| branch.to_string())
-                    .map_err(|error| error.to_string())
-            },
-            Ok,
-        )?;
+        .or_else(|| {
+            identity
+                .default_branch_ref
+                .as_ref()
+                .map(|branch| branch.name.clone())
+        })
+        .ok_or_else(|| "GitHub repository has no target branch".to_owned())?;
     let name = format!("Rapport Integration ({target})");
     let existing = repository_rulesets(context, &identity.name_with_owner)?
         .into_iter()
@@ -101,10 +99,8 @@ where
         "# rapport github setup\n\n- `repository` — {}\n- `target` — {}\n- `ruleset` — {} ({})\n- `pull requests required` — true\n- `required status` — {}\n- `Rapport Review status` — none\n- `required approvals added` — 0\n- `freshness` — loose unless an existing merge queue is effective\n- `squash merge` — enabled\n- `delete merged branches` — enabled",
         identity.name_with_owner, target, name, action, BUILD_AGGREGATE
     );
-    if !confirm {
-        return Ok(format!(
-            "{proposal}\n- `applied` — false\n- `next` — `rapport github setup --confirm`"
-        ));
+    if dry_run {
+        return Ok(format!("{proposal}\n- `applied` — false"));
     }
 
     let payload = ruleset_payload(&name, &target);
