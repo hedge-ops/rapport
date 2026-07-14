@@ -180,16 +180,19 @@ repository or organization protection:
 
 ```bash
 rapport github setup
-rapport github setup --confirm
+rapport github setup --dry-run
 rapport doctor
 ```
 
-The setup proposal requires pull requests and `Rapport Build`, adds no duplicate
-Review status or approval, enables squash merge and merged-branch deletion, and
-uses no administrative bypass actor. `rapport doctor` remains read-only and
-checks repository identity, authentication, status-publishing permission,
-generated workflows, effective rules, freshness mode, squash merge, and branch
-deletion.
+The setup command applies the displayed proposal. Pass `--dry-run` to display
+the complete change set without mutating GitHub. The former `--confirm` flag is
+deprecated, hidden from help, and remains accepted as a no-op so existing
+callers continue to apply setup. The proposal requires pull requests and
+`Rapport Build`, adds no duplicate Review status or approval, enables squash
+merge and merged-branch deletion, and uses no administrative bypass actor.
+`rapport doctor` remains read-only and checks repository identity,
+authentication, status-publishing permission, generated workflows, effective
+rules, freshness mode, squash merge, and branch deletion.
 
 ## Repository Shape
 

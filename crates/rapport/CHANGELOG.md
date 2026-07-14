@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Made `rapport github setup` apply its proposed repository configuration by
+  default and added `--dry-run` for a complete non-mutating preview.
+- Deprecated and hid `rapport github setup --confirm` while retaining it as a
+  compatibility no-op for existing callers.
+
 ## [0.5.3] - 2026-07-13
 
 ### Added

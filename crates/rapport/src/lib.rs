@@ -303,12 +303,71 @@ mod tests {
     }
 
     #[test]
-    fn github_help_exposes_confirmed_setup() {
+    fn github_help_documents_applying_setup_and_dry_run() {
         let (code, out, err) = run_with(&["github", "setup", "--help"]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("--confirm"));
+        assert!(out.contains("Apply Rapport's target-branch integration ruleset"));
+        assert!(out.contains("--dry-run"));
+        assert!(!out.contains("--confirm"));
         assert_eq!(err, "");
+    }
+
+    #[test]
+    fn github_setup_applies_by_default_and_accepts_legacy_confirm() {
+        for arguments in [
+            &["github", "setup"][..],
+            &["github", "setup", "--confirm"][..],
+        ] {
+            let mut fs = InMemoryFileSystem::default();
+            let runner = github_setup_runner();
+
+            let (code, out, err) = run_with_runner(arguments, &mut fs, &runner);
+
+            assert_eq!(code, ExitCode::SUCCESS);
+            assert!(out.contains("`applied` — true"));
+            assert_eq!(err, "");
+            let calls = runner.calls();
+            assert_eq!(calls.len(), 5);
+            assert_eq!(calls[3].0.args[0..3], ["api", "--method", "POST"]);
+            assert_eq!(calls[4].0.args[0..2], ["repo", "edit"]);
+        }
+    }
+
+    #[test]
+    fn github_setup_dry_run_shows_changes_without_mutating_github() {
+        let mut fs = InMemoryFileSystem::default();
+        let runner = FakeRunner::with_outcomes([
+            successful_result("authenticated\n"),
+            successful_result(github_repository_identity()),
+            successful_result("[]"),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["github", "setup", "--dry-run"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("`ruleset` — Rapport Integration (main) (create)"));
+        assert!(out.contains("`pull requests required` — true"));
+        assert!(out.contains("`required status` — Rapport Build"));
+        assert!(out.contains("`squash merge` — enabled"));
+        assert!(out.contains("`delete merged branches` — enabled"));
+        assert!(out.contains("`applied` — false"));
+        assert_eq!(err, "");
+        assert_eq!(runner.calls().len(), 3);
+    }
+
+    fn github_setup_runner() -> FakeRunner {
+        FakeRunner::with_outcomes([
+            successful_result("authenticated\n"),
+            successful_result(github_repository_identity()),
+            successful_result("[]"),
+            successful_result("{}"),
+            successful_result(""),
+        ])
+    }
+
+    fn github_repository_identity() -> &'static str {
+        r#"{"nameWithOwner":"hedge-ops/rapport","defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"deleteBranchOnMerge":true,"viewerPermission":"ADMIN"}"#
     }
 
     #[test]
@@ -335,6 +394,23 @@ mod tests {
         assert!(out.contains("rapport integrate"));
         assert_eq!(err, "");
         assert_eq!(runner.calls().len(), 4);
+    }
+
+    #[test]
+    fn doctor_recommends_applying_github_setup_when_configuration_is_missing() {
+        let mut fs = InMemoryFileSystem::default();
+        let runner = FakeRunner::with_outcomes([
+            successful_result("git@github.com:hedge-ops/rapport.git\n"),
+            successful_result("authenticated\n"),
+            successful_result(github_repository_identity()),
+            successful_result("[]"),
+        ]);
+
+        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
+
+        assert_eq!(code, ExitCode::from(2));
+        assert_eq!(out, "");
+        assert!(err.contains("run rapport github setup, then rapport doctor"));
     }
 
     #[test]
