@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-07-14
+
 ### Changed
 
 - Made Rapport-owned Build and Review evidence plus observed pull-request checks
@@ -296,7 +298,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.4...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.5...HEAD
+[0.5.5]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.4...rapport-v0.5.5
 [0.5.4]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.3...rapport-v0.5.4
 [0.5.3]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.2...rapport-v0.5.3
 [0.5.2]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.1...rapport-v0.5.2
