@@ -221,6 +221,7 @@ fn integration_pull_request(repository: &TemporaryRepository, work: &Work, head:
             {
                 "__typename": "CheckRun",
                 "name": "CI",
+                "status": "COMPLETED",
                 "conclusion": "SUCCESS"
             }
         ],
@@ -1499,10 +1500,11 @@ fn integration_start_should_block_when_no_remote_checks_are_observed() {
 }
 
 #[rstest]
-#[case::pending("IN_PROGRESS", "remote check(s) pending")]
-#[case::failed("FAILURE", "remote check(s) failed")]
+#[case::pending("IN_PROGRESS", "", "remote check(s) pending")]
+#[case::failed("COMPLETED", "FAILURE", "remote check(s) failed")]
 /// Start waits for every observed remote check to finish without failure (INT-001).
 fn integration_start_should_block_nonpassing_remote_checks(
+    #[case] status: &str,
     #[case] conclusion: &str,
     #[case] blocker: &str,
 ) {
@@ -1513,6 +1515,7 @@ fn integration_start_should_block_nonpassing_remote_checks(
     let mut pull_request: serde_json::Value = assert_ok!(serde_json::from_str(
         &integration_pull_request(&repository, &work, &head)
     ));
+    pull_request["statusCheckRollup"][1]["status"] = serde_json::Value::String(status.to_owned());
     pull_request["statusCheckRollup"][1]["conclusion"] =
         serde_json::Value::String(conclusion.to_owned());
     let runner = integration_start_runner(&repository, &pull_request.to_string());

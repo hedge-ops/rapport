@@ -786,11 +786,7 @@ fn check_state(checks: &[StatusCheck]) -> CheckState {
             .as_deref()
             .or(check.context.as_deref())
             .unwrap_or("");
-        let result = check
-            .conclusion
-            .as_deref()
-            .or(check.state.as_deref())
-            .unwrap_or("PENDING");
+        let result = check_result(check);
         match result {
             "SUCCESS" | "NEUTRAL" | "SKIPPED" => state.passed += 1,
             "PENDING" | "QUEUED" | "IN_PROGRESS" | "EXPECTED" => state.pending += 1,
@@ -801,6 +797,17 @@ fn check_state(checks: &[StatusCheck]) -> CheckState {
         }
     }
     state
+}
+
+fn check_result(check: &StatusCheck) -> &str {
+    if check.kind.as_deref() == Some("CheckRun") {
+        match check.status.as_deref() {
+            Some("COMPLETED") | None => check.conclusion.as_deref().unwrap_or("PENDING"),
+            Some(status) => status,
+        }
+    } else {
+        check.state.as_deref().unwrap_or("PENDING")
+    }
 }
 
 fn status_passed(checks: &[StatusCheck], expected: &str) -> bool {
@@ -1076,6 +1083,8 @@ struct StatusCheck {
     context: Option<String>,
     #[serde(default)]
     conclusion: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
     #[serde(default)]
     state: Option<String>,
 }
