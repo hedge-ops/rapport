@@ -37,6 +37,8 @@ fn render_prime() -> String {
                 "`rapport context show <path>` - read folder purpose, ownership, boundaries, and applicable benchmarks",
                 "`rapport doctor` - verify Git and GitHub prerequisites before integration",
                 "`rapport work task next` - inspect the next ordered Develop Task action without executing it",
+                "`rapport develop task start <ID>` - start the pending Develop Task before performing its engineering correction",
+                "`rapport develop task complete <ID> --result \"<correction and evidence>\"` - complete the Task with a meaningful result; checkpoint first only when repository state changed",
                 "`rapport work checkpoint start` - reconcile and stage a coherent Git checkpoint",
                 "`rapport build` - prove the exact clean checkpoint with applicable Context signoffs",
                 "`rapport review start` - request one independent Review; use `rapport review complete --result <file>` to record it",
@@ -71,6 +73,20 @@ mod tests {
         assert!(view.contains("rapport context show"));
         assert!(view.contains("rapport doctor"));
         assert!(view.contains("rapport work task next"));
+        assert!(
+            view.contains("rapport develop task start <ID>"),
+            "expecting prime to show how to start a Develop Task"
+        );
+        assert!(
+            view.contains(
+                "rapport develop task complete <ID> --result \"<correction and evidence>\""
+            ),
+            "expecting prime to require a correction-and-evidence result"
+        );
+        assert!(
+            view.contains("checkpoint first only when repository state changed"),
+            "expecting prime to make checkpointing conditional on repository changes"
+        );
         assert!(view.contains("rapport work checkpoint start"));
         assert!(view.contains("rapport build"));
         assert!(view.contains("rapport review"));

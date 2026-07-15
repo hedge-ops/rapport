@@ -459,7 +459,7 @@ where
     ));
     store.save_task(context.fs, &tasks[index])?;
     Ok(format!(
-        "# rapport develop task start\n\n- `task` — {}\n- `status` — running\n- `source` — {}\n- `changes` — {}\n- `next` — checkpoint changed files, then `rapport develop task complete {} --result <RESULT>`",
+        "# rapport develop task start\n\n- `task` — {}\n- `status` — running\n- `source` — {}\n- `changes` — {}\n- `next` — if repository state changes, checkpoint it; then `rapport develop task complete {} --result <RESULT>`",
         tasks[index].id,
         short(live.head().as_str()),
         paths(&live.all_changed_paths()),
@@ -518,6 +518,7 @@ where
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     let action_id = tasks[index].id.clone();
+    let completes_build_repair = tasks[index].payload.contains_key("caused_by_build");
     for checkpoint_id in &checkpoint_ids {
         if !tasks[index].related.contains(checkpoint_id) {
             tasks[index].related.push(checkpoint_id.clone());
@@ -535,6 +536,11 @@ where
         result,
         Some(format!("checkpoints: {}", none(&checkpoint_ids.join(", ")))),
     );
+    let next = if completes_build_repair && is_complete(&work, &tasks, &live, None) {
+        "rapport build"
+    } else {
+        "rapport work task next"
+    };
     let writes = tasks
         .iter()
         .filter(|task| task.id == action_id || checkpoint_ids.contains(&task.id))
@@ -542,10 +548,11 @@ where
         .collect::<Vec<_>>();
     store.save_tasks(context.fs, &writes)?;
     Ok(format!(
-        "# rapport develop task complete\n\n- `task` — {}\n- `status` — passed\n- `source` — {}\n- `checkpoints` — {}\n- `next` — `rapport work task next`",
+        "# rapport develop task complete\n\n- `task` — {}\n- `status` — passed\n- `source` — {}\n- `checkpoints` — {}\n- `next` — `{}`",
         tasks[index].id,
         short(live.head().as_str()),
-        none(&checkpoint_ids.join(", "))
+        none(&checkpoint_ids.join(", ")),
+        next
     ))
 }
 
