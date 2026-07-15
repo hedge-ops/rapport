@@ -252,7 +252,7 @@ fn finalize_acceptance(
                 &task,
                 format!("Repair failed Build signoff {operation}"),
                 format!(
-                    "Make {} pass for the candidate, then checkpoint the correction.",
+                    "Make {} pass for the candidate using the appropriate engineering correction. If repository state changes, checkpoint the correction before completing this Task. Record the correction and passing evidence in the completion result.",
                     identity.as_deref().unwrap_or(operation)
                 ),
                 operation,
@@ -755,7 +755,7 @@ fn corrective_task(
     let id = work.allocate_task_id()?;
     work.development_sequence.push(id.clone());
     let mut task = Task::new(
-        id,
+        id.clone(),
         "action",
         Workflow::Develop,
         title,
@@ -764,7 +764,7 @@ fn corrective_task(
         TaskStatus::Pending,
         &build.source_commit,
         created_at,
-        None,
+        Some(format!("rapport develop task start {id}")),
     );
     task.related.push(build.id.clone());
     task.payload
