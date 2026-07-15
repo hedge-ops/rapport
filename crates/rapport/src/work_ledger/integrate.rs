@@ -783,7 +783,9 @@ fn check_state(checks: &[StatusCheck]) -> CheckState {
         let result = check_result(check);
         match result {
             "SUCCESS" | "NEUTRAL" | "SKIPPED" => state.passed += 1,
-            "PENDING" | "QUEUED" | "IN_PROGRESS" | "EXPECTED" => state.pending += 1,
+            "PENDING" | "QUEUED" | "IN_PROGRESS" | "EXPECTED" | "WAITING" | "REQUESTED" => {
+                state.pending += 1;
+            }
             _ => state.failed += 1,
         }
         if name == BUILD_AGGREGATE && result == "SUCCESS" {

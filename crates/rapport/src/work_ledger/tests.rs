@@ -1500,7 +1500,9 @@ fn integration_start_should_block_when_no_remote_checks_are_observed() {
 }
 
 #[rstest]
-#[case::pending("IN_PROGRESS", "", "remote check(s) pending")]
+#[case::in_progress("IN_PROGRESS", "", "remote check(s) pending")]
+#[case::waiting("WAITING", "", "remote check(s) pending")]
+#[case::requested("REQUESTED", "", "remote check(s) pending")]
 #[case::failed("COMPLETED", "FAILURE", "remote check(s) failed")]
 /// Start waits for every observed remote check to finish without failure (INT-001).
 fn integration_start_should_block_nonpassing_remote_checks(
