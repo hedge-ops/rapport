@@ -73,6 +73,13 @@ mod tests {
         assert!(view.contains("rapport context show"));
         assert!(view.contains("rapport doctor"));
         assert!(view.contains("rapport work task next"));
+        assert!(view.contains("rapport develop task start <ID>"));
+        assert!(
+            view.contains(
+                "rapport develop task complete <ID> --result \"<correction and evidence>\""
+            )
+        );
+        assert!(view.contains("checkpoint first only when repository state changed"));
         assert!(view.contains("rapport work checkpoint start"));
         assert!(view.contains("rapport build"));
         assert!(view.contains("rapport review"));

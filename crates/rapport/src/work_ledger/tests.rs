@@ -942,7 +942,9 @@ fn develop_should_process_ordered_sequence_and_causal_correction() {
     ]);
     assert!(no_file_result.contains("status` — passed"));
 
-    repository.succeeds(&["develop", "task", "start", "TASK_001"]);
+    let started = repository.succeeds(&["develop", "task", "start", "TASK_001"]);
+    assert!(started.contains("if repository state changes, checkpoint it"));
+    assert!(started.contains("rapport develop task complete TASK_001 --result <RESULT>"));
     repository.write("src/develop.rs", "pub fn develop() {}\n");
     let (dirty_code, _, dirty_error) = repository.run(&[
         "develop",
@@ -1198,6 +1200,30 @@ fn failed_acceptance_stage_blocks_later_work_and_reopens_develop() {
     let develop = repository.succeeds(&["develop", "task", "list"]);
     assert_eq!(develop.matches("Repair failed Build signoff").count(), 1);
     assert!(develop.contains("TASK_002"), "{develop}");
+    let next = repository.succeeds(&["work", "task", "next"]);
+    assert!(
+        next.contains("appropriate engineering correction"),
+        "{next}"
+    );
+    assert!(next.contains("If repository state changes"), "{next}");
+    assert!(
+        next.contains("rapport develop task start TASK_002"),
+        "{next}"
+    );
+
+    let started = repository.succeeds(&["develop", "task", "start", "TASK_002"]);
+    assert!(started.contains("if repository state changes, checkpoint it"));
+    assert!(started.contains("rapport develop task complete TASK_002 --result <RESULT>"));
+    let completed = repository.succeeds(&[
+        "develop",
+        "task",
+        "complete",
+        "TASK_002",
+        "--result",
+        "Corrected the execution environment and reran ci-fast successfully.",
+    ]);
+    assert!(completed.contains("checkpoints` — none"), "{completed}");
+    assert!(completed.contains("next` — `rapport build`"), "{completed}");
 }
 
 #[test]
