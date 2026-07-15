@@ -27,12 +27,3 @@ pub(crate) use develop::{Cli as DevelopCli, run as run_develop};
 pub(crate) use error::Error;
 pub(crate) use integrate::{Cli as IntegrateCli, run as run_integrate};
 pub(crate) use review::{Cli as ReviewCli, run as run_review};
-
-pub(crate) fn active_target(
-    fs: &impl rapport_files::FileSystem,
-    root: &rapport_files::Utf8Path,
-) -> Result<Option<String>, Error> {
-    repository::Store::new(root)
-        .load_work(fs)
-        .map(|work| work.map(|work| work.target_branch.to_string()))
-}

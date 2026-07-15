@@ -8,6 +8,7 @@ use crate::{Clock, CommandOutcome, CommandRunner, CommandSpec, run_with_environm
 use claims::{assert_err, assert_ok, assert_some};
 use rapport_files::{FileSystem, InMemoryFileSystem, RealFileSystem, Utf8Path, Utf8PathBuf};
 use rapport_git::{BranchName, ObjectId};
+use rstest::rstest;
 use std::collections::VecDeque;
 use std::io;
 use std::process::{Command, ExitCode};
@@ -209,11 +210,19 @@ fn integration_pull_request(repository: &TemporaryRepository, work: &Work, head:
         "mergeable": "MERGEABLE",
         "mergeStateStatus": "CLEAN",
         "reviewDecision": "",
-        "statusCheckRollup": [{
-            "__typename": "StatusContext",
-            "context": "Rapport Build",
-            "state": "SUCCESS"
-        }],
+        "reviewRequests": [],
+        "statusCheckRollup": [
+            {
+                "__typename": "StatusContext",
+                "context": "Rapport Build",
+                "state": "SUCCESS"
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "CI",
+                "conclusion": "SUCCESS"
+            }
+        ],
         "mergeCommit": null
     })
     .to_string()
@@ -221,6 +230,18 @@ fn integration_pull_request(repository: &TemporaryRepository, work: &Work, head:
 
 fn github_target(repository: &TemporaryRepository) -> CommandOutcome {
     successful(&format!("{}\n", repository.git(["rev-parse", "main"])))
+}
+
+fn integration_start_runner(repository: &TemporaryRepository, pull_request: &str) -> QueueRunner {
+    QueueRunner::new([
+        successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
+        successful("[]"),
+        github_target(repository),
+        successful("{}"),
+        successful("[]"),
+        successful("https://github.com/hedge-ops/rapport/pull/115\n"),
+        successful(pull_request),
+    ])
 }
 
 #[derive(Debug)]
@@ -1404,7 +1425,6 @@ fn integration_start_publishes_the_accepted_candidate() {
     let runner = QueueRunner::new([
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
-        successful("[]"),
         github_target(&repository),
         successful("{}"),
         successful("[]"),
@@ -1443,6 +1463,127 @@ fn integration_start_publishes_the_accepted_candidate() {
     assert!(body.contains("Independent Review"));
     assert!(body.contains("Rapport-Work"));
     assert!(!body.contains("Rapport Review status"));
+    assert!(!calls.iter().any(|(spec, _)| {
+        spec.args
+            .iter()
+            .any(|argument| argument.contains("/rules/branches/"))
+    }));
+}
+
+#[test]
+/// Start waits for remote checks to appear instead of treating local status publication as CI (INT-001).
+fn integration_start_should_block_when_no_remote_checks_are_observed() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let mut pull_request: serde_json::Value = assert_ok!(serde_json::from_str(
+        &integration_pull_request(&repository, &work, &head)
+    ));
+    pull_request["statusCheckRollup"] = serde_json::json!([{
+        "__typename": "StatusContext",
+        "context": "Rapport Build",
+        "state": "SUCCESS"
+    }]);
+    let runner = integration_start_runner(&repository, &pull_request.to_string());
+
+    let output = repository.succeeds_with(&["integrate", "start"], &runner);
+
+    assert!(
+        output.contains("no remote checks observed"),
+        "expecting integration to wait for a remote check run: {output}"
+    );
+}
+
+#[rstest]
+#[case::pending("IN_PROGRESS", "remote check(s) pending")]
+#[case::failed("FAILURE", "remote check(s) failed")]
+/// Start waits for every observed remote check to finish without failure (INT-001).
+fn integration_start_should_block_nonpassing_remote_checks(
+    #[case] conclusion: &str,
+    #[case] blocker: &str,
+) {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let mut pull_request: serde_json::Value = assert_ok!(serde_json::from_str(
+        &integration_pull_request(&repository, &work, &head)
+    ));
+    pull_request["statusCheckRollup"][1]["conclusion"] =
+        serde_json::Value::String(conclusion.to_owned());
+    let runner = integration_start_runner(&repository, &pull_request.to_string());
+
+    let output = repository.succeeds_with(&["integrate", "start"], &runner);
+
+    assert!(
+        output.contains(blocker),
+        "expecting a nonpassing remote check to block integration: {output}"
+    );
+}
+
+#[test]
+/// GitHub policy does not choose optional review or target freshness for Rapport (INT-001, INT-002).
+fn integration_start_should_ignore_policy_only_review_and_merge_blocks() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let mut pull_request: serde_json::Value = assert_ok!(serde_json::from_str(
+        &integration_pull_request(&repository, &work, &head)
+    ));
+    pull_request["baseRefOid"] = serde_json::Value::String("target-advanced".to_owned());
+    pull_request["reviewDecision"] = serde_json::Value::String("REVIEW_REQUIRED".to_owned());
+    pull_request["mergeStateStatus"] = serde_json::Value::String("BLOCKED".to_owned());
+    let runner = integration_start_runner(&repository, &pull_request.to_string());
+
+    let output = repository.succeeds_with(&["integrate", "start"], &runner);
+
+    assert!(output.contains("target advanced` — true"), "{output}");
+    assert!(output.contains("blockers` — none"), "{output}");
+}
+
+#[test]
+/// An explicit reviewer request for changes remains a blocker even without an approval policy (INT-001).
+fn integration_start_should_block_explicit_requested_changes() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let mut pull_request: serde_json::Value = assert_ok!(serde_json::from_str(
+        &integration_pull_request(&repository, &work, &head)
+    ));
+    pull_request["reviewDecision"] = serde_json::Value::String("CHANGES_REQUESTED".to_owned());
+    let runner = integration_start_runner(&repository, &pull_request.to_string());
+
+    let output = repository.succeeds_with(&["integrate", "start"], &runner);
+
+    assert!(
+        output.contains("changes are requested"),
+        "expecting explicit human review feedback to block integration: {output}"
+    );
+}
+
+#[test]
+/// A review explicitly requested by the developer remains pending without a repository approval rule (INT-001).
+fn integration_start_should_block_explicit_pending_review() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let mut pull_request: serde_json::Value = assert_ok!(serde_json::from_str(
+        &integration_pull_request(&repository, &work, &head)
+    ));
+    pull_request["reviewDecision"] = serde_json::Value::String("REVIEW_REQUIRED".to_owned());
+    pull_request["reviewRequests"] = serde_json::json!([{"login": "reviewer"}]);
+    let runner = integration_start_runner(&repository, &pull_request.to_string());
+
+    let output = repository.succeeds_with(&["integrate", "start"], &runner);
+
+    assert!(
+        output.contains("1 requested review(s) pending"),
+        "expecting a developer-requested review to block integration: {output}"
+    );
 }
 
 #[test]
@@ -1455,7 +1596,6 @@ fn integration_start_resumes_without_duplicate_publication() {
     let pull_request = integration_pull_request(&repository, &work, &head);
     let first = QueueRunner::new([
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
-        successful("[]"),
         successful("[]"),
         github_target(&repository),
         successful("{}"),
@@ -1495,7 +1635,6 @@ fn integration_status_is_read_only_and_reports_changed_head() {
     let start = QueueRunner::new([
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
-        successful("[]"),
         github_target(&repository),
         successful("{}"),
         successful("[]"),
@@ -1524,7 +1663,6 @@ fn integration_cancel_preserves_local_work() {
     let pull_request = integration_pull_request(&repository, &work, &head);
     let start = QueueRunner::new([
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
-        successful("[]"),
         successful("[]"),
         github_target(&repository),
         successful("{}"),
@@ -1565,7 +1703,6 @@ fn integration_complete_archives_without_switching_local_git() {
     let pull_request = integration_pull_request(&repository, &work, &head);
     let start = QueueRunner::new([
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
-        successful("[]"),
         successful("[]"),
         github_target(&repository),
         successful("{}"),

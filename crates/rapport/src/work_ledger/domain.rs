@@ -434,20 +434,6 @@ pub(super) enum IntegrationStage {
     Cancelled,
 }
 
-#[derive(
-    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, derive_more::Display,
-)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum FreshnessPolicy {
-    #[display("strict")]
-    Strict,
-    #[default]
-    #[display("loose")]
-    Loose,
-    #[display("merge_queue")]
-    MergeQueue,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct PublishedBuildStatus {
     pub(super) identity: String,
@@ -468,8 +454,6 @@ pub(super) struct IntegrationTask {
     pub(super) candidate: String,
     pub(super) target_commit: String,
     pub(super) policy_digest: String,
-    #[serde(default)]
-    pub(super) freshness_policy: FreshnessPolicy,
     pub(super) build_task: String,
     pub(super) review_task: String,
     pub(super) review_grade: String,

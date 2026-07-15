@@ -125,6 +125,7 @@ detailed Rules without splitting the acceptance outcome.
 The phase that publishes an accepted candidate, creates a pull request carrying
 the candidate and its Review evidence as the aggregate shared Review artifact,
 verifies the aggregate `Rapport Build` result against its latest head commit,
-and moves it onto the target branch under the repository's strict, loose, or
-merge-queue target-freshness policy. Rapport does not publish a duplicate Review
-status for the pull request.
+observes every reported pull-request check, and moves the candidate onto the
+target branch when those checks are terminal and non-failing. Rapport owns its
+acceptance policy and does not publish a duplicate Review status for the pull
+request.

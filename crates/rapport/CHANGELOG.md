@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Made Rapport-owned Build and Review evidence plus observed pull-request checks
+  authoritative for integration, removing branch-rules API discovery and
+  ruleset management from integration, GitHub setup, and doctor.
+
 ## [0.5.4] - 2026-07-13
 
 ### Changed
