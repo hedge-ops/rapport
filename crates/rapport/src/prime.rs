@@ -73,13 +73,20 @@ mod tests {
         assert!(view.contains("rapport context show"));
         assert!(view.contains("rapport doctor"));
         assert!(view.contains("rapport work task next"));
-        assert!(view.contains("rapport develop task start <ID>"));
+        assert!(
+            view.contains("rapport develop task start <ID>"),
+            "expecting prime to show how to start a Develop Task"
+        );
         assert!(
             view.contains(
                 "rapport develop task complete <ID> --result \"<correction and evidence>\""
-            )
+            ),
+            "expecting prime to require a correction-and-evidence result"
         );
-        assert!(view.contains("checkpoint first only when repository state changed"));
+        assert!(
+            view.contains("checkpoint first only when repository state changed"),
+            "expecting prime to make checkpointing conditional on repository changes"
+        );
         assert!(view.contains("rapport work checkpoint start"));
         assert!(view.contains("rapport build"));
         assert!(view.contains("rapport review"));
