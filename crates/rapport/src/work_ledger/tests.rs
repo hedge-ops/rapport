@@ -1,13 +1,15 @@
 use super::Error;
+use super::command::target_revision;
 use super::domain::{
-    RequestKind, RequestSource, Task, TaskStatus, Work, WorkOutcomeKind, Workflow,
+    IntegrationStage, IntegrationTask, RequestKind, RequestSource, Task, TaskStatus, Work,
+    WorkOutcomeKind, Workflow,
 };
 use super::history::HistoryStore;
 use super::repository::Store;
 use crate::{Clock, CommandOutcome, CommandRunner, CommandSpec, run_with_environment};
 use claims::{assert_err, assert_ok, assert_some};
 use rapport_files::{FileSystem, InMemoryFileSystem, RealFileSystem, Utf8Path, Utf8PathBuf};
-use rapport_git::{BranchName, ObjectId};
+use rapport_git::{BranchName, Git, ObjectId};
 use rstest::rstest;
 use std::collections::VecDeque;
 use std::io;
@@ -164,6 +166,68 @@ fn request_checksum(request: &str) -> &str {
     checksum
 }
 
+fn publish_candidate_for_test(repository: &TemporaryRepository) -> Work {
+    repository.succeeds(&["develop", "complete"]);
+    let mut fs = RealFileSystem;
+    let store = Store::new(&repository.root);
+    let mut work = assert_ok!(store.require_work(&fs));
+    let tasks = assert_ok!(store.load_tasks(&fs));
+    if super::integrate::published_candidate(&tasks).is_none() {
+        let git = Git::default();
+        let git_repository = assert_ok!(git.discover(&repository.root));
+        let live = assert_ok!(git.status(&git_repository));
+        let (target, target_commit) =
+            assert_ok!(target_revision(&git, &git_repository, &work.target_branch));
+        let changes = assert_ok!(git.source_side_changes(&git_repository, &target));
+        let paths = changes.paths().iter().cloned().collect::<Vec<_>>();
+        let policy_digest = assert_ok!(crate::policy_context::effective_policy_digest_for_paths(
+            &mut fs,
+            &repository.root,
+            paths.iter().map(Utf8PathBuf::as_path),
+        ));
+        let id = assert_ok!(work.allocate_task_id());
+        let mut task = Task::new(
+            id,
+            "integration",
+            Workflow::Integrate,
+            "Integrate completed Work",
+            "Test fixture for a published candidate.",
+            "rapport integrate start",
+            TaskStatus::Running,
+            live.head().as_str(),
+            FixedClock.now_rfc3339(),
+            Some("rapport build".to_owned()),
+        );
+        task.integration = Some(IntegrationTask {
+            stage: IntegrationStage::Published,
+            repository: Some("hedge-ops/rapport".to_owned()),
+            source_branch: work.source_branch.as_str().to_owned(),
+            target_branch: work.target_branch.as_str().to_owned(),
+            candidate: live.head().as_str().to_owned(),
+            target_commit: target_commit.as_str().to_owned(),
+            policy_digest,
+            build_task: "pending".to_owned(),
+            review_task: "pending".to_owned(),
+            review_grade: "pending".to_owned(),
+            quality_override: None,
+            review_findings: Vec::new(),
+            pushed: false,
+            published_builds: Vec::new(),
+            aggregate_build_published: false,
+            pull_request_number: None,
+            pull_request_url: None,
+            pull_request_head: None,
+            pull_request_base: None,
+            pull_request_closed: false,
+            remote_branch_deleted: false,
+            merge_commit: None,
+            cancellation_reason: None,
+        });
+        assert_ok!(store.save_work_and_task(&mut fs, &work, &task));
+    }
+    work
+}
+
 fn accepted_work(repository: &TemporaryRepository) -> Work {
     repository.succeeds(&[
         "work",
@@ -179,6 +243,12 @@ fn accepted_work(repository: &TemporaryRepository) -> Work {
     repository.succeeds(&["work", "checkpoint", "start"]);
     repository.git(["add", "candidate.txt"]);
     repository.succeeds(&["work", "checkpoint", "complete", "Add accepted candidate"]);
+    repository.succeeds(&["develop", "complete"]);
+    let fs = RealFileSystem;
+    assert_ok!(Store::new(&repository.root).require_work(&fs))
+}
+
+fn prove_candidate(repository: &TemporaryRepository) {
     repository.succeeds(&["build"]);
     let request = repository.succeeds(&["review", "start"]);
     let result_path = std::env::temp_dir().join(format!(
@@ -190,11 +260,9 @@ fn accepted_work(repository: &TemporaryRepository) -> Work {
         &result_path,
         review_result(request_checksum(&request), "A", false)
     ));
-    let result_path = result_path.to_string_lossy().into_owned();
-    repository.succeeds(&["review", "complete", "--result", &result_path]);
+    let result_path_string = result_path.to_string_lossy().into_owned();
+    repository.succeeds(&["review", "complete", "--result", &result_path_string]);
     let _ = std::fs::remove_file(result_path);
-    let fs = RealFileSystem;
-    assert_ok!(Store::new(&repository.root).require_work(&fs))
 }
 
 fn integration_pull_request(repository: &TemporaryRepository, work: &Work, head: &str) -> String {
@@ -239,7 +307,6 @@ fn integration_start_runner(repository: &TemporaryRepository, pull_request: &str
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
         github_target(repository),
-        successful("{}"),
         successful("[]"),
         successful("https://github.com/hedge-ops/rapport/pull/115\n"),
         successful(pull_request),
@@ -501,7 +568,7 @@ fn phase_three_work_checkpoint_and_rebase_lifecycle() {
     assert!(shown.contains("Add Work ledger source"));
     assert!(shown.contains("duration_seconds"));
     let next = repository.succeeds(&["work", "task", "next"]);
-    assert!(next.contains("rapport build"));
+    assert!(next.contains("rapport develop complete"));
 
     repository.git(["switch", "-q", "main"]);
     repository.write("target.txt", "target advanced\n");
@@ -803,6 +870,23 @@ fn work_history_show_should_render_complete_build_and_review_evidence() {
     let repository = TemporaryRepository::new();
     let work = accepted_work(&repository);
     let candidate = assert_some!(work.latest_checkpoint.clone());
+    let _ = publish_candidate_for_test(&repository);
+    prove_candidate(&repository);
+    let mut fs = RealFileSystem;
+    let store = Store::new(&repository.root);
+    let tasks = assert_ok!(store.load_tasks(&fs));
+    let mut integration = tasks
+        .iter()
+        .find(|task| task.workflow == Workflow::Integrate)
+        .cloned()
+        .unwrap_or_else(|| panic!("fixture omitted Integration Task"));
+    integration.finish(
+        TaskStatus::Passed,
+        FixedClock.now_rfc3339(),
+        "local history fixture completed integration".to_owned(),
+        None,
+    );
+    assert_ok!(store.save_task(&mut fs, &integration));
 
     repository.succeeds(&[
         "work",
@@ -1057,9 +1141,10 @@ fn develop_should_process_ordered_sequence_and_causal_correction() {
         "--reason",
         "Superseded by the correction.",
     ]);
+    repository.succeeds(&["develop", "complete"]);
     let status = repository.succeeds(&["work", "status"]);
     assert!(status.contains("Develop` — complete"));
-    assert!(status.contains("next` — `rapport build`"));
+    assert!(status.contains("next` — `rapport integrate start`"));
 
     let (immutable_code, _, immutable_error) = repository.run(&[
         "develop",
@@ -1134,6 +1219,7 @@ fn develop_should_preserve_failed_task_until_explicit_resolution() {
         "--reason",
         "The request no longer needs this change.",
     ]);
+    repository.succeeds(&["develop", "complete"]);
     let status = repository.succeeds(&["work", "status"]);
     assert!(status.contains("Develop` — complete"));
 }
@@ -1153,6 +1239,7 @@ fn acceptance_build_passes_when_no_signoffs_are_required() {
         "main",
     ]);
 
+    let _ = publish_candidate_for_test(&repository);
     let built = repository.succeeds(&["build"]);
 
     assert!(built.contains("status` — passed"), "{built}");
@@ -1162,7 +1249,7 @@ fn acceptance_build_passes_when_no_signoffs_are_required() {
     assert!(status.contains("proof` — current"), "{status}");
     let next = repository.succeeds(&["work", "task", "next"]);
     assert!(next.contains("rapport review start"), "{next}");
-    let task = repository.succeeds(&["build", "status", "TASK_001"]);
+    let task = repository.succeeds(&["build", "status", "TASK_002"]);
     assert!(task.contains("mode` — acceptance"), "{task}");
     assert!(task.contains("proof` — true"), "{task}");
 
@@ -1215,20 +1302,21 @@ fn failed_acceptance_stage_blocks_later_work_and_reopens_develop() {
         "main",
     ]);
     let runner = QueueRunner::new([failing("ci-fast failed\n")]);
+    let _ = publish_candidate_for_test(&repository);
 
     let (code, _, error) = repository.run_with(&["build"], &runner);
 
     assert_eq!(code, ExitCode::from(2));
-    assert!(error.contains("Build Task `TASK_001` failed"), "{error}");
+    assert!(error.contains("Build Task `TASK_002` failed"), "{error}");
     assert_eq!(runner.calls().len(), 1);
-    let task = repository.succeeds(&["build", "status", "TASK_001"]);
+    let task = repository.succeeds(&["build", "status", "TASK_002"]);
     assert!(task.contains("ROOT_SIGNOFF_CI_FAST"), "{task}");
     assert!(task.contains("status failed"), "{task}");
     assert!(task.contains("ROOT_SIGNOFF_CI_LATER"), "{task}");
     assert!(task.contains("status blocked"), "{task}");
     let develop = repository.succeeds(&["develop", "task", "list"]);
     assert_eq!(develop.matches("Repair failed Build signoff").count(), 1);
-    assert!(develop.contains("TASK_002"), "{develop}");
+    assert!(develop.contains("TASK_003"), "{develop}");
     let next = repository.succeeds(&["work", "task", "next"]);
     assert!(
         next.contains("appropriate engineering correction"),
@@ -1239,24 +1327,24 @@ fn failed_acceptance_stage_blocks_later_work_and_reopens_develop() {
         "expecting Build repair guidance to make checkpointing conditional: {next}"
     );
     assert!(
-        next.contains("rapport develop task start TASK_002"),
+        next.contains("rapport develop task start TASK_003"),
         "expecting a pending Build repair to show its exact start command: {next}"
     );
 
-    let started = repository.succeeds(&["develop", "task", "start", "TASK_002"]);
+    let started = repository.succeeds(&["develop", "task", "start", "TASK_003"]);
     assert!(
         started.contains("if repository state changes, checkpoint it"),
         "expecting an environmental repair to permit completion without a checkpoint"
     );
     assert!(
-        started.contains("rapport develop task complete TASK_002 --result <RESULT>"),
+        started.contains("rapport develop task complete TASK_003 --result <RESULT>"),
         "expecting a started Build repair to show its exact completion command"
     );
     let completed = repository.succeeds(&[
         "develop",
         "task",
         "complete",
-        "TASK_002",
+        "TASK_003",
         "--result",
         "Corrected the execution environment and reran ci-fast successfully.",
     ]);
@@ -1265,9 +1353,15 @@ fn failed_acceptance_stage_blocks_later_work_and_reopens_develop() {
         "expecting an environmental repair to complete without a checkpoint: {completed}"
     );
     assert!(
-        completed.contains("next` — `rapport build`"),
-        "expecting the completed Build repair to return to acceptance Build: {completed}"
+        completed.contains("next` — `rapport work task next`"),
+        "expecting the completed Build repair to return to workflow routing: {completed}"
     );
+    let next = repository.succeeds(&["work", "task", "next"]);
+    assert!(next.contains("rapport develop complete"), "{next}");
+    let (code, _, error) = repository.run(&["build"]);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("requires Develop to be complete"), "{error}");
+    repository.succeeds(&["develop", "complete"]);
 }
 
 #[test]
@@ -1316,12 +1410,13 @@ fn acceptance_build_generated_changes_invalidate_proof() {
         "--target",
         "main",
     ]);
+    let _ = publish_candidate_for_test(&repository);
 
     let (code, _, error) = repository.run_with(&["build"], &MutatingRunner);
 
     assert_eq!(code, ExitCode::from(2));
-    assert!(error.contains("Build Task `TASK_001` failed"), "{error}");
-    let shown = repository.succeeds(&["build", "status", "TASK_001"]);
+    assert!(error.contains("Build Task `TASK_002` failed"), "{error}");
+    let shown = repository.succeeds(&["build", "status", "TASK_002"]);
     assert!(shown.contains("untracked generated.txt"), "{shown}");
     assert!(shown.contains("proof` — false"), "{shown}");
     let develop = repository.succeeds(&["develop", "task", "list"]);
@@ -1345,6 +1440,7 @@ fn acceptance_review_passes_and_routes_work_to_integrate() {
         "--target",
         "main",
     ]);
+    let _ = publish_candidate_for_test(&repository);
     repository.succeeds(&["build"]);
 
     let request = repository.succeeds(&["review", "start"]);
@@ -1372,7 +1468,7 @@ fn acceptance_review_passes_and_routes_work_to_integrate() {
     assert!(completed.contains("status` — passed"), "{completed}");
     assert!(completed.contains("proof` — true"), "{completed}");
     let next = repository.succeeds(&["work", "task", "next"]);
-    assert!(next.contains("rapport integrate start"), "{next}");
+    assert!(next.contains("rapport integrate status"), "{next}");
     let _ = std::fs::remove_file(result_path);
 }
 
@@ -1390,6 +1486,7 @@ fn review_finding_dismissal_records_reason_and_completes_policy() {
         "--target",
         "main",
     ]);
+    let _ = publish_candidate_for_test(&repository);
     repository.succeeds(&["build"]);
     let request = repository.succeeds(&["review", "start"]);
     let result_path = std::env::temp_dir().join(format!(
@@ -1430,7 +1527,6 @@ fn integration_start_publishes_the_accepted_candidate() {
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
         github_target(&repository),
-        successful("{}"),
         successful("[]"),
         successful("https://github.com/hedge-ops/rapport/pull/115\n"),
         successful(&pull_request),
@@ -1439,8 +1535,9 @@ fn integration_start_publishes_the_accepted_candidate() {
     let output = repository.succeeds_with(&["integrate", "start"], &runner);
 
     assert!(output.contains("stage` — Published"), "{output}");
-    assert!(output.contains("blockers` — none"), "{output}");
-    assert!(output.contains("rapport integrate complete"), "{output}");
+    assert!(output.contains("Build proof is missing"), "{output}");
+    assert!(output.contains("Review proof is missing"), "{output}");
+    assert!(output.contains("rapport build"), "{output}");
     let fs = RealFileSystem;
     let tasks = assert_ok!(Store::new(&repository.root).load_tasks(&fs));
     let Some(task) = tasks.last() else {
@@ -1451,9 +1548,9 @@ fn integration_start_publishes_the_accepted_candidate() {
     };
     assert_eq!(integration.candidate, head);
     assert!(integration.pushed);
-    assert!(integration.aggregate_build_published);
+    assert!(!integration.aggregate_build_published);
     assert_eq!(integration.pull_request_number, Some(115));
-    assert_eq!(integration.review_task, "TASK_003");
+    assert_eq!(integration.review_task, "pending");
     let calls = runner.calls();
     let Some(create) = calls.iter().find(|(spec, _)| {
         spec.args
@@ -1548,7 +1645,8 @@ fn integration_start_should_ignore_policy_only_review_and_merge_blocks() {
     let output = repository.succeeds_with(&["integrate", "start"], &runner);
 
     assert!(output.contains("target advanced` — true"), "{output}");
-    assert!(output.contains("blockers` — none"), "{output}");
+    assert!(output.contains("Build proof is missing"), "{output}");
+    assert!(output.contains("Review proof is missing"), "{output}");
 }
 
 #[test]
@@ -1589,7 +1687,8 @@ fn integration_start_should_report_review_requests_without_blocking() {
     let output = repository.succeeds_with(&["integrate", "start"], &runner);
 
     assert!(output.contains("requested reviews` — 1"), "{output}");
-    assert!(output.contains("blockers` — none"), "{output}");
+    assert!(output.contains("Build proof is missing"), "{output}");
+    assert!(output.contains("Review proof is missing"), "{output}");
 }
 
 #[test]
@@ -1604,7 +1703,6 @@ fn integration_start_resumes_without_duplicate_publication() {
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
         github_target(&repository),
-        successful("{}"),
         successful("[]"),
         failing("connection closed after request creation"),
     ]);
@@ -1631,6 +1729,149 @@ fn integration_start_resumes_without_duplicate_publication() {
 }
 
 #[test]
+/// Update preserves the owned pull request while moving proof to a newly completed checkpoint (INT-001, INT-002).
+fn integration_update_publishes_a_corrected_completed_candidate() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let original = repository.git(["rev-parse", "HEAD"]);
+    let original_pull_request = integration_pull_request(&repository, &work, &original);
+    let start = integration_start_runner(&repository, &original_pull_request);
+    repository.succeeds_with(&["integrate", "start"], &start);
+
+    repository.write("candidate.txt", "corrected candidate\n");
+    repository.succeeds(&["work", "checkpoint", "start"]);
+    repository.git(["add", "candidate.txt"]);
+    repository.succeeds(&[
+        "work",
+        "checkpoint",
+        "complete",
+        "Correct the published candidate",
+    ]);
+    let (code, _, error) = repository.run(&["integrate", "update"]);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("Develop"), "{error}");
+
+    let completed = repository.succeeds(&["develop", "complete"]);
+    assert!(
+        completed.contains("rapport integrate update"),
+        "{completed}"
+    );
+    let corrected = repository.git(["rev-parse", "HEAD"]);
+    let corrected_pull_request = integration_pull_request(&repository, &work, &corrected);
+    let update = QueueRunner::new([
+        successful(&original_pull_request),
+        successful(&corrected_pull_request),
+        successful(""),
+    ]);
+
+    let output = repository.succeeds_with(&["integrate", "update"], &update);
+
+    assert!(output.contains("Build proof` — stale"), "{output}");
+    assert!(output.contains("Review proof` — stale"), "{output}");
+    assert!(output.contains("next` — `rapport build`"), "{output}");
+    let fs = RealFileSystem;
+    let tasks = assert_ok!(Store::new(&repository.root).load_tasks(&fs));
+    let integration = tasks
+        .iter()
+        .find_map(|task| task.integration.as_ref())
+        .unwrap_or_else(|| panic!("updated Integration Task was not recorded"));
+    assert_eq!(integration.candidate, corrected);
+    assert_eq!(integration.build_task, "pending");
+    assert_eq!(integration.review_task, "pending");
+    assert_eq!(integration.pull_request_number, Some(115));
+}
+
+#[test]
+/// Update adopts a matching corrected PR head when a prior push completed before local state was saved (INT-002).
+fn integration_update_resumes_an_already_completed_push() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let original = repository.git(["rev-parse", "HEAD"]);
+    let original_pull_request = integration_pull_request(&repository, &work, &original);
+    let start = integration_start_runner(&repository, &original_pull_request);
+    repository.succeeds_with(&["integrate", "start"], &start);
+
+    repository.write("candidate.txt", "corrected candidate already pushed\n");
+    repository.succeeds(&["work", "checkpoint", "start"]);
+    repository.git(["add", "candidate.txt"]);
+    repository.succeeds(&[
+        "work",
+        "checkpoint",
+        "complete",
+        "Correct the candidate before interrupted update",
+    ]);
+    repository.succeeds(&["develop", "complete"]);
+    let corrected = repository.git(["rev-parse", "HEAD"]);
+    let corrected_pull_request = integration_pull_request(&repository, &work, &corrected);
+    repository.git(["remote", "remove", "origin"]);
+    let update = QueueRunner::new([successful(&corrected_pull_request), successful("")]);
+
+    let output = repository.succeeds_with(&["integrate", "update"], &update);
+
+    assert!(output.contains(&corrected[..12]), "{output}");
+    assert_eq!(
+        update.calls().len(),
+        2,
+        "expecting recovery to inspect the matching head and edit its body without refetching after a duplicate push"
+    );
+    let fs = RealFileSystem;
+    let tasks = assert_ok!(Store::new(&repository.root).load_tasks(&fs));
+    let integration = tasks
+        .iter()
+        .find_map(|task| task.integration.as_ref())
+        .unwrap_or_else(|| panic!("resumed Integration Task was not recorded"));
+    assert_eq!(integration.candidate, corrected);
+    assert_eq!(integration.build_task, "pending");
+    assert_eq!(integration.review_task, "pending");
+}
+
+#[test]
+/// Update resumes body publication without pushing again after the new candidate was persisted (INT-002).
+fn integration_update_resumes_after_candidate_persistence() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let original = repository.git(["rev-parse", "HEAD"]);
+    let original_pull_request = integration_pull_request(&repository, &work, &original);
+    let start = integration_start_runner(&repository, &original_pull_request);
+    repository.succeeds_with(&["integrate", "start"], &start);
+
+    repository.write("candidate.txt", "persisted candidate before body edit\n");
+    repository.succeeds(&["work", "checkpoint", "start"]);
+    repository.git(["add", "candidate.txt"]);
+    repository.succeeds(&[
+        "work",
+        "checkpoint",
+        "complete",
+        "Persist candidate before interrupted body edit",
+    ]);
+    repository.succeeds(&["develop", "complete"]);
+    let corrected = repository.git(["rev-parse", "HEAD"]);
+    let corrected_pull_request = integration_pull_request(&repository, &work, &corrected);
+    let interrupted = QueueRunner::new([
+        successful(&original_pull_request),
+        successful(&corrected_pull_request),
+        failing("pull-request body edit failed\n"),
+    ]);
+    let (code, _, error) = repository.run_with(&["integrate", "update"], &interrupted);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("body edit failed"), "{error}");
+    repository.git(["remote", "remove", "origin"]);
+    let resumed = QueueRunner::new([successful(&corrected_pull_request), successful("")]);
+
+    let output = repository.succeeds_with(&["integrate", "update"], &resumed);
+
+    assert!(output.contains(&corrected[..12]), "{output}");
+    assert_eq!(
+        resumed.calls().len(),
+        2,
+        "expecting retry to inspect the persisted candidate and resume at body editing without a duplicate push"
+    );
+}
+
+#[test]
 /// Status reports a changed remote head without mutating GitHub or local Work (INT-001, INT-002).
 fn integration_status_is_read_only_and_reports_changed_head() {
     let mut repository = TemporaryRepository::new();
@@ -1642,7 +1883,6 @@ fn integration_status_is_read_only_and_reports_changed_head() {
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
         github_target(&repository),
-        successful("{}"),
         successful("[]"),
         successful("https://github.com/hedge-ops/rapport/pull/115\n"),
         successful(&pull_request),
@@ -1671,7 +1911,6 @@ fn integration_cancel_preserves_local_work() {
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
         github_target(&repository),
-        successful("{}"),
         successful("[]"),
         successful("https://github.com/hedge-ops/rapport/pull/115\n"),
         successful(&pull_request),
@@ -1700,6 +1939,32 @@ fn integration_cancel_preserves_local_work() {
 }
 
 #[test]
+/// Completion verifies the owned pull request before publishing any evidence or body changes (INT-001, INT-002).
+fn integration_complete_rejects_changed_identity_before_mutation() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let pull_request = integration_pull_request(&repository, &work, &head);
+    let start = integration_start_runner(&repository, &pull_request);
+    repository.succeeds_with(&["integrate", "start"], &start);
+    prove_candidate(&repository);
+    let mut changed: serde_json::Value = assert_ok!(serde_json::from_str(&pull_request));
+    changed["body"] = serde_json::Value::String("ownership marker removed".to_owned());
+    let complete = QueueRunner::new([successful(&changed.to_string())]);
+
+    let (code, _, error) = repository.run_with(&["integrate", "complete"], &complete);
+
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("cannot be proven"), "{error}");
+    assert_eq!(
+        complete.calls().len(),
+        1,
+        "expecting completion to make no status or body mutation before ownership verification"
+    );
+}
+
+#[test]
 /// Completion revalidates, squash-merges, archives Work, and leaves the local branch checked out (INT-001, INT-002).
 fn integration_complete_archives_without_switching_local_git() {
     let mut repository = TemporaryRepository::new();
@@ -1711,16 +1976,19 @@ fn integration_complete_archives_without_switching_local_git() {
         successful(r#"{"nameWithOwner":"hedge-ops/rapport"}"#),
         successful("[]"),
         github_target(&repository),
-        successful("{}"),
         successful("[]"),
         successful("https://github.com/hedge-ops/rapport/pull/115\n"),
         successful(&pull_request),
     ]);
     repository.succeeds_with(&["integrate", "start"], &start);
+    prove_candidate(&repository);
     let mut merged: serde_json::Value = assert_ok!(serde_json::from_str(&pull_request));
     merged["state"] = serde_json::Value::String("MERGED".to_owned());
     merged["mergeCommit"] = serde_json::json!({"oid": MERGE_OBJECT_ID});
     let complete = QueueRunner::new([
+        successful(&pull_request),
+        successful("{}"),
+        successful(""),
         successful(&pull_request),
         successful(""),
         successful(&merged.to_string()),

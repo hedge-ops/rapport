@@ -1,0 +1,107 @@
+version = 1
+id = "JUST_WORKFLOW"
+includes = []
+
+[rules.JUST_WORKFLOW_001]
+text = "Expose the standard Just lifecycle targets `default`, `doctor`, `dev`, `ci`, `fix`, `check`, `build`, `test`, and `clean`; add `init`, `cover`, and `test-mutants` only when the repository supports those capabilities."
+rationale = "A stable lifecycle vocabulary lets humans, agents, Context signoffs, and CI discover repository operations without reverse-engineering project-specific aliases."
+
+[rules.JUST_WORKFLOW_001.avoid]
+language = "text"
+text = '''verify: _internal_everything'''
+
+[rules.JUST_WORKFLOW_001.prefer]
+language = "text"
+text = '''dev:
+ci:
+fix:
+check:
+build:
+test:
+clean:'''
+
+[rules.JUST_WORKFLOW_002]
+text = "Make lifecycle recipes explicit: `dev` provides fast development feedback, `ci` is the complete non-mutating acceptance target, `fix` may mutate formatting or generated source, and `default` prints useful help rather than hiding work behind an alias."
+rationale = "Explicit mutation and cost boundaries let operators choose proportionate feedback and keep acceptance proof reproducible."
+
+[rules.JUST_WORKFLOW_002.avoid]
+language = "text"
+text = '''default: ci
+check: fix'''
+
+[rules.JUST_WORKFLOW_002.prefer]
+language = "text"
+text = '''default:
+    @just --list
+dev: check build
+ci: check build test'''
+
+[rules.JUST_WORKFLOW_003]
+text = "Keep installation behavior in a root-only recipe and have `doctor` report missing tools with the exact actionable installation command; shared doctor helpers should produce consistent checks across subprojects."
+rationale = "Centralized installation avoids competing environment mutations while actionable diagnostics make missing prerequisites repairable."
+
+[rules.JUST_WORKFLOW_003.avoid]
+language = "text"
+text = '''tool not found'''
+
+[rules.JUST_WORKFLOW_003.prefer]
+language = "text"
+text = '''missing cargo-nextest; run `just init` from the repository root'''
+
+[rules.JUST_WORKFLOW_004]
+text = "Give every public recipe a concise doc comment and emit a consistent command name before substantial work."
+rationale = "Recipe documentation powers `just --list`, while stable operation labels make logs understandable to both humans and automation."
+
+[rules.JUST_WORKFLOW_004.avoid]
+language = "text"
+text = '''mystery:
+    cargo test'''
+
+[rules.JUST_WORKFLOW_004.prefer]
+language = "text"
+text = '''# Run the complete test suite.
+test:
+    @echo "test"
+    cargo test'''
+
+[rules.JUST_WORKFLOW_005]
+text = "Use strict linting in `check` and `ci`, and do not conceal required validation behind opaque aliases or recipes whose names do not describe their effect."
+rationale = "Strict, plainly named validation keeps local feedback, Rapport signoffs, and independent Review aligned on the same executable contract."
+
+[rules.JUST_WORKFLOW_005.avoid]
+language = "text"
+text = '''okay: _a _b _c'''
+
+[rules.JUST_WORKFLOW_005.prefer]
+language = "text"
+text = '''check:
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets -- -D warnings'''
+
+[rules.JUST_WORKFLOW_006]
+text = "Organize public recipes under Development, Operations, and Deployment headings, and label operations that require human judgment separately from operations that are safe for an agent to execute."
+rationale = "Visible ownership and authority boundaries prevent automation from guessing whether a destructive, privileged, or externally visible operation is permitted."
+
+[rules.JUST_WORKFLOW_006.avoid]
+language = "text"
+text = '''an unlabeled `release` recipe mixed between formatting and unit-test helpers'''
+
+[rules.JUST_WORKFLOW_006.prefer]
+language = "text"
+text = '''Development: dev, fix, check, build, test
+Operations (agent-safe): doctor, clean
+Deployment (human-only): release, deploy'''
+
+[rules.JUST_WORKFLOW_007]
+text = "Keep repository validation in Justfiles and declare Context signoffs that select the applicable non-mutating `ci` targets; Rapport owns selection, ordering, and proof rather than reimplementing build logic."
+rationale = "One executable repository contract prevents local, CI, and Rapport behavior from drifting apart."
+
+[rules.JUST_WORKFLOW_007.avoid]
+language = "text"
+text = '''copying cargo, npm, or xcode validation commands into Rapport configuration'''
+
+[rules.JUST_WORKFLOW_007.prefer]
+language = "toml"
+text = '''[[signoffs]]
+target = "ci"
+stage = 0'''

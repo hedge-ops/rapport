@@ -37,10 +37,18 @@ rapport develop task complete TASK_001 --result 'Implemented the requested behav
 rapport work checkpoint start
 git add <intended-files>
 rapport work checkpoint complete 'Implement requested behavior'
+# Repeat Tasks and checkpoints while development continues.
+rapport develop complete
 ```
 
-Build the exact clean checkpoint with the Just targets declared by affected
-Contexts:
+Publish the explicitly completed checkpoint before running acceptance proof:
+
+```bash
+rapport integrate start
+```
+
+Build the exact published pull-request candidate with the Just targets declared
+by affected Contexts:
 
 ```bash
 rapport build
@@ -59,12 +67,22 @@ rapport review override --reason 'Business reason for accepting below-policy qua
 rapport review status
 ```
 
-Publish and integrate only the exact candidate accepted by Build and Review:
+Integrate only after that same published candidate is accepted by Build and
+Review:
 
 ```bash
-rapport integrate start
 rapport integrate status
 rapport integrate complete
+```
+
+If Build or Review reopens Develop, correct and checkpoint the Work, explicitly
+complete Develop again, then update the existing pull request before obtaining
+fresh proof:
+
+```bash
+rapport develop complete
+rapport integrate update
+rapport build
 ```
 
 If the attempt should not continue, cancellation closes only the pull request
@@ -82,24 +100,25 @@ requires:
 
 - active Work on its recorded source branch;
 - a clean source `HEAD` equal to the latest checkpoint;
-- complete Develop Tasks;
-- current passing Build proof for the exact candidate and policy;
-- current passing independent Review proof for the same candidate and policy;
+- every planned Develop Task terminal and Develop explicitly completed at that
+  checkpoint;
 - no active source-control operation or other blocking Task.
 
-Start non-force-pushes the source branch, publishes every applicable Context
-Build status plus the aggregate `Rapport Build`, and creates a ready pull
-request. The pull request is the aggregate Review artifact: its body carries the
-Work request, checkpoints, Build proof, Review grade, finding decisions, and any
-quality-policy exception. Rapport deliberately publishes no duplicate
-`Rapport Review` status.
+Start non-force-pushes the source branch and creates a ready pull request for
+the unproven candidate. It then breadcrumbs `rapport build`. Acceptance Build
+and Review are bound to that published SHA; their evidence is attached before
+completion. The pull request is the aggregate Review artifact, and Rapport
+deliberately publishes no duplicate `Rapport Review` status.
+
+`rapport integrate update` non-force-pushes a corrected, explicitly completed
+checkpoint to the same owned pull request, records its new head, invalidates
+the prior candidate's proof, and breadcrumbs `rapport build`.
 
 `rapport integrate status` is read-only. It reports local, pull-request head,
 and target commits; proof; observed checks; optional review activity; target
 advancement; mergeability; blockers; and the next command. A changed
-pull-request head is never
-force-pushed or accepted implicitly—it returns through Develop, Build, and
-Review.
+pull-request head is never force-pushed or accepted implicitly—it returns
+through Develop, Integration update, Build, and Review.
 
 `rapport integrate complete` revalidates the exact candidate, requires at least
 one observed remote check, blocks until every observed check is terminal and
@@ -219,6 +238,11 @@ untouched because maintainers may have changed or chosen to retain them.
 Just remains the home for installs, builds, tests, generated assets, servers,
 deploys, releases, and ecosystem-specific behavior. Rapport orders and proves
 those conventions; it does not replace them.
+
+Repositories that use Just can install and include the catalog
+`JUST_WORKFLOW` Ruleset to expose conventional lifecycle targets, root-only
+installation, actionable doctor output, strict linting, recipe organization,
+and human-versus-agent operation labels during implementation and Review.
 
 ## Development
 

@@ -91,6 +91,9 @@ where
     let repository = git.discover(&context.repo_root)?;
     let initial = git.status(&repository)?;
     ensure_source(&work, &initial)?;
+    if super::integrate::published_candidate(&tasks) != Some(initial.head().as_str()) {
+        return Err(Error::MissingIntegration);
+    }
     let operation = git.operation(&repository)?;
     if !develop::is_complete(&work, &tasks, &initial, operation) {
         return Err(Error::BuildDevelopIncomplete);
@@ -269,6 +272,9 @@ fn finalize_acceptance(
             "generated_changes",
             clock.now_rfc3339(),
         )?);
+    }
+    if !corrective.is_empty() {
+        work.develop_completed_checkpoint = None;
     }
     task.related
         .extend(corrective.iter().map(|corrective| corrective.id.clone()));

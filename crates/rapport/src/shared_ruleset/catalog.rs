@@ -15,6 +15,13 @@ const LOCK_VERSION: u16 = 1;
 
 const CATALOG_FILES: &[CatalogFile] = &[
     CatalogFile::new(
+        "JUST_WORKFLOW",
+        "1.0.0",
+        "Conventional Just lifecycle, diagnostics, organization, and Rapport signoff boundaries.",
+        "build/just.toml",
+        include_str!("../../catalog/build/just.toml"),
+    ),
+    CatalogFile::new(
         "RUST_CODING",
         "1.0.1",
         "Standards for clear, safe, and maintainable Rust implementation.",

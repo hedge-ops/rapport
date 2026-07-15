@@ -53,6 +53,7 @@ pub(super) struct Work {
     pub(super) starting_source: ObjectId,
     pub(super) starting_target: ObjectId,
     pub(super) latest_checkpoint: Option<ObjectId>,
+    pub(super) develop_completed_checkpoint: Option<ObjectId>,
     pub(super) development_sequence: Vec<String>,
     pub(super) next_task: u32,
     pub(super) next_finding: u32,
@@ -88,6 +89,7 @@ impl Work {
             starting_source,
             starting_target,
             latest_checkpoint: None,
+            develop_completed_checkpoint: None,
             development_sequence: Vec::new(),
             next_task: 1,
             next_finding: 1,
@@ -154,6 +156,10 @@ impl fmt::Debug for Work {
             .field("starting_source", &self.starting_source)
             .field("starting_target", &self.starting_target)
             .field("latest_checkpoint", &self.latest_checkpoint)
+            .field(
+                "develop_completed_checkpoint",
+                &self.develop_completed_checkpoint,
+            )
             .field("development_sequence", &self.development_sequence)
             .field("next_task", &self.next_task)
             .field("next_finding", &self.next_finding)

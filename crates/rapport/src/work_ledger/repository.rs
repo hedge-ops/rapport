@@ -25,6 +25,8 @@ struct StoredWork {
     starting_target: String,
     latest_checkpoint: Option<String>,
     #[serde(default)]
+    develop_completed_checkpoint: Option<String>,
+    #[serde(default)]
     development_sequence: Vec<String>,
     next_task: u32,
     #[serde(default = "default_counter")]
@@ -62,6 +64,10 @@ impl TryFrom<StoredWork> for Work {
             starting_source: ObjectId::new(stored.starting_source)?,
             starting_target: ObjectId::new(stored.starting_target)?,
             latest_checkpoint: stored.latest_checkpoint.map(ObjectId::new).transpose()?,
+            develop_completed_checkpoint: stored
+                .develop_completed_checkpoint
+                .map(ObjectId::new)
+                .transpose()?,
             development_sequence: stored.development_sequence,
             next_task: stored.next_task,
             next_finding: stored.next_finding,
@@ -100,6 +106,10 @@ impl From<&Work> for StoredWork {
             starting_target: work.starting_target.as_str().to_owned(),
             latest_checkpoint: work
                 .latest_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.as_str().to_owned()),
+            develop_completed_checkpoint: work
+                .develop_completed_checkpoint
                 .as_ref()
                 .map(|checkpoint| checkpoint.as_str().to_owned()),
             development_sequence: work.development_sequence.clone(),
