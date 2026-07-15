@@ -37,6 +37,8 @@ fn render_prime() -> String {
                 "`rapport context show <path>` - read folder purpose, ownership, boundaries, and applicable benchmarks",
                 "`rapport doctor` - verify Git and GitHub prerequisites before integration",
                 "`rapport work task next` - inspect the next ordered Develop Task action without executing it",
+                "`rapport develop task start <ID>` - start the pending Develop Task before performing its engineering correction",
+                "`rapport develop task complete <ID> --result \"<correction and evidence>\"` - complete the Task with a meaningful result; checkpoint first only when repository state changed",
                 "`rapport work checkpoint start` - reconcile and stage a coherent Git checkpoint",
                 "`rapport build` - prove the exact clean checkpoint with applicable Context signoffs",
                 "`rapport review start` - request one independent Review; use `rapport review complete --result <file>` to record it",
