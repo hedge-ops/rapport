@@ -1783,6 +1783,51 @@ fn integration_update_publishes_a_corrected_completed_candidate() {
 }
 
 #[test]
+/// Update adopts a matching corrected PR head when a prior push completed before local state was saved (INT-002).
+fn integration_update_resumes_an_already_completed_push() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let original = repository.git(["rev-parse", "HEAD"]);
+    let original_pull_request = integration_pull_request(&repository, &work, &original);
+    let start = integration_start_runner(&repository, &original_pull_request);
+    repository.succeeds_with(&["integrate", "start"], &start);
+
+    repository.write("candidate.txt", "corrected candidate already pushed\n");
+    repository.succeeds(&["work", "checkpoint", "start"]);
+    repository.git(["add", "candidate.txt"]);
+    repository.succeeds(&[
+        "work",
+        "checkpoint",
+        "complete",
+        "Correct the candidate before interrupted update",
+    ]);
+    repository.succeeds(&["develop", "complete"]);
+    let corrected = repository.git(["rev-parse", "HEAD"]);
+    let corrected_pull_request = integration_pull_request(&repository, &work, &corrected);
+    repository.git(["remote", "remove", "origin"]);
+    let update = QueueRunner::new([successful(&corrected_pull_request), successful("")]);
+
+    let output = repository.succeeds_with(&["integrate", "update"], &update);
+
+    assert!(output.contains(&corrected[..12]), "{output}");
+    assert_eq!(
+        update.calls().len(),
+        2,
+        "expecting recovery to inspect the matching head and edit its body without refetching after a duplicate push"
+    );
+    let fs = RealFileSystem;
+    let tasks = assert_ok!(Store::new(&repository.root).load_tasks(&fs));
+    let integration = tasks
+        .iter()
+        .find_map(|task| task.integration.as_ref())
+        .unwrap_or_else(|| panic!("resumed Integration Task was not recorded"));
+    assert_eq!(integration.candidate, corrected);
+    assert_eq!(integration.build_task, "pending");
+    assert_eq!(integration.review_task, "pending");
+}
+
+#[test]
 /// Status reports a changed remote head without mutating GitHub or local Work (INT-001, INT-002).
 fn integration_status_is_read_only_and_reports_changed_head() {
     let mut repository = TemporaryRepository::new();

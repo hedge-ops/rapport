@@ -391,7 +391,7 @@ where
             TaskStatus::Pending,
             &tasks[index].source_commit,
             context.clock.now_rfc3339(),
-            None,
+            Some(format!("rapport develop task start {id}")),
         );
         corrective.related.push(review_task_id);
         corrective

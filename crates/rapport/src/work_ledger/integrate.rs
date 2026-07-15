@@ -94,21 +94,32 @@ where
         .and_then(|state| state.pull_request_number)
         .ok_or(Error::MissingIntegration)?;
     let prior = pull_request(context, &number.to_string())?;
-    verify_pull_request(
+    verify_pull_request_ownership(
         &work,
         task.integration.as_ref().ok_or(Error::MissingIntegration)?,
         &prior,
     )?;
-    let branch = work.source_branch.clone();
-    git.push_branch(&repository, &branch)?;
-    let observed = pull_request(context, &number.to_string())?;
-    let marker = format!("Rapport-Work: {}", work.id);
-    if observed.is_cross_repository
-        || observed.head_ref_name != work.source_branch.as_str()
-        || observed.base_ref_name != work.target_branch.as_str()
-        || !observed.body.contains(&marker)
-        || observed.head_ref_oid != completed.candidate
-    {
+    let recorded_candidate = task
+        .integration
+        .as_ref()
+        .ok_or(Error::MissingIntegration)?
+        .candidate
+        .as_str();
+    let observed = if prior.head_ref_oid == recorded_candidate {
+        let branch = work.source_branch.clone();
+        git.push_branch(&repository, &branch)?;
+        pull_request(context, &number.to_string())?
+    } else if prior.head_ref_oid == completed.candidate {
+        prior
+    } else {
+        return Err(Error::IntegrationOwnership);
+    };
+    verify_pull_request_ownership(
+        &work,
+        task.integration.as_ref().ok_or(Error::MissingIntegration)?,
+        &observed,
+    )?;
+    if observed.head_ref_oid != completed.candidate {
         return Err(Error::IntegrationOwnership);
     }
     {
@@ -1102,11 +1113,22 @@ fn verify_pull_request(
     integration: &IntegrationTask,
     pull_request: &PullRequest,
 ) -> Result<(), Error> {
+    verify_pull_request_ownership(work, integration, pull_request)?;
+    if pull_request.head_ref_oid != integration.candidate {
+        return Err(Error::IntegrationOwnership);
+    }
+    Ok(())
+}
+
+fn verify_pull_request_ownership(
+    work: &Work,
+    integration: &IntegrationTask,
+    pull_request: &PullRequest,
+) -> Result<(), Error> {
     let marker = format!("Rapport-Work: {}", work.id);
     if pull_request.is_cross_repository
         || pull_request.head_ref_name != integration.source_branch
         || pull_request.base_ref_name != integration.target_branch
-        || pull_request.head_ref_oid != integration.candidate
         || !pull_request.body.contains(&marker)
     {
         return Err(Error::IntegrationOwnership);
