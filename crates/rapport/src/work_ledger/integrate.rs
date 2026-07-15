@@ -8,8 +8,8 @@ use super::build;
 use super::command;
 use super::develop;
 use super::domain::{
-    FreshnessPolicy, IntegrationStage, IntegrationTask, PublishedBuildStatus, ReviewMode, Task,
-    TaskStatus, Work, WorkOutcomeKind, Workflow,
+    IntegrationStage, IntegrationTask, PublishedBuildStatus, ReviewMode, Task, TaskStatus, Work,
+    WorkOutcomeKind, Workflow,
 };
 use super::history::HistoryStore;
 use super::repository::Store;
@@ -22,7 +22,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 const BUILD_AGGREGATE: &str = "Rapport Build";
-const PULL_REQUEST_FIELDS: &str = "number,url,body,headRefOid,headRefName,baseRefOid,baseRefName,isCrossRepository,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,mergeCommit";
+const PULL_REQUEST_FIELDS: &str = "number,url,body,headRefOid,headRefName,baseRefOid,baseRefName,isCrossRepository,state,mergeable,mergeStateStatus,reviewDecision,reviewRequests,statusCheckRollup,mergeCommit";
 
 #[derive(Debug, Args)]
 #[command(arg_required_else_help = true)]
@@ -210,19 +210,12 @@ where
         return Err(Error::ActiveIntegration);
     }
     let target_branch = work.target_branch.as_str();
-    let freshness_policy = freshness_policy(context, &repository_name, target_branch)?;
     let target_commit = github_target_commit(context, &repository_name, target_branch)?;
     let review = tasks
         .iter()
         .find(|task| task.id == accepted.review_task)
         .and_then(|task| task.review.as_ref())
         .ok_or(Error::ReviewIncomplete)?;
-    if freshness_policy == FreshnessPolicy::Strict && review.base != target_commit {
-        return Err(Error::IntegrationBlocked(
-            "strict target freshness requires rebase, Build, and Review".to_owned(),
-        ));
-    }
-
     let task_id = work.allocate_task_id()?;
     let review_grade = review
         .result
@@ -254,7 +247,6 @@ where
         candidate: accepted.candidate,
         target_commit,
         policy_digest: accepted.policy_digest,
-        freshness_policy,
         build_task: accepted.build_task,
         review_task: accepted.review_task,
         review_grade,
@@ -730,11 +722,6 @@ fn integration_blockers(
     if pull_request.base_ref_name != work.target_branch.as_str() {
         blockers.push("pull-request target changed".to_owned());
     }
-    if integration.freshness_policy == FreshnessPolicy::Strict
-        && pull_request.base_ref_oid != integration.target_commit
-    {
-        blockers.push("strict target freshness requires rebase and current proof".to_owned());
-    }
     let checks = check_state(&pull_request.status_check_rollup);
     if !checks.aggregate_passed {
         blockers.push(format!("{BUILD_AGGREGATE} is not passing"));
@@ -750,10 +737,12 @@ fn integration_blockers(
     if checks.pending > 0 {
         blockers.push(format!("{} remote check(s) pending", checks.pending));
     }
+    if checks.observed_remote == 0 {
+        blockers.push("no remote checks observed".to_owned());
+    }
     match pull_request.review_decision.as_deref() {
         Some("CHANGES_REQUESTED") => blockers.push("changes are requested".to_owned()),
-        Some("REVIEW_REQUIRED") => blockers.push("required approval is missing".to_owned()),
-        Some("APPROVED" | "") | None => {}
+        Some("APPROVED" | "REVIEW_REQUIRED" | "") | None => {}
         Some(other) => blockers.push(format!("review decision is {other}")),
     }
     if pull_request.mergeable != "MERGEABLE" {
@@ -762,10 +751,7 @@ fn integration_blockers(
             pull_request.mergeable.to_lowercase()
         ));
     }
-    if matches!(
-        pull_request.merge_state_status.as_str(),
-        "BLOCKED" | "DIRTY"
-    ) {
+    if pull_request.merge_state_status == "DIRTY" {
         blockers.push(format!(
             "GitHub merge state is {}",
             pull_request.merge_state_status.to_lowercase()
@@ -777,6 +763,7 @@ fn integration_blockers(
 #[derive(Debug, Default)]
 struct CheckState {
     aggregate_passed: bool,
+    observed_remote: usize,
     passed: usize,
     pending: usize,
     failed: usize,
@@ -785,19 +772,20 @@ struct CheckState {
 fn check_state(checks: &[StatusCheck]) -> CheckState {
     let mut state = CheckState::default();
     for check in checks {
+        if check.kind.as_deref() == Some("CheckRun") {
+            state.observed_remote += 1;
+        }
         let name = check
             .name
             .as_deref()
             .or(check.context.as_deref())
             .unwrap_or("");
-        let result = check
-            .conclusion
-            .as_deref()
-            .or(check.state.as_deref())
-            .unwrap_or("PENDING");
+        let result = check_result(check);
         match result {
             "SUCCESS" | "NEUTRAL" | "SKIPPED" => state.passed += 1,
-            "PENDING" | "QUEUED" | "IN_PROGRESS" | "EXPECTED" => state.pending += 1,
+            "PENDING" | "QUEUED" | "IN_PROGRESS" | "EXPECTED" | "WAITING" | "REQUESTED" => {
+                state.pending += 1;
+            }
             _ => state.failed += 1,
         }
         if name == BUILD_AGGREGATE && result == "SUCCESS" {
@@ -805,6 +793,17 @@ fn check_state(checks: &[StatusCheck]) -> CheckState {
         }
     }
     state
+}
+
+fn check_result(check: &StatusCheck) -> &str {
+    if check.kind.as_deref() == Some("CheckRun") {
+        match check.status.as_deref() {
+            Some("COMPLETED") | None => check.conclusion.as_deref().unwrap_or("PENDING"),
+            Some(status) => status,
+        }
+    } else {
+        check.state.as_deref().unwrap_or("PENDING")
+    }
 }
 
 fn status_passed(checks: &[StatusCheck], expected: &str) -> bool {
@@ -839,7 +838,7 @@ fn render_status(
         integration.review_task, integration.review_grade
     );
     Ok(format!(
-        "# rapport integrate status\n\n- `task` — {}\n- `stage` — {:?}\n- `pull request` — {}\n- `source` — {} @ {}\n- `target` — {} @ {}\n- `candidate` — {}\n- `freshness policy` — {}\n- `target advanced` — {}\n- `Build statuses` — {} passed, {} pending, {} failed\n- `Review proof` — {}\n- `Review findings` — {}\n- `quality override` — {}\n- `review decision` — {}\n- `mergeability` — {} / {}\n- `blockers` — {}\n- `next` — `{}`",
+        "# rapport integrate status\n\n- `task` — {}\n- `stage` — {:?}\n- `pull request` — {}\n- `source` — {} @ {}\n- `target` — {} @ {}\n- `candidate` — {}\n- `target advanced` — {}\n- `remote checks observed` — {}\n- `checks` — {} passed, {} pending, {} failed\n- `Review proof` — {}\n- `Review findings` — {}\n- `quality override` — {}\n- `GitHub review decision` — {} (policy and requests informational; changes requested blocks)\n- `requested reviews` — {} (informational)\n- `mergeability` — {} / {}\n- `blockers` — {}\n- `next` — `{}`",
         task.id,
         integration.stage,
         pull_request.url,
@@ -848,8 +847,8 @@ fn render_status(
         integration.target_branch,
         short(&pull_request.base_ref_oid),
         short(&integration.candidate),
-        integration.freshness_policy,
         target_advanced,
+        checks.observed_remote,
         checks.passed,
         checks.pending,
         checks.failed,
@@ -861,6 +860,7 @@ fn render_status(
         },
         integration.quality_override.as_deref().unwrap_or("none"),
         pull_request.review_decision.as_deref().unwrap_or("none"),
+        pull_request.review_requests.len(),
         pull_request.mergeable,
         pull_request.merge_state_status,
         blocker_text,
@@ -1058,20 +1058,29 @@ struct PullRequest {
     #[serde(default)]
     review_decision: Option<String>,
     #[serde(default)]
+    review_requests: Vec<ReviewRequest>,
+    #[serde(default)]
     status_check_rollup: Vec<StatusCheck>,
     #[serde(default)]
     merge_commit: Option<CommitIdentity>,
 }
 
 #[derive(Debug, Deserialize)]
+struct ReviewRequest {}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StatusCheck {
+    #[serde(default, rename = "__typename")]
+    kind: Option<String>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
     context: Option<String>,
     #[serde(default)]
     conclusion: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
     #[serde(default)]
     state: Option<String>,
 }
@@ -1099,47 +1108,6 @@ where
     let output = run_gh(context, ["repo", "view", "--json", "nameWithOwner"])?;
     let identity: RepositoryIdentity = serde_json::from_str(&output)?;
     required(&identity.name_with_owner)
-}
-
-#[derive(Debug, Deserialize)]
-struct ApplicableRule {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    parameters: serde_json::Value,
-}
-
-fn freshness_policy<F, C, O, E>(
-    context: &mut CommandContext<'_, F, C, O, E>,
-    repository: &str,
-    target: &str,
-) -> Result<FreshnessPolicy, Error>
-where
-    F: FileSystem,
-    C: Clock,
-    O: Write,
-    E: Write,
-{
-    let endpoint = format!(
-        "repos/{repository}/rules/branches/{}",
-        percent_encode(target)
-    );
-    let output = run_gh(context, ["api", &endpoint])?;
-    let rules: Vec<ApplicableRule> = serde_json::from_str(&output)?;
-    if rules.iter().any(|rule| rule.kind == "merge_queue") {
-        return Ok(FreshnessPolicy::MergeQueue);
-    }
-    if rules.iter().any(|rule| {
-        rule.kind == "required_status_checks"
-            && rule
-                .parameters
-                .get("strict_required_status_checks_policy")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-    }) {
-        return Ok(FreshnessPolicy::Strict);
-    }
-    Ok(FreshnessPolicy::Loose)
 }
 
 fn github_target_commit<F, C, O, E>(

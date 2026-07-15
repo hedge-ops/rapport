@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Made Rapport-owned Build and Review evidence plus observed pull-request checks
+  authoritative for integration, removing branch-rules API discovery and
+  ruleset management from integration, GitHub setup, and doctor.
+- Repositories that used `rapport github setup` with 0.5.4 may retain the
+  previously created `Rapport Integration (<target>)` ruleset. Remove it from
+  GitHub repository settings when that remote gate is unwanted; Rapport leaves
+  existing rules untouched.
+
 ## [0.5.4] - 2026-07-13
 
 ### Changed

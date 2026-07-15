@@ -95,17 +95,21 @@ quality-policy exception. Rapport deliberately publishes no duplicate
 `Rapport Review` status.
 
 `rapport integrate status` is read-only. It reports local, pull-request head,
-and target commits; proof; checks; approvals; target advancement; mergeability;
-blockers; and the next command. A changed pull-request head is never
+and target commits; proof; observed checks; optional review activity; target
+advancement; mergeability; blockers; and the next command. A changed
+pull-request head is never
 force-pushed or accepted implicitly—it returns through Develop, Build, and
 Review.
 
-`rapport integrate complete` revalidates the exact candidate and GitHub state,
-obeys branch protection without administrative bypass, and requests a squash
-merge. It records and resumes a merge-queue submission when applicable. After
-GitHub confirms the merge, Rapport deletes the remote source branch and archives
-Work without switching branches or deleting the local branch from an active
-worktree.
+`rapport integrate complete` revalidates the exact candidate, requires at least
+one observed remote check, blocks until every observed check is terminal and
+non-failing, and requests a squash merge. Rapport's independent Review is the
+acceptance authority; GitHub review requirements remain a repository-owner
+choice. Review requests are reported but remain informational because GitHub
+may create them automatically from repository configuration; an explicit
+request for changes still blocks. After GitHub confirms the merge, Rapport
+deletes the remote source branch and archives Work without switching branches
+or deleting the local branch from an active worktree.
 
 Every external side effect is recorded in the Integration Task. Repeating
 Start, Cancel, or Complete reconciles recorded and observed identities and
@@ -175,8 +179,7 @@ the local operator for exact-head proof. A current passing status is preserved;
 otherwise the workflow publishes both its stable Context identity and aggregate
 `Rapport Build` as pending.
 
-Configure Rapport's dedicated target-branch ruleset without replacing unrelated
-repository or organization protection:
+Configure the repository behaviors used by Rapport integration:
 
 ```bash
 rapport github setup
@@ -187,12 +190,17 @@ rapport doctor
 The setup command applies the displayed proposal. Pass `--dry-run` to display
 the complete change set without mutating GitHub. The former `--confirm` flag is
 deprecated, hidden from help, and remains accepted as a no-op so existing
-callers continue to apply setup. The proposal requires pull requests and
-`Rapport Build`, adds no duplicate Review status or approval, enables squash
-merge and merged-branch deletion, and uses no administrative bypass actor.
-`rapport doctor` remains read-only and checks repository identity,
-authentication, status-publishing permission, generated workflows, effective
-rules, freshness mode, squash merge, and branch deletion.
+callers continue to apply setup. The proposal enables squash merge and
+merged-branch deletion, but does not create, inspect, or modify branch rules or
+approval requirements. `rapport doctor` remains read-only and checks repository
+identity, authentication, status-publishing permission, generated workflows,
+squash merge, and branch deletion.
+
+When upgrading from 0.5.4, repositories that ran `rapport github setup` may
+still have a `Rapport Integration (<target>)` ruleset. Remove that ruleset from
+the repository's **Settings → Rules → Rulesets** page if the GitHub-side gate is
+not wanted. Current Rapport versions deliberately leave existing remote rules
+untouched because maintainers may have changed or chosen to retain them.
 
 ## Repository Shape
 

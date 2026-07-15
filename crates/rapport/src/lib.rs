@@ -308,7 +308,7 @@ mod tests {
         let (code, out, err) = run_with(&["github", "setup", "--help"]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Apply Rapport's target-branch integration ruleset"));
+        assert!(out.contains("Enable repository settings used by Rapport integration"));
         assert!(out.contains("--dry-run"));
         assert!(!out.contains("--confirm"));
         assert_eq!(err, "");
@@ -327,9 +327,13 @@ mod tests {
         assert!(out.contains("`applied` — true"));
         assert_eq!(err, "");
         let calls = runner.calls();
-        assert_eq!(calls.len(), 5);
-        assert_eq!(calls[3].0.args[0..3], ["api", "--method", "POST"]);
-        assert_eq!(calls[4].0.args[0..2], ["repo", "edit"]);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[2].0.args[0..2], ["repo", "edit"]);
+        assert!(!calls.iter().any(|(spec, _)| {
+            spec.args
+                .iter()
+                .any(|argument| argument.contains("ruleset"))
+        }));
     }
 
     #[test]
@@ -338,28 +342,23 @@ mod tests {
         let runner = FakeRunner::with_outcomes([
             successful_result("authenticated\n"),
             successful_result(github_repository_identity()),
-            successful_result("[]"),
         ]);
 
         let (code, out, err) = run_with_runner(&["github", "setup", "--dry-run"], &mut fs, &runner);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("`ruleset` — Rapport Integration (main) (create)"));
-        assert!(out.contains("`pull requests required` — true"));
-        assert!(out.contains("`required status` — Rapport Build"));
+        assert!(out.contains("`branch rules` — unmanaged"));
         assert!(out.contains("`squash merge` — enabled"));
         assert!(out.contains("`delete merged branches` — enabled"));
         assert!(out.contains("`applied` — false"));
         assert_eq!(err, "");
-        assert_eq!(runner.calls().len(), 3);
+        assert_eq!(runner.calls().len(), 2);
     }
 
     fn github_setup_runner() -> FakeRunner {
         FakeRunner::with_outcomes([
             successful_result("authenticated\n"),
             successful_result(github_repository_identity()),
-            successful_result("[]"),
-            successful_result("{}"),
             successful_result(""),
         ])
     }
@@ -377,9 +376,6 @@ mod tests {
             successful_result(
                 r#"{"nameWithOwner":"hedge-ops/rapport","defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"deleteBranchOnMerge":true,"viewerPermission":"ADMIN"}"#,
             ),
-            successful_result(
-                r#"[{"type":"pull_request"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Rapport Build"}],"strict_required_status_checks_policy":false}}]"#,
-            ),
         ]);
 
         let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
@@ -391,24 +387,23 @@ mod tests {
         assert!(out.contains("GitHub integration"));
         assert!(out.contains("rapport integrate"));
         assert_eq!(err, "");
-        assert_eq!(runner.calls().len(), 4);
+        assert_eq!(runner.calls().len(), 3);
     }
 
     #[test]
-    fn doctor_should_recommend_applying_github_setup_when_configuration_is_missing() {
+    fn doctor_should_not_require_github_branch_rules() {
         let mut fs = InMemoryFileSystem::default();
         let runner = FakeRunner::with_outcomes([
             successful_result("git@github.com:hedge-ops/rapport.git\n"),
             successful_result("authenticated\n"),
             successful_result(github_repository_identity()),
-            successful_result("[]"),
         ]);
 
         let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
 
-        assert_eq!(code, ExitCode::from(2));
-        assert_eq!(out, "");
-        assert!(err.contains("run rapport github setup, then rapport doctor"));
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(out.contains("branch rules unmanaged"));
+        assert_eq!(err, "");
     }
 
     #[test]

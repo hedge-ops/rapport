@@ -204,14 +204,13 @@ fn render_review(review: &ReviewTask) -> String {
 
 fn render_integration(integration: &IntegrationTask) -> String {
     format!(
-        "### Integration evidence\n\n- `stage` — {}\n- `repository` — {}\n- `source branch` — {}\n- `target branch` — {}\n- `candidate` — {}\n- `target commit` — {}\n- `freshness` — {}\n- `Build task` — {}\n- `Review task` — {}\n- `Review grade` — {}\n- `quality override` — {}\n- `pull request` — {} {}\n- `merge commit` — {}\n- `remote branch deleted` — {}\n- `cancellation` — {}",
+        "### Integration evidence\n\n- `stage` — {}\n- `repository` — {}\n- `source branch` — {}\n- `target branch` — {}\n- `candidate` — {}\n- `target commit` — {}\n- `Build task` — {}\n- `Review task` — {}\n- `Review grade` — {}\n- `quality override` — {}\n- `pull request` — {} {}\n- `merge commit` — {}\n- `remote branch deleted` — {}\n- `cancellation` — {}",
         integration_stage(integration.stage),
         integration.repository.as_deref().unwrap_or("none"),
         integration.source_branch,
         integration.target_branch,
         integration.candidate,
         integration.target_commit,
-        integration.freshness_policy,
         integration.build_task,
         integration.review_task,
         integration.review_grade,
