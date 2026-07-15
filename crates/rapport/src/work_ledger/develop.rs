@@ -35,6 +35,8 @@ impl fmt::Debug for Cli {
 enum Action {
     /// Manage the ordered sequence of development work.
     Task(TaskArgs),
+    /// Explicitly declare the latest clean checkpoint ready for Integration.
+    Complete,
 }
 
 #[derive(Args)]
@@ -136,6 +138,7 @@ where
 {
     let result = match &cli.command {
         Action::Task(args) => execute(&args.command, context),
+        Action::Complete => complete_develop(context),
     };
     match result {
         Ok(output) => {
@@ -147,6 +150,49 @@ where
             ExitCode::from(2)
         }
     }
+}
+
+fn complete_develop<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> Result<String, Error>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = Store::new(&context.repo_root);
+    let mut work = store.require_work(context.fs)?;
+    let tasks = store.load_tasks(context.fs)?;
+    let git = Git::default();
+    let repository = git.discover(&context.repo_root)?;
+    let live = git.status(&repository)?;
+    ensure_source(&work, &live)?;
+    if git.operation(&repository)?.is_some()
+        || !live.is_clean()
+        || effective_checkpoint(&work) != live.head().as_str()
+        || tasks.iter().any(|task| {
+            task.is_develop_action()
+                && matches!(
+                    task.status,
+                    TaskStatus::Pending | TaskStatus::Running | TaskStatus::Blocked
+                )
+        })
+        || unresolved_failure(&work, &tasks).is_some()
+    {
+        return Err(Error::DevelopIncomplete);
+    }
+    work.develop_completed_checkpoint = Some(live.head().clone());
+    store.save_work(context.fs, &work)?;
+    let next = match super::integrate::published_candidate(&tasks) {
+        Some(candidate) if candidate == live.head().as_str() => "rapport build",
+        Some(_) => "rapport integrate update",
+        None => "rapport integrate start",
+    };
+    Ok(format!(
+        "# rapport develop complete\n\n- `Develop` — complete\n- `candidate` — {}\n- `repository validation` — not run\n- `next` — `{next}`",
+        super::command::short(live.head().as_str()),
+    ))
 }
 
 fn execute<F, C, O, E>(
@@ -311,6 +357,7 @@ where
         args.after.as_deref(),
     )?;
     work.development_sequence.clone_from(&sequence);
+    work.develop_completed_checkpoint = None;
     let mut writes = vec![task.clone()];
     if let Some(cause) = changed_cause {
         writes.push(cause);
@@ -518,7 +565,6 @@ where
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     let action_id = tasks[index].id.clone();
-    let completes_build_repair = tasks[index].payload.contains_key("caused_by_build");
     for checkpoint_id in &checkpoint_ids {
         if !tasks[index].related.contains(checkpoint_id) {
             tasks[index].related.push(checkpoint_id.clone());
@@ -536,11 +582,7 @@ where
         result,
         Some(format!("checkpoints: {}", none(&checkpoint_ids.join(", ")))),
     );
-    let next = if completes_build_repair && is_complete(&work, &tasks, &live, None) {
-        "rapport build"
-    } else {
-        "rapport work task next"
-    };
+    let next = "rapport work task next";
     let writes = tasks
         .iter()
         .filter(|task| task.id == action_id || checkpoint_ids.contains(&task.id))
@@ -599,6 +641,10 @@ pub(super) fn is_complete(
     operation.is_none()
         && live.is_clean()
         && effective_checkpoint(work) == live.head().as_str()
+        && work
+            .develop_completed_checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint == live.head())
         && !tasks.iter().any(|task| {
             task.is_develop_action()
                 && matches!(

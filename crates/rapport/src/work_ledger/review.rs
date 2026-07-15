@@ -380,6 +380,7 @@ where
             .clone();
         let id = work.allocate_task_id()?;
         work.development_sequence.push(id.clone());
+        work.develop_completed_checkpoint = None;
         let mut corrective = Task::new(
             id.clone(),
             "action",
@@ -525,6 +526,9 @@ fn ensure_acceptance_ready(
     digest: &str,
     paths: &[Utf8PathBuf],
 ) -> Result<Option<String>, Error> {
+    if super::integrate::published_candidate(tasks) != Some(live.head().as_str()) {
+        return Err(Error::ReviewPrerequisite);
+    }
     if !develop::is_complete(work, tasks, live, git.operation(repository)?)
         || !live.is_clean()
         || work

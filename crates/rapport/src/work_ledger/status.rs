@@ -275,8 +275,9 @@ fn render_task(work: &Work, task: &Task) -> String {
 fn select_next<'task>(work: &Work, tasks: &'task [Task]) -> Option<&'task Task> {
     tasks
         .iter()
-        .filter(|task| !task.status.is_terminal())
+        .filter(|task| !task.status.is_terminal() && task.workflow != Workflow::Integrate)
         .min_by_key(|task| {
+            let workflow_priority = i32::from(!task.is_develop_action());
             let priority = match task.status {
                 TaskStatus::Running => 0,
                 TaskStatus::Blocked => 1,
@@ -293,7 +294,7 @@ fn select_next<'task>(work: &Work, tasks: &'task [Task]) -> Option<&'task Task> 
             } else {
                 u32::MAX
             };
-            (priority, order, task.id.as_str())
+            (workflow_priority, priority, order, task.id.as_str())
         })
 }
 
@@ -316,15 +317,33 @@ fn next_workflow(
     if !live.all_changed_paths().is_empty() || checkpoint != live.head() {
         "rapport work checkpoint start".to_owned()
     } else if develop::is_complete(work, tasks, live, operation) {
-        if super::build::has_candidate_proof(tasks, live.head().as_str()) {
-            if super::review::has_candidate_proof(tasks, live.head().as_str()) {
-                "rapport integrate start".to_owned()
-            } else {
-                "rapport review start".to_owned()
+        match super::integrate::published_candidate(tasks) {
+            None => "rapport integrate start".to_owned(),
+            Some(candidate) if candidate != live.head().as_str() => {
+                "rapport integrate update".to_owned()
             }
-        } else {
-            "rapport build".to_owned()
+            Some(_) if super::build::has_candidate_proof(tasks, live.head().as_str()) => {
+                if super::review::has_candidate_proof(tasks, live.head().as_str()) {
+                    "rapport integrate status".to_owned()
+                } else {
+                    "rapport review start".to_owned()
+                }
+            }
+            Some(_) => "rapport build".to_owned(),
         }
+    } else if operation.is_none()
+        && live.is_clean()
+        && effective_checkpoint(work) == live.head()
+        && !tasks.iter().any(|task| {
+            task.is_develop_action()
+                && matches!(
+                    task.status,
+                    TaskStatus::Pending | TaskStatus::Running | TaskStatus::Blocked
+                )
+        })
+        && develop::unresolved_failure(work, tasks).is_none()
+    {
+        "rapport develop complete".to_owned()
     } else {
         "make the requested changes, then rapport work checkpoint start".to_owned()
     }

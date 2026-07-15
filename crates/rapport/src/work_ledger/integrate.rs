@@ -4,7 +4,6 @@
 //! Candidate creation remains owned by Develop, Build, and Review.
 
 use super::Error;
-use super::build;
 use super::command;
 use super::develop;
 use super::domain::{
@@ -35,6 +34,8 @@ pub(crate) struct Cli {
 enum Action {
     /// Publish exact accepted Work and create its pull request.
     Start,
+    /// Publish a newly completed candidate to the existing pull request.
+    Update,
     /// Inspect local and GitHub integration state without changing it.
     Status,
     /// Close the owned pull request and preserve active Work.
@@ -55,6 +56,7 @@ where
 {
     let result = match &cli.action {
         Action::Start => start(context),
+        Action::Update => update(context),
         Action::Status => status(context),
         Action::Cancel { reason } => cancel(context, reason),
         Action::Complete => complete(context),
@@ -71,21 +73,89 @@ where
     }
 }
 
-#[derive(Debug)]
-struct AcceptedCandidate {
-    candidate: String,
-    policy_digest: String,
-    build_task: String,
-    review_task: String,
+fn update<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> Result<String, Error>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let store = Store::new(&context.repo_root);
+    let work = store.require_work(context.fs)?;
+    let tasks = store.load_tasks(context.fs)?;
+    let (git, repository) = git_repository(&context.repo_root)?;
+    let completed = completed_candidate(context, &work, &tasks, &git, &repository)?;
+    let mut task = current_integration(&tasks)
+        .cloned()
+        .ok_or(Error::MissingIntegration)?;
+    let number = task
+        .integration
+        .as_ref()
+        .and_then(|state| state.pull_request_number)
+        .ok_or(Error::MissingIntegration)?;
+    let prior = pull_request(context, &number.to_string())?;
+    verify_pull_request(
+        &work,
+        task.integration.as_ref().ok_or(Error::MissingIntegration)?,
+        &prior,
+    )?;
+    let branch = work.source_branch.clone();
+    git.push_branch(&repository, &branch)?;
+    let observed = pull_request(context, &number.to_string())?;
+    let marker = format!("Rapport-Work: {}", work.id);
+    if observed.is_cross_repository
+        || observed.head_ref_name != work.source_branch.as_str()
+        || observed.base_ref_name != work.target_branch.as_str()
+        || !observed.body.contains(&marker)
+        || observed.head_ref_oid != completed.candidate
+    {
+        return Err(Error::IntegrationOwnership);
+    }
+    {
+        let state = task.integration.as_mut().ok_or(Error::MissingIntegration)?;
+        state.candidate = completed.candidate;
+        state.policy_digest = completed.policy_digest;
+        "pending".clone_into(&mut state.build_task);
+        "pending".clone_into(&mut state.review_task);
+        "pending".clone_into(&mut state.review_grade);
+        state.quality_override = None;
+        state.review_findings.clear();
+        state.published_builds.clear();
+        state.aggregate_build_published = false;
+        state.pull_request_head = Some(observed.head_ref_oid.clone());
+    }
+    task.source_commit.clone_from(&observed.head_ref_oid);
+    task.continuation = Some("rapport build".to_owned());
+    store.save_task(context.fs, &task)?;
+    let body = pull_request_body(
+        &work,
+        &tasks,
+        task.integration.as_ref().ok_or(Error::MissingIntegration)?,
+    );
+    run_gh(
+        context,
+        ["pr", "edit", &number.to_string(), "--body", &body],
+    )?;
+    Ok(format!(
+        "# rapport integrate update\n\n- `pull request` — {}\n- `candidate` — {}\n- `Build proof` — stale\n- `Review proof` — stale\n- `next` — `rapport build`",
+        observed.url,
+        short(&observed.head_ref_oid)
+    ))
 }
 
-fn accepted_candidate<F, C, O, E>(
+#[derive(Debug)]
+struct CompletedCandidate {
+    candidate: String,
+    policy_digest: String,
+}
+
+fn completed_candidate<F, C, O, E>(
     context: &mut CommandContext<'_, F, C, O, E>,
     work: &Work,
     tasks: &[Task],
     git: &Git,
     repository: &Repository,
-) -> Result<AcceptedCandidate, Error>
+) -> Result<CompletedCandidate, Error>
 where
     F: FileSystem,
     C: Clock,
@@ -130,46 +200,9 @@ where
         &context.repo_root,
         changed_paths.iter().map(Utf8PathBuf::as_path),
     )?;
-    let required = crate::policy_context::required_signoffs_for_paths(
-        context.fs,
-        &context.repo_root,
-        changed_paths.iter().map(Utf8PathBuf::as_path),
-    )?;
-    if !build::current_proof(tasks, live.head().as_str(), &policy_digest, &required) {
-        return Err(Error::BuildIncomplete);
-    }
-    let build_task = tasks
-        .iter()
-        .rev()
-        .find(|task| {
-            task.status == TaskStatus::Passed
-                && task.build.as_ref().is_some_and(|build| {
-                    build.proof
-                        && build.candidate == live.head().as_str()
-                        && build.policy_digest.as_deref() == Some(policy_digest.as_str())
-                })
-        })
-        .map(|task| task.id.clone())
-        .ok_or(Error::BuildIncomplete)?;
-    let review_task = tasks
-        .iter()
-        .rev()
-        .find(|task| {
-            task.status == TaskStatus::Passed
-                && task.review.as_ref().is_some_and(|review| {
-                    review.mode == ReviewMode::Acceptance
-                        && review.proof
-                        && review.candidate == live.head().as_str()
-                        && review.policy_digest == policy_digest
-                })
-        })
-        .map(|task| task.id.clone())
-        .ok_or(Error::ReviewIncomplete)?;
-    Ok(AcceptedCandidate {
+    Ok(CompletedCandidate {
         candidate: live.head().as_str().to_owned(),
         policy_digest,
-        build_task,
-        review_task,
     })
 }
 
@@ -184,7 +217,7 @@ where
     let mut work = store.require_work(context.fs)?;
     let tasks = store.load_tasks(context.fs)?;
     let (git, repository) = git_repository(&context.repo_root)?;
-    let accepted = accepted_candidate(context, &work, &tasks, &git, &repository)?;
+    let accepted = completed_candidate(context, &work, &tasks, &git, &repository)?;
     let repository_name = github_repository(context)?;
 
     if let Some(task) = current_integration(&tasks) {
@@ -211,22 +244,7 @@ where
     }
     let target_branch = work.target_branch.as_str();
     let target_commit = github_target_commit(context, &repository_name, target_branch)?;
-    let review = tasks
-        .iter()
-        .find(|task| task.id == accepted.review_task)
-        .and_then(|task| task.review.as_ref())
-        .ok_or(Error::ReviewIncomplete)?;
     let task_id = work.allocate_task_id()?;
-    let review_grade = review
-        .result
-        .as_ref()
-        .map(|result| result.overall_grade.to_string())
-        .ok_or(Error::ReviewIncomplete)?;
-    let review_findings = review
-        .findings
-        .iter()
-        .filter_map(|finding| finding.id.clone())
-        .collect();
     let mut task = Task::new(
         task_id,
         "integration",
@@ -247,11 +265,11 @@ where
         candidate: accepted.candidate,
         target_commit,
         policy_digest: accepted.policy_digest,
-        build_task: accepted.build_task,
-        review_task: accepted.review_task,
-        review_grade,
-        quality_override: review.quality_override.clone(),
-        review_findings,
+        build_task: "pending".to_owned(),
+        review_task: "pending".to_owned(),
+        review_grade: "pending".to_owned(),
+        quality_override: None,
+        review_findings: Vec::new(),
         pushed: false,
         published_builds: Vec::new(),
         aggregate_build_published: false,
@@ -327,7 +345,7 @@ where
             verify_pull_request(work, integration, &existing)?;
             existing
         } else {
-            let body = pull_request_body(work, tasks, integration)?;
+            let body = pull_request_body(work, tasks, integration);
             let url = run_gh(
                 context,
                 [
@@ -384,6 +402,9 @@ where
     let integration = task.integration.as_ref().ok_or(Error::MissingIntegration)?;
     let candidate = integration.candidate.clone();
     let integration_build_task = integration.build_task.clone();
+    if integration_build_task == "pending" {
+        return Ok(());
+    }
     let build_task = tasks
         .iter()
         .find(|candidate| candidate.id == integration_build_task)
@@ -496,7 +517,10 @@ where
     let store = Store::new(&context.repo_root);
     let work = store.require_work(context.fs)?;
     let tasks = store.load_tasks(context.fs)?;
-    let task = current_integration(&tasks).ok_or(Error::MissingIntegration)?;
+    let mut task = current_integration(&tasks)
+        .cloned()
+        .ok_or(Error::MissingIntegration)?;
+    hydrate_evidence(&mut task, &tasks)?;
     let integration = task.integration.as_ref().ok_or(Error::MissingIntegration)?;
     let number = integration
         .pull_request_number
@@ -504,10 +528,94 @@ where
     let pull_request = pull_request(context, &number.to_string())?;
     let mut blockers = integration_blockers(&work, integration, &pull_request);
     let (git, repository) = git_repository(&context.repo_root)?;
-    if accepted_candidate(context, &work, &tasks, &git, &repository).is_err() {
-        blockers.push("local Develop, Build, or Review proof is stale".to_owned());
+    if completed_candidate(context, &work, &tasks, &git, &repository).is_err() {
+        blockers.push("local Develop completion is stale".to_owned());
     }
-    render_status(task, &pull_request, blockers)
+    render_status(&task, &pull_request, blockers)
+}
+
+fn synchronize_evidence<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    store: &Store,
+    work: &Work,
+    task: &mut Task,
+    tasks: &[Task],
+) -> Result<(), Error>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    hydrate_evidence(task, tasks)?;
+    let repository = task
+        .integration
+        .as_ref()
+        .and_then(|state| state.repository.clone())
+        .ok_or(Error::MissingIntegration)?;
+    publish_build_statuses(context, store, work, task, tasks, &repository)?;
+    if let Some(number) = task
+        .integration
+        .as_ref()
+        .and_then(|state| state.pull_request_number)
+    {
+        let body = pull_request_body(
+            work,
+            tasks,
+            task.integration.as_ref().ok_or(Error::MissingIntegration)?,
+        );
+        run_gh(
+            context,
+            ["pr", "edit", &number.to_string(), "--body", &body],
+        )?;
+    }
+    store.save_task(context.fs, task)
+}
+
+fn hydrate_evidence(task: &mut Task, tasks: &[Task]) -> Result<(), Error> {
+    let integration = task.integration.as_ref().ok_or(Error::MissingIntegration)?;
+    let candidate = integration.candidate.clone();
+    let policy = integration.policy_digest.clone();
+    if let Some(build_task) = tasks.iter().rev().find(|candidate_task| {
+        candidate_task.status == TaskStatus::Passed
+            && candidate_task.build.as_ref().is_some_and(|build| {
+                build.proof
+                    && build.candidate == candidate
+                    && build.policy_digest.as_deref() == Some(policy.as_str())
+            })
+    }) {
+        task.integration
+            .as_mut()
+            .ok_or(Error::MissingIntegration)?
+            .build_task
+            .clone_from(&build_task.id);
+    }
+    if let Some(review_task) = tasks.iter().rev().find(|candidate_task| {
+        candidate_task.status == TaskStatus::Passed
+            && candidate_task.review.as_ref().is_some_and(|review| {
+                review.mode == ReviewMode::Acceptance
+                    && review.proof
+                    && review.candidate == candidate
+                    && review.policy_digest == policy
+            })
+    }) {
+        let review = review_task.review.as_ref().ok_or(Error::MissingReview)?;
+        let state = task.integration.as_mut().ok_or(Error::MissingIntegration)?;
+        state.review_task.clone_from(&review_task.id);
+        state.review_grade = review
+            .result
+            .as_ref()
+            .map_or("pending".to_owned(), |result| {
+                result.overall_grade.to_string()
+            });
+        state.quality_override.clone_from(&review.quality_override);
+        state.review_findings = review
+            .findings
+            .iter()
+            .filter_map(|finding| finding.id.clone())
+            .collect();
+    }
+    Ok(())
 }
 
 fn cancel<F, C, O, E>(
@@ -626,6 +734,7 @@ where
     }
     let index = current_integration_index(&tasks).ok_or(Error::MissingIntegration)?;
     let mut task = tasks[index].clone();
+    synchronize_evidence(context, &store, &work, &mut task, &tasks)?;
     let integration = task.integration.as_ref().ok_or(Error::MissingIntegration)?;
     let number = integration
         .pull_request_number
@@ -641,7 +750,7 @@ where
             ));
         }
         let (git, repository) = git_repository(&context.repo_root)?;
-        accepted_candidate(context, &work, &tasks, &git, &repository)?;
+        completed_candidate(context, &work, &tasks, &git, &repository)?;
         let blockers = integration_blockers(&work, integration, &observed_pull_request);
         if !blockers.is_empty() {
             return Err(Error::IntegrationBlocked(blockers.join("; ")));
@@ -710,6 +819,12 @@ fn integration_blockers(
     pull_request: &PullRequest,
 ) -> Vec<String> {
     let mut blockers = Vec::new();
+    if integration.build_task == "pending" {
+        blockers.push("Build proof is missing".to_owned());
+    }
+    if integration.review_task == "pending" {
+        blockers.push("Review proof is missing".to_owned());
+    }
     if pull_request.state != "OPEN" {
         blockers.push(format!(
             "pull request is {}",
@@ -828,7 +943,11 @@ fn render_status(
     } else {
         blockers.join(", ")
     };
-    let next = if pull_request.state == "MERGED" || blockers.is_empty() {
+    let next = if integration.build_task == "pending" {
+        "rapport build"
+    } else if integration.review_task == "pending" {
+        "rapport review start"
+    } else if pull_request.state == "MERGED" || blockers.is_empty() {
         "rapport integrate complete"
     } else {
         "address blockers, then rapport integrate status"
@@ -868,22 +987,15 @@ fn render_status(
     ))
 }
 
-fn pull_request_body(
-    work: &Work,
-    tasks: &[Task],
-    integration: &IntegrationTask,
-) -> Result<String, Error> {
+fn pull_request_body(work: &Work, tasks: &[Task], integration: &IntegrationTask) -> String {
     let build = tasks
         .iter()
         .find(|task| task.id == integration.build_task)
-        .and_then(|task| task.build.as_ref())
-        .ok_or(Error::BuildIncomplete)?;
+        .and_then(|task| task.build.as_ref());
     let review = tasks
         .iter()
         .find(|task| task.id == integration.review_task)
-        .and_then(|task| task.review.as_ref())
-        .ok_or(Error::ReviewIncomplete)?;
-    let result = review.result.as_ref().ok_or(Error::ReviewIncomplete)?;
+        .and_then(|task| task.review.as_ref());
     let checkpoints = tasks
         .iter()
         .filter(|task| task.kind == "checkpoint" && task.status == TaskStatus::Passed)
@@ -898,24 +1010,26 @@ fn pull_request_body(
         })
         .map(|task| format!("- {} — {}", task.id, task.title))
         .collect::<Vec<_>>();
-    let operations = build
-        .operations
-        .iter()
-        .map(|operation| {
-            format!(
-                "- {} — {} ({})",
-                operation.id,
-                operation.identity.as_deref().unwrap_or("local proof"),
-                operation.status
-            )
-        })
-        .collect::<Vec<_>>();
-    let findings = if review.findings.is_empty() {
+    let operations = build.map_or_else(Vec::new, |build| {
+        build
+            .operations
+            .iter()
+            .map(|operation| {
+                format!(
+                    "- {} — {} ({})",
+                    operation.id,
+                    operation.identity.as_deref().unwrap_or("local proof"),
+                    operation.status
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    let findings = if review.is_none_or(|review| review.findings.is_empty()) {
         vec!["- none".to_owned()]
     } else {
         review
-            .findings
-            .iter()
+            .into_iter()
+            .flat_map(|review| review.findings.iter())
             .map(|finding| {
                 format!(
                     "- {} — {} ({:?})",
@@ -926,7 +1040,7 @@ fn pull_request_body(
             })
             .collect()
     };
-    Ok(format!(
+    format!(
         "{}\n\n## Source\n\n- {}: {}\n- Candidate: `{}`\n- Target: `{}`\n- Work: `{}`\n\n## Develop Tasks\n\n{}\n\n## Checkpoints\n\n{}\n\n## Build proof\n\n- Task: `{}`\n{}\n\n## Independent Review\n\n- Task: `{}`\n- Grade: `{}`\n- Quality-policy override: {}\n\n### Findings\n\n{}\n\n<!-- Rapport-Work: {} -->",
         work.description,
         match work.request.kind {
@@ -943,11 +1057,17 @@ fn pull_request_body(
         integration.build_task,
         none(operations.join("\n")),
         integration.review_task,
-        result.overall_grade,
-        review.quality_override.as_deref().unwrap_or("none"),
+        review
+            .and_then(|review| review.result.as_ref())
+            .map_or("pending".to_owned(), |result| result
+                .overall_grade
+                .to_string()),
+        review
+            .and_then(|review| review.quality_override.as_deref())
+            .unwrap_or("none"),
         findings.join("\n"),
         work.id
-    ))
+    )
 }
 
 fn current_integration(tasks: &[Task]) -> Option<&Task> {
@@ -958,6 +1078,13 @@ fn current_integration(tasks: &[Task]) -> Option<&Task> {
                 .as_ref()
                 .is_some_and(|integration| integration.stage != IntegrationStage::Cancelled)
     })
+}
+
+pub(super) fn published_candidate(tasks: &[Task]) -> Option<&str> {
+    current_integration(tasks)
+        .and_then(|task| task.integration.as_ref())
+        .filter(|integration| integration.stage == IntegrationStage::Published)
+        .map(|integration| integration.candidate.as_str())
 }
 
 fn current_integration_index(tasks: &[Task]) -> Option<usize> {

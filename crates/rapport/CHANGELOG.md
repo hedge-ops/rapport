@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added explicit `rapport develop complete` and `rapport integrate update`
+  transitions so checkpoints remain cheap while corrected candidates retain the
+  same pull request.
+- Added the selectable `JUST_WORKFLOW` catalog Ruleset for conventional Just
+  lifecycle targets, diagnostics, organization, and agent-safety boundaries.
+
+### Changed
+
+- Changed Integration to publish an explicitly completed candidate before
+  acceptance Build and Review, binding both proofs to the published pull-request
+  SHA and preserving the pull request through corrective Develop work.
+- Made Build-repair Tasks self-directing for source, tooling, permission,
+  configuration, and environmental corrections, with checkpointing required
+  only when repository state changes.
+
 ## [0.5.5] - 2026-07-14
 
 ### Changed
