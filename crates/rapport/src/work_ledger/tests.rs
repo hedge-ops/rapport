@@ -1828,6 +1828,50 @@ fn integration_update_resumes_an_already_completed_push() {
 }
 
 #[test]
+/// Update resumes body publication without pushing again after the new candidate was persisted (INT-002).
+fn integration_update_resumes_after_candidate_persistence() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let original = repository.git(["rev-parse", "HEAD"]);
+    let original_pull_request = integration_pull_request(&repository, &work, &original);
+    let start = integration_start_runner(&repository, &original_pull_request);
+    repository.succeeds_with(&["integrate", "start"], &start);
+
+    repository.write("candidate.txt", "persisted candidate before body edit\n");
+    repository.succeeds(&["work", "checkpoint", "start"]);
+    repository.git(["add", "candidate.txt"]);
+    repository.succeeds(&[
+        "work",
+        "checkpoint",
+        "complete",
+        "Persist candidate before interrupted body edit",
+    ]);
+    repository.succeeds(&["develop", "complete"]);
+    let corrected = repository.git(["rev-parse", "HEAD"]);
+    let corrected_pull_request = integration_pull_request(&repository, &work, &corrected);
+    let interrupted = QueueRunner::new([
+        successful(&original_pull_request),
+        successful(&corrected_pull_request),
+        failing("pull-request body edit failed\n"),
+    ]);
+    let (code, _, error) = repository.run_with(&["integrate", "update"], &interrupted);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("body edit failed"), "{error}");
+    repository.git(["remote", "remove", "origin"]);
+    let resumed = QueueRunner::new([successful(&corrected_pull_request), successful("")]);
+
+    let output = repository.succeeds_with(&["integrate", "update"], &resumed);
+
+    assert!(output.contains(&corrected[..12]), "{output}");
+    assert_eq!(
+        resumed.calls().len(),
+        2,
+        "expecting retry to inspect the persisted candidate and resume at body editing without a duplicate push"
+    );
+}
+
+#[test]
 /// Status reports a changed remote head without mutating GitHub or local Work (INT-001, INT-002).
 fn integration_status_is_read_only_and_reports_changed_head() {
     let mut repository = TemporaryRepository::new();
@@ -1895,6 +1939,32 @@ fn integration_cancel_preserves_local_work() {
 }
 
 #[test]
+/// Completion verifies the owned pull request before publishing any evidence or body changes (INT-001, INT-002).
+fn integration_complete_rejects_changed_identity_before_mutation() {
+    let mut repository = TemporaryRepository::new();
+    let work = accepted_work(&repository);
+    repository.use_bare_origin();
+    let head = repository.git(["rev-parse", "HEAD"]);
+    let pull_request = integration_pull_request(&repository, &work, &head);
+    let start = integration_start_runner(&repository, &pull_request);
+    repository.succeeds_with(&["integrate", "start"], &start);
+    prove_candidate(&repository);
+    let mut changed: serde_json::Value = assert_ok!(serde_json::from_str(&pull_request));
+    changed["body"] = serde_json::Value::String("ownership marker removed".to_owned());
+    let complete = QueueRunner::new([successful(&changed.to_string())]);
+
+    let (code, _, error) = repository.run_with(&["integrate", "complete"], &complete);
+
+    assert_eq!(code, ExitCode::from(2));
+    assert!(error.contains("cannot be proven"), "{error}");
+    assert_eq!(
+        complete.calls().len(),
+        1,
+        "expecting completion to make no status or body mutation before ownership verification"
+    );
+}
+
+#[test]
 /// Completion revalidates, squash-merges, archives Work, and leaves the local branch checked out (INT-001, INT-002).
 fn integration_complete_archives_without_switching_local_git() {
     let mut repository = TemporaryRepository::new();
@@ -1916,6 +1986,7 @@ fn integration_complete_archives_without_switching_local_git() {
     merged["state"] = serde_json::Value::String("MERGED".to_owned());
     merged["mergeCommit"] = serde_json::json!({"oid": MERGE_OBJECT_ID});
     let complete = QueueRunner::new([
+        successful(&pull_request),
         successful("{}"),
         successful(""),
         successful(&pull_request),

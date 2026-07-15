@@ -105,12 +105,12 @@ where
         .ok_or(Error::MissingIntegration)?
         .candidate
         .as_str();
-    let observed = if prior.head_ref_oid == recorded_candidate {
+    let observed = if prior.head_ref_oid == completed.candidate {
+        prior
+    } else if prior.head_ref_oid == recorded_candidate {
         let branch = work.source_branch.clone();
         git.push_branch(&repository, &branch)?;
         pull_request(context, &number.to_string())?
-    } else if prior.head_ref_oid == completed.candidate {
-        prior
     } else {
         return Err(Error::IntegrationOwnership);
     };
@@ -745,6 +745,7 @@ where
     }
     let index = current_integration_index(&tasks).ok_or(Error::MissingIntegration)?;
     let mut task = tasks[index].clone();
+    verified_pull_request(context, &work, &task)?;
     synchronize_evidence(context, &store, &work, &mut task, &tasks)?;
     let integration = task.integration.as_ref().ok_or(Error::MissingIntegration)?;
     let number = integration
@@ -1118,6 +1119,26 @@ fn verify_pull_request(
         return Err(Error::IntegrationOwnership);
     }
     Ok(())
+}
+
+fn verified_pull_request<F, C, O, E>(
+    context: &mut CommandContext<'_, F, C, O, E>,
+    work: &Work,
+    task: &Task,
+) -> Result<PullRequest, Error>
+where
+    F: FileSystem,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let integration = task.integration.as_ref().ok_or(Error::MissingIntegration)?;
+    let number = integration
+        .pull_request_number
+        .ok_or(Error::MissingIntegration)?;
+    let observed = pull_request(context, &number.to_string())?;
+    verify_pull_request(work, integration, &observed)?;
+    Ok(observed)
 }
 
 fn verify_pull_request_ownership(
