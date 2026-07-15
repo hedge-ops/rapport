@@ -195,6 +195,12 @@ approval requirements. `rapport doctor` remains read-only and checks repository
 identity, authentication, status-publishing permission, generated workflows,
 squash merge, and branch deletion.
 
+When upgrading from 0.5.4, repositories that ran `rapport github setup` may
+still have a `Rapport Integration (<target>)` ruleset. Remove that ruleset from
+the repository's **Settings → Rules → Rulesets** page if the GitHub-side gate is
+not wanted. Current Rapport versions deliberately leave existing remote rules
+untouched because maintainers may have changed or chosen to retain them.
+
 ## Repository Shape
 
 - `context.toml` files define inherited repository policy.
