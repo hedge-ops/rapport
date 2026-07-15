@@ -182,7 +182,8 @@ fn accepted_work(repository: &TemporaryRepository) -> Work {
     repository.succeeds(&["build"]);
     let request = repository.succeeds(&["review", "start"]);
     let result_path = std::env::temp_dir().join(format!(
-        "rapport-integration-review-{}.json",
+        "rapport-integration-review-{}-{}.json",
+        std::process::id(),
         NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
     ));
     assert_ok!(std::fs::write(
@@ -1357,7 +1358,8 @@ fn acceptance_review_passes_and_routes_work_to_integrate() {
     );
     assert!(!request.contains("effective review minimum"), "{request}");
     let result_path = std::env::temp_dir().join(format!(
-        "rapport-review-result-{}.json",
+        "rapport-review-result-{}-{}.json",
+        std::process::id(),
         NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
     ));
     assert_ok!(std::fs::write(
@@ -1390,7 +1392,8 @@ fn review_finding_dismissal_records_reason_and_completes_policy() {
     repository.succeeds(&["build"]);
     let request = repository.succeeds(&["review", "start"]);
     let result_path = std::env::temp_dir().join(format!(
-        "rapport-review-finding-{}.json",
+        "rapport-review-finding-{}-{}.json",
+        std::process::id(),
         NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed)
     ));
     assert_ok!(std::fs::write(
