@@ -1571,8 +1571,8 @@ fn integration_start_should_block_explicit_requested_changes() {
 }
 
 #[test]
-/// A review explicitly requested by the developer remains pending without a repository approval rule (INT-001).
-fn integration_start_should_block_explicit_pending_review() {
+/// Review requests remain informational because GitHub may create them from repository policy (INT-001).
+fn integration_start_should_report_review_requests_without_blocking() {
     let mut repository = TemporaryRepository::new();
     let work = accepted_work(&repository);
     repository.use_bare_origin();
@@ -1586,10 +1586,8 @@ fn integration_start_should_block_explicit_pending_review() {
 
     let output = repository.succeeds_with(&["integrate", "start"], &runner);
 
-    assert!(
-        output.contains("1 requested review(s) pending"),
-        "expecting a developer-requested review to block integration: {output}"
-    );
+    assert!(output.contains("requested reviews` — 1"), "{output}");
+    assert!(output.contains("blockers` — none"), "{output}");
 }
 
 #[test]

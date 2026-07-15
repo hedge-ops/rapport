@@ -105,10 +105,11 @@ Review.
 one observed remote check, blocks until every observed check is terminal and
 non-failing, and requests a squash merge. Rapport's independent Review is the
 acceptance authority; GitHub review requirements remain a repository-owner
-choice, while an explicitly requested review blocks until it is completed and
-an explicit request for changes still blocks. After GitHub confirms the merge,
-Rapport deletes the remote source branch and archives Work without switching
-branches or deleting the local branch from an active worktree.
+choice. Review requests are reported but remain informational because GitHub
+may create them automatically from repository configuration; an explicit
+request for changes still blocks. After GitHub confirms the merge, Rapport
+deletes the remote source branch and archives Work without switching branches
+or deleting the local branch from an active worktree.
 
 Every external side effect is recorded in the Integration Task. Repeating
 Start, Cancel, or Complete reconciles recorded and observed identities and

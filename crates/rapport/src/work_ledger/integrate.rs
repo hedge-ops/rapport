@@ -745,12 +745,6 @@ fn integration_blockers(
         Some("APPROVED" | "REVIEW_REQUIRED" | "") | None => {}
         Some(other) => blockers.push(format!("review decision is {other}")),
     }
-    if !pull_request.review_requests.is_empty() {
-        blockers.push(format!(
-            "{} requested review(s) pending",
-            pull_request.review_requests.len()
-        ));
-    }
     if pull_request.mergeable != "MERGEABLE" {
         blockers.push(format!(
             "GitHub mergeability is {}",
@@ -842,7 +836,7 @@ fn render_status(
         integration.review_task, integration.review_grade
     );
     Ok(format!(
-        "# rapport integrate status\n\n- `task` — {}\n- `stage` — {:?}\n- `pull request` — {}\n- `source` — {} @ {}\n- `target` — {} @ {}\n- `candidate` — {}\n- `target advanced` — {}\n- `remote checks observed` — {}\n- `checks` — {} passed, {} pending, {} failed\n- `Review proof` — {}\n- `Review findings` — {}\n- `quality override` — {}\n- `GitHub review decision` — {} (policy informational; explicit requests and changes block)\n- `requested reviews pending` — {}\n- `mergeability` — {} / {}\n- `blockers` — {}\n- `next` — `{}`",
+        "# rapport integrate status\n\n- `task` — {}\n- `stage` — {:?}\n- `pull request` — {}\n- `source` — {} @ {}\n- `target` — {} @ {}\n- `candidate` — {}\n- `target advanced` — {}\n- `remote checks observed` — {}\n- `checks` — {} passed, {} pending, {} failed\n- `Review proof` — {}\n- `Review findings` — {}\n- `quality override` — {}\n- `GitHub review decision` — {} (policy and requests informational; changes requested blocks)\n- `requested reviews` — {} (informational)\n- `mergeability` — {} / {}\n- `blockers` — {}\n- `next` — `{}`",
         task.id,
         integration.stage,
         pull_request.url,
