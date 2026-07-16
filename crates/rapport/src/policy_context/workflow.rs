@@ -112,13 +112,19 @@ pub(super) fn render(
     let relative_directory = context_directory
         .strip_prefix(repo_root)
         .unwrap_or(context_directory);
-    let own_path = if relative_directory.as_str().is_empty() {
+    let relative_directory = github_path(relative_directory.as_str());
+    let own_path = if relative_directory.is_empty() {
         "**".to_owned()
     } else {
         format!("{relative_directory}/**")
     };
     let mut paths = vec![own_path];
-    paths.extend(signoff.included_paths().iter().cloned());
+    paths.extend(
+        signoff
+            .included_paths()
+            .iter()
+            .map(|path| github_path(path)),
+    );
     paths.push(SHARED_PATH.to_owned());
     paths.sort();
     paths.dedup();
@@ -131,10 +137,15 @@ pub(super) fn render(
     let workflow_relative = workflow_path
         .strip_prefix(repo_root)
         .unwrap_or(&workflow_path);
+    let workflow_relative = github_path(workflow_relative.as_str());
     let name = check_name(context, signoff);
     format!(
         "name: \"Request {name}\"\n\n# Rapport owns this file byte-for-byte.\n# It requests local proof for `{name}`; it never runs repository build behavior.\n\non:\n  pull_request:\n    paths:\n{path_lines}\n      - \"{workflow_relative}\"\n\npermissions:\n  statuses: write\n\nconcurrency:\n  group: ${{{{ github.workflow }}}}-${{{{ github.event.pull_request.number || github.ref }}}}\n  cancel-in-progress: true\n\njobs:\n  request:\n    if: github.event.pull_request.head.repo.full_name == github.repository\n    uses: ./.github/workflows/rapport-signoff.yml\n    with:\n      identity: \"{name}\"\n    secrets: inherit\n"
     )
+}
+
+fn github_path(path: &str) -> String {
+    path.replace('\\', "/")
 }
 
 pub(super) fn validate_target(
@@ -224,5 +235,32 @@ mod tests {
             shared_contents(),
             include_str!("../../../../.github/workflows/rapport-signoff.yml")
         );
+    }
+
+    #[test]
+    /// When source paths use Windows separators, the generated workflow uses GitHub repository separators.
+    fn render_should_normalize_windows_path_separators() {
+        let context = assert_ok!(ContextId::parse("APP_ANDROID"));
+        let signoff = assert_ok!(BuildSignoff::try_new(
+            &context,
+            "ci".to_owned(),
+            0,
+            None,
+            vec![r"shared\config".to_owned()],
+        ));
+
+        let generated = render(
+            &context,
+            Utf8Path::new(r"app\android"),
+            Utf8Path::new(""),
+            &signoff,
+        );
+
+        assert!(generated.contains("      - \"app/android/**\""));
+        assert!(generated.contains("      - \"shared/config\""));
+        assert!(
+            generated.contains("      - \".github/workflows/rapport-app-android-signoff-ci.yml\"")
+        );
+        assert!(!generated.contains('\\'));
     }
 }

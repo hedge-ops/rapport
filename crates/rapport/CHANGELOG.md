@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-16
+
+### Fixed
+
+- Normalized generated GitHub Actions path filters to repository-style `/`
+  separators on every host, preventing Windows repairs from emitting invalid
+  YAML escapes or reporting forward-slash workflows as drifted.
+- Kept the workspace clean under current stable Clippy by reducing the Work
+  error boundary's size and removing an obsolete lint expectation.
+- Kept Work-ledger Git integration tests compatible with Windows by preserving
+  Git-compatible temporary repository paths.
+
 ## [0.6.0] - 2026-07-15
 
 ### Added
@@ -317,7 +329,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.5...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.1...HEAD
+[0.6.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.0...rapport-v0.6.1
+[0.6.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.5...rapport-v0.6.0
 [0.5.5]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.4...rapport-v0.5.5
 [0.5.4]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.3...rapport-v0.5.4
 [0.5.3]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.2...rapport-v0.5.3

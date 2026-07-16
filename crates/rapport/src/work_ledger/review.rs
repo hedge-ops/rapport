@@ -220,15 +220,12 @@ where
         store.save_work_and_task(context.fs, &work, &task)?;
         Ok(request)
     } else {
-        let relative = path.map_or_else(
-            || {
-                context
-                    .cwd
-                    .strip_prefix(&context.repo_root)
-                    .unwrap_or(Utf8Path::new("."))
-            },
-            |path| path,
-        );
+        let relative = path.unwrap_or_else(|| {
+            context
+                .cwd
+                .strip_prefix(&context.repo_root)
+                .unwrap_or(Utf8Path::new("."))
+        });
         let policy = crate::policy_context::review_policy_for_paths(
             context.fs,
             &context.repo_root,

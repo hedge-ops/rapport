@@ -26,8 +26,7 @@ impl TemporaryRepository {
             std::process::id()
         ));
         assert_ok!(std::fs::create_dir_all(&path));
-        let canonical_path = assert_ok!(std::fs::canonicalize(path));
-        let root = assert_ok!(Utf8PathBuf::from_path_buf(canonical_path));
+        let root = assert_ok!(Utf8PathBuf::from_path_buf(path));
         let repository = Self { root };
         repository.git(["init", "-q", "-b", "main"]);
         repository.git(["config", "user.name", "Rapport Test"]);
