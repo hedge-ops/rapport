@@ -26,7 +26,6 @@ enum Action {
         dry_run: bool,
         /// Deprecated compatibility flag; setup now applies by default.
         #[arg(long, hide = true)]
-        #[expect(dead_code, reason = "accepted as a compatibility no-op")]
         confirm: bool,
     },
 }

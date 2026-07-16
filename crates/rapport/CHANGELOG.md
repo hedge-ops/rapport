@@ -13,6 +13,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Normalized generated GitHub Actions path filters to repository-style `/`
   separators on every host, preventing Windows repairs from emitting invalid
   YAML escapes or reporting forward-slash workflows as drifted.
+- Kept the workspace clean under current stable Clippy by reducing the Work
+  error boundary's size and removing an obsolete lint expectation.
+- Kept Work-ledger Git integration tests compatible with Windows by preserving
+  Git-compatible temporary repository paths.
 
 ## [0.6.0] - 2026-07-15
 

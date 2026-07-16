@@ -327,8 +327,7 @@ impl TemporaryRepository {
             std::process::id()
         ));
         assert_ok!(std::fs::create_dir_all(&path));
-        let canonical = assert_ok!(std::fs::canonicalize(path));
-        let root = Utf8PathBuf::from_path_buf(canonical)
+        let root = Utf8PathBuf::from_path_buf(path)
             .unwrap_or_else(|path| panic!("test path is not UTF-8: {}", path.display()));
         let repository = Self { root, remote: None };
         repository.git(["init", "-q", "-b", "main"]);

@@ -169,7 +169,13 @@ pub(crate) enum Error {
     #[error(transparent)]
     ObjectId(#[from] rapport_git::InvalidObjectId),
     #[error(transparent)]
-    Context(#[from] crate::policy_context::Error),
+    Context(Box<crate::policy_context::Error>),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+}
+
+impl From<crate::policy_context::Error> for Error {
+    fn from(error: crate::policy_context::Error) -> Self {
+        Self::Context(Box::new(error))
+    }
 }
