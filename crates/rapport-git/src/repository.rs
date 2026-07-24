@@ -127,6 +127,38 @@ impl<R: Runner> Git<R> {
         })
     }
 
+    /// List tracked files and non-ignored untracked files in the current worktree.
+    ///
+    /// This uses Git's standard exclusion rules, including repository ignores,
+    /// `.git/info/exclude`, and configured global excludes. Tracked paths remain
+    /// present even when a matching ignore pattern exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] when Git cannot inspect the repository or emits a
+    /// non-UTF-8 path.
+    pub fn working_tree_files(
+        &self,
+        repository: &Repository,
+    ) -> Result<std::collections::BTreeSet<Utf8PathBuf>, GitError> {
+        zero_delimited_paths(
+            self.run_in(
+                repository,
+                [
+                    "ls-files",
+                    "--cached",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                    "--",
+                ],
+                "list working-tree files",
+            )?
+            .stdout(),
+            "list working-tree files",
+        )
+    }
+
     /// Resolve a branch, tag, or other validated revision to a commit.
     ///
     /// # Errors
