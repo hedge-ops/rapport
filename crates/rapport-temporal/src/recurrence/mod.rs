@@ -383,6 +383,17 @@ impl Interval {
         Self(NonZeroU16::new(4).expect("expecting literal 4 to be a valid non zero u16"))
     }
 
+    /// An interval of `6`
+    ///
+    /// # Panics
+    ///
+    /// This should not panic, because 6 is a hard coded `NonZeroU16`
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn six() -> Self {
+        Self(NonZeroU16::new(6).expect("expecting literal 6 to be a valid non zero u16"))
+    }
+
     #[must_use]
     pub fn minus_one(self) -> u16 {
         self.0.get() - 1
@@ -813,6 +824,11 @@ mod tests {
         assert!(!Interval::one().is_many());
         assert_eq!(Interval::four().get(), 4);
         assert!(Interval::four().is_many());
+    }
+
+    #[test]
+    fn interval_six_should_return_six() {
+        assert_eq!(Interval::six().get(), 6);
     }
 
     #[rstest]
