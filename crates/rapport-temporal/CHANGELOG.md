@@ -6,6 +6,13 @@ crate adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-08-20
+
+### Added
+
+- Added `Interval::six()` as a named constructor for six-month relative date
+  calculations.
+
 ## [0.2.4] - 2026-06-17
 
 ### Changed
@@ -64,7 +71,8 @@ Initial release.
 - `query` parser turning human/agent expressions into typed values.
 - `clock` for testable time.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.4...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.5...HEAD
+[0.2.5]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.4...rapport-temporal-v0.2.5
 [0.2.4]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.3...rapport-temporal-v0.2.4
 [0.2.3]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.2...rapport-temporal-v0.2.3
 [0.2.2]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.1...rapport-temporal-v0.2.2
