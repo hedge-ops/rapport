@@ -389,7 +389,7 @@ impl Interval {
     ///
     /// This should not panic, because 6 is a hard coded `NonZeroU16`
     #[must_use]
-    #[allow(clippy::expect_used)]
+    #[expect(clippy::expect_used, reason = "literal 6 is guaranteed to be non-zero")]
     pub fn six() -> Self {
         Self(NonZeroU16::new(6).expect("expecting literal 6 to be a valid non zero u16"))
     }
