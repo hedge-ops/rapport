@@ -14,7 +14,7 @@ authors.workspace = true
 [dependencies]
 rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
 rapport-files = { path = "../rapport-files", version = "0.3.0" }
-rapport-git = { path = "../rapport-git", version = "0.1.1" }
+rapport-git = { path = "../rapport-git", version = "0.1.2" }
 clap.workspace = true
 derive_more.workspace = true
 nonempty.workspace = true
