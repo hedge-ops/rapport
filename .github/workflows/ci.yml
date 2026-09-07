@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   validate:
+    name: Rapport Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
