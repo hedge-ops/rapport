@@ -3,36 +3,50 @@
 //! This module owns canonical Context TOML conversion; domain values own identity and semantic validation.
 
 use super::Error;
-use super::domain::{Boundary, BuildSignoff, Context, ContextId, Entry, Grade, SCHEMA_VERSION};
+use super::domain::{Boundary, Context, ContextId, Entry, SCHEMA_VERSION};
 use crate::shared_ruleset::{NewRule, Reference, Ruleset, RulesetId};
 use rapport_files::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::str::FromStr;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContextFile {
+    #[serde(default = "schema_version")]
     version: u16,
-    id: String,
+    id: Option<String>,
+    namespace: Option<String>,
+    #[serde(rename = "type")]
+    component_type: Option<String>,
     purpose: String,
-    #[serde(default = "one")]
-    next_ownership: u16,
-    #[serde(default = "one")]
-    next_boundary: u16,
+    next_ownership: Option<u16>,
+    next_boundary: Option<u16>,
     #[serde(default)]
     ownership: BTreeMap<String, EntryFile>,
     #[serde(default)]
     boundaries: BTreeMap<String, BoundaryFile>,
     #[serde(default)]
     ruleset: EmbeddedRulesetFile,
-    review: Option<ReviewFile>,
-    #[serde(default)]
-    signoffs: Vec<SignoffFile>,
 }
 
-const fn one() -> u16 {
-    1
+const fn schema_version() -> u16 {
+    SCHEMA_VERSION
+}
+
+fn next_entry(explicit: Option<u16>, ids: impl Iterator<Item = String>) -> Result<u16, Error> {
+    if let Some(next) = explicit {
+        return Ok(next);
+    }
+    let maximum = ids
+        .filter_map(|id| {
+            id.rsplit_once('_')
+                .and_then(|(_, suffix)| suffix.parse::<u16>().ok())
+        })
+        .max()
+        .unwrap_or(0);
+    maximum
+        .checked_add(1)
+        .ok_or_else(|| Error::InvalidEntryId(maximum.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -74,30 +88,13 @@ struct ExampleFile {
     text: String,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReviewFile {
-    minimum_grade: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SignoffFile {
-    id: String,
-    target: String,
-    #[serde(default)]
-    stage: u32,
-    resource_group: Option<String>,
-    #[serde(default)]
-    include: Vec<String>,
-}
-
 pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
     if uses_legacy_schema(contents) {
         return Err(Error::LegacySchema {
             path: path.to_path_buf(),
         });
     }
+    reject_lifecycle_fields(contents, path)?;
     let file: ContextFile = toml::from_str(contents).map_err(|source| Error::Decode {
         path: path.to_path_buf(),
         source,
@@ -108,7 +105,15 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
             version: file.version,
         });
     }
-    let id = ContextId::parse(file.id)?;
+    let namespaced = file.namespace.is_some();
+    let ((Some(identity), None) | (None, Some(identity))) = (file.id, file.namespace) else {
+        return Err(Error::SchemaIdentity {
+            path: path.to_path_buf(),
+        });
+    };
+    let id = ContextId::parse(identity)?;
+    let next_ownership = next_entry(file.next_ownership, file.ownership.keys().cloned())?;
+    let next_boundary = next_entry(file.next_boundary, file.boundaries.keys().cloned())?;
     let ownership = file
         .ownership
         .into_iter()
@@ -124,7 +129,11 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
             ))
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    let ruleset_id = id.embedded_ruleset_id()?;
+    let ruleset_id = if namespaced {
+        RulesetId::parse(id.as_str())?
+    } else {
+        id.embedded_ruleset_id()?
+    };
     let rules = file
         .ruleset
         .rules
@@ -147,44 +156,32 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
         file.ruleset.includes,
         rules,
     )?;
-    let minimum_grade = file
-        .review
-        .map(|review| Grade::from_str(&review.minimum_grade))
-        .transpose()?;
-    let signoffs = file
-        .signoffs
-        .into_iter()
-        .map(|signoff| {
-            let candidate = BuildSignoff::try_new(
-                &id,
-                signoff.target.clone(),
-                signoff.stage,
-                signoff.resource_group.clone(),
-                signoff.include.clone(),
-            )?;
-            if candidate.id() != signoff.id {
-                return Err(Error::MissingSignoff(signoff.id));
-            }
-            Ok(BuildSignoff::from_parts(
-                signoff.id,
-                signoff.target,
-                signoff.stage,
-                signoff.resource_group,
-                signoff.include,
-            ))
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-    Context::from_parts(
+    let mut context = Context::from_parts(
         id,
         file.purpose,
-        file.next_ownership,
-        file.next_boundary,
+        next_ownership,
+        next_boundary,
         ownership,
         boundaries,
         ruleset,
-        minimum_grade,
-        signoffs,
-    )
+    )?;
+    context.set_schema(namespaced, file.component_type)?;
+    context.validate_identities()?;
+    Ok(context)
+}
+
+fn reject_lifecycle_fields(contents: &str, path: &Utf8Path) -> Result<(), Error> {
+    if let Ok(value) = toml::from_str::<toml::Value>(contents) {
+        for field in ["review", "signoffs"] {
+            if value.get(field).is_some() {
+                return Err(Error::LifecycleField {
+                    path: path.to_path_buf(),
+                    field,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn uses_legacy_schema(contents: &str) -> bool {
@@ -222,7 +219,12 @@ fn uses_legacy_schema(contents: &str) -> bool {
 #[derive(Serialize)]
 struct ContextFileRef<'context> {
     version: u16,
-    id: &'context str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<&'context str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace: Option<&'context str>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    component_type: Option<&'context str>,
     purpose: &'context str,
     next_ownership: u16,
     next_boundary: u16,
@@ -231,10 +233,6 @@ struct ContextFileRef<'context> {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     boundaries: BTreeMap<&'context str, BoundaryFileRef<'context>>,
     ruleset: EmbeddedRulesetFileRef<'context>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    review: Option<ReviewFileRef>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    signoffs: Vec<SignoffFileRef<'context>>,
 }
 
 #[derive(Serialize)]
@@ -270,21 +268,6 @@ struct RuleFileRef<'context> {
 struct ExampleFileRef<'context> {
     language: &'context str,
     text: &'context str,
-}
-
-#[derive(Serialize)]
-struct ReviewFileRef {
-    minimum_grade: String,
-}
-
-#[derive(Serialize)]
-struct SignoffFileRef<'context> {
-    id: &'context str,
-    target: &'context str,
-    stage: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resource_group: Option<&'context str>,
-    include: &'context [String],
 }
 
 pub(super) fn render(context: &Context) -> Result<String, Error> {
@@ -330,7 +313,9 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
         .collect();
     let file = ContextFileRef {
         version: SCHEMA_VERSION,
-        id: context.id().as_str(),
+        id: (!context.namespaced()).then(|| context.id().as_str()),
+        namespace: context.namespaced().then(|| context.id().as_str()),
+        component_type: context.component_type(),
         purpose: context.purpose(),
         next_ownership: context.next_ownership(),
         next_boundary: context.next_boundary(),
@@ -345,20 +330,6 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
                 .collect(),
             rules,
         },
-        review: context.minimum_grade().map(|grade| ReviewFileRef {
-            minimum_grade: grade.to_string(),
-        }),
-        signoffs: context
-            .signoffs()
-            .iter()
-            .map(|signoff| SignoffFileRef {
-                id: signoff.id(),
-                target: signoff.target(),
-                stage: signoff.stage(),
-                resource_group: signoff.resource_group(),
-                include: signoff.included_paths(),
-            })
-            .collect(),
     };
     toml_edit::ser::to_string_pretty(&file).map_err(Error::Encode)
 }
@@ -388,8 +359,8 @@ target = "ci"
 
         let error = assert_err!(parse(legacy, Utf8Path::new("/repo/context.toml")));
 
-        assert!(matches!(error, Error::LegacySchema { .. }), "{error:?}");
-        assert!(error.to_string().contains("migrate every legacy"));
-        assert!(error.to_string().contains("rule_includes"));
+        assert!(
+            matches!(error, Error::LegacySchema { path } if path == Utf8Path::new("/repo/context.toml"))
+        );
     }
 }

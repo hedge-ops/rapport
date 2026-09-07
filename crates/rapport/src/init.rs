@@ -1,16 +1,18 @@
 //! Repository initialization command.
 //!
 //! This module owns idempotent agent instructions, local rules ignore policy,
-//! and shared signoff workflow creation.
+//! and repository architecture guidance.
 
-use crate::context::{Clock, CommandContext};
-use crate::policy_context;
+use crate::context::CommandContext;
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
 use std::io;
 use std::io::Write;
 use std::process::ExitCode;
+
+const AGENTS_SECTION: &str = include_str!("../rapport agents section.md");
+const RULES_IGNORE_SECTION: &str = include_str!("../rapport.gitignore");
 
 const FAILURE: u8 = 2;
 const AGENTS_FILE: &str = "AGENTS.md";
@@ -20,10 +22,9 @@ const GITIGNORE_FILE: &str = ".gitignore";
 const RULES_START_MARKER: &str = "# rapport:init-rules:start";
 const RULES_END_MARKER: &str = "# rapport:init-rules:end";
 
-pub fn run<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+pub fn run<F, O, E>(context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
@@ -33,27 +34,18 @@ where
             let contents = upsert_rapport_section(existing.as_deref());
             match context.fs.write_string(&path, contents) {
                 Ok(()) => {
-                    match policy_context::write_shared(context.fs, context.paths.repo_root()) {
-                        Ok(()) => {
-                            if let Err(error) =
-                                write_rules_gitignore(context.fs, context.paths.repo_root())
-                            {
-                                let _ = writeln!(context.err, "{}", render_init_error(&error));
-                                return ExitCode::from(FAILURE);
-                            }
-                            let status = if existing.is_some() {
-                                "updated"
-                            } else {
-                                "created"
-                            };
-                            let _ = writeln!(context.out, "{}", render_initialized(status));
-                            ExitCode::SUCCESS
-                        }
-                        Err(error) => {
-                            let _ = writeln!(context.err, "{}", render_init_error(&error));
-                            ExitCode::from(FAILURE)
-                        }
+                    if let Err(error) = write_rules_gitignore(context.fs, context.paths.repo_root())
+                    {
+                        let _ = writeln!(context.err, "{}", render_init_error(&error));
+                        return ExitCode::from(FAILURE);
                     }
+                    let status = if existing.is_some() {
+                        "updated"
+                    } else {
+                        "created"
+                    };
+                    let _ = writeln!(context.out, "{}", render_initialized(status));
+                    ExitCode::SUCCESS
                 }
                 Err(error) => {
                     let _ = writeln!(context.err, "{}", render_init_error(&error));
@@ -82,19 +74,17 @@ fn write_rules_gitignore(
 }
 
 fn upsert_rules_ignore(existing: Option<&str>) -> String {
-    let section = format!(
-        "{RULES_START_MARKER}\n.rapport/**\n!.rapport/\n!.rapport/rules/\n!.rapport/rules/**\n!.rapport/rules.lock\n{RULES_END_MARKER}\n"
-    );
+    let section = RULES_IGNORE_SECTION;
     match existing {
         Some(contents)
             if contents.contains(RULES_START_MARKER) && contents.contains(RULES_END_MARKER) =>
         {
-            replace_marked(contents, &section, RULES_START_MARKER, RULES_END_MARKER)
+            replace_marked(contents, section, RULES_START_MARKER, RULES_END_MARKER)
         }
         Some(contents) if !contents.trim().is_empty() => {
             format!("{}\n\n{section}", contents.trim_end())
         }
-        _ => section,
+        _ => section.to_owned(),
     }
 }
 
@@ -130,14 +120,14 @@ fn load_agents(
 }
 
 fn upsert_rapport_section(existing: Option<&str>) -> String {
-    let section = rapport_section();
+    let section = AGENTS_SECTION;
     match existing {
         Some(contents) if contents.contains(START_MARKER) && contents.contains(END_MARKER) => {
-            replace_section(contents, &section)
+            replace_section(contents, section)
         }
-        Some(contents) if contents.trim().is_empty() => section,
-        Some(contents) => append_section(contents, &section),
-        None => section,
+        Some(contents) if contents.trim().is_empty() => section.to_owned(),
+        Some(contents) => append_section(contents, section),
+        None => section.to_owned(),
     }
 }
 
@@ -176,12 +166,6 @@ fn append_section(contents: &str, section: &str) -> String {
     updated
 }
 
-fn rapport_section() -> String {
-    format!(
-        "{START_MARKER}\n## Software Factory\n\nThis project uses Rapport for planning, coding, testing, building, and reviewing code. Call `rapport prime` for all the details before doing any of these activities.\n{END_MARKER}\n"
-    )
-}
-
 fn render_initialized(status: &str) -> String {
     ViewBuilder::new()
         .title("rapport init")
@@ -191,10 +175,7 @@ fn render_initialized(status: &str) -> String {
                 ("path", AGENTS_FILE.to_string()),
             ])
         })
-        .section("Signoff Workflow", |b| {
-            b.entries([("path", policy_context::SHARED_WORKFLOW_PATH.to_string())])
-        })
-        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .next_actions(nonempty![RunHint::new("rapport context show .")])
         .build()
 }
 
@@ -215,10 +196,16 @@ mod tests {
     fn upsert_rapport_section_appends_to_existing_content() {
         let updated = upsert_rapport_section(Some("# Instructions\n\nKeep it tidy.\n"));
 
-        assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("## Software Factory"));
-        assert!(updated.contains("rapport prime"));
-        assert_eq!(updated.matches(START_MARKER).count(), 1);
+        assert_eq!(
+            updated,
+            format!(
+                "# Instructions
+
+Keep it tidy.
+
+{AGENTS_SECTION}"
+            )
+        );
     }
 
     #[test]
@@ -227,11 +214,14 @@ mod tests {
             "# Instructions\n\n<!-- rapport:init:start -->\nold\n<!-- rapport:init:end -->\n",
         ));
 
-        assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("planning, coding, testing, building, and reviewing code"));
-        assert!(updated.contains("rapport prime"));
-        assert!(!updated.contains("\nold\n"));
-        assert_eq!(updated.matches(START_MARKER).count(), 1);
+        assert_eq!(
+            updated,
+            format!(
+                "# Instructions
+
+{AGENTS_SECTION}"
+            )
+        );
     }
 
     #[test]
@@ -239,8 +229,13 @@ mod tests {
         let once = upsert_rules_ignore(Some("target/\n"));
         let twice = upsert_rules_ignore(Some(&once));
         assert_eq!(once, twice);
-        assert!(once.starts_with("target/"));
-        assert_eq!(once.matches(RULES_START_MARKER).count(), 1);
-        assert!(once.contains("!.rapport/rules/**"));
+        assert_eq!(
+            once,
+            format!(
+                "target/
+
+{RULES_IGNORE_SECTION}"
+            )
+        );
     }
 }

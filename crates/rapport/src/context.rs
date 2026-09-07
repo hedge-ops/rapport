@@ -1,32 +1,16 @@
 //! Shared command execution context.
 //!
-//! This module owns repository discovery, injected boundary collaborators, and
-//! the clock contract used by command workflows.
+//! Owns repository discovery and the filesystem and output boundaries used by
+//! architecture and review commands.
 
 use crate::paths::RapportPaths;
-use crate::runner::CommandRunner;
-use chrono::{SecondsFormat, Utc};
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 use std::fmt;
 use std::io::Write;
 
-pub trait Clock {
-    fn now_rfc3339(&self) -> String;
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now_rfc3339(&self) -> String {
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
-    }
-}
-
-pub struct CommandContext<'context, F, C, O, E>
+pub struct CommandContext<'context, F, O, E>
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
@@ -34,24 +18,19 @@ where
     pub cwd: Utf8PathBuf,
     pub paths: RapportPaths,
     pub fs: &'context mut F,
-    pub clock: &'context C,
-    pub runner: &'context dyn CommandRunner,
     pub out: &'context mut O,
     pub err: &'context mut E,
 }
 
-impl<'context, F, C, O, E> CommandContext<'context, F, C, O, E>
+impl<'context, F, O, E> CommandContext<'context, F, O, E>
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
     pub fn new(
         cwd: Utf8PathBuf,
         fs: &'context mut F,
-        clock: &'context C,
-        runner: &'context dyn CommandRunner,
         out: &'context mut O,
         err: &'context mut E,
     ) -> Self {
@@ -62,18 +41,15 @@ where
             cwd,
             paths,
             fs,
-            clock,
-            runner,
             out,
             err,
         }
     }
 }
 
-impl<F, C, O, E> fmt::Debug for CommandContext<'_, F, C, O, E>
+impl<F, O, E> fmt::Debug for CommandContext<'_, F, O, E>
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {

@@ -6,7 +6,7 @@ use super::boundary;
 use super::catalog::Catalog;
 use super::repository::Store;
 use super::{Error, RulesetId};
-use rapport_files::{FileSystem, Utf8Path};
+use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 
 pub(crate) struct SharedRulesets {
@@ -25,6 +25,8 @@ impl SharedRulesets {
             let digest = format!("{:x}", Sha256::digest(contents.as_bytes()));
             summaries.push(SharedRulesetSummary {
                 id: stored.ruleset().id().clone(),
+                path: stored.path().to_path_buf(),
+                rules: stored.ruleset().rules().cloned().collect(),
                 purpose: stored.ruleset().purpose().to_owned(),
                 source: stored.source().to_string(),
                 transitive: closure
@@ -61,6 +63,8 @@ impl std::fmt::Debug for SharedRulesets {
 
 pub(crate) struct SharedRulesetSummary {
     id: RulesetId,
+    path: Utf8PathBuf,
+    rules: Vec<super::Rule>,
     purpose: String,
     source: String,
     transitive: Vec<RulesetId>,
@@ -69,6 +73,14 @@ pub(crate) struct SharedRulesetSummary {
 }
 
 impl SharedRulesetSummary {
+    pub(crate) fn path(&self) -> &Utf8Path {
+        &self.path
+    }
+
+    pub(crate) fn rules(&self) -> &[super::Rule] {
+        &self.rules
+    }
+
     pub(crate) fn id(&self) -> &RulesetId {
         &self.id
     }
@@ -99,6 +111,8 @@ impl std::fmt::Debug for SharedRulesetSummary {
         formatter
             .debug_struct("SharedRulesetSummary")
             .field("id", &self.id)
+            .field("path", &self.path)
+            .field("rules", &self.rules)
             .field("purpose", &self.purpose)
             .field("source", &self.source)
             .field("transitive", &self.transitive)

@@ -90,9 +90,10 @@ mod tests {
 
         let output = table.render();
 
-        assert!(output.contains("Name"));
-        assert!(output.contains("Value"));
-        assert!(output.contains("─"));
+        assert_eq!(
+            output,
+            "Name                 Value      \n────────────────────────────────\n"
+        );
     }
 
     #[test]
@@ -102,8 +103,10 @@ mod tests {
 
         let output = table.render();
 
-        assert!(output.contains("Alice"));
-        assert!(output.contains("100"));
+        assert_eq!(
+            output,
+            "Name                 Value      \n────────────────────────────────\nAlice                100        \n"
+        );
     }
 
     #[test]
@@ -113,8 +116,7 @@ mod tests {
 
         let output = table.render();
 
-        assert!(output.contains("This is…"));
-        assert!(!output.contains("This is a very long name"));
+        assert_eq!(output, "Name       \n───────────\nThis is…   \n");
     }
 
     #[test]

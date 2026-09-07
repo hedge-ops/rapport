@@ -1,16 +1,13 @@
-//! Context policy domain.
+//! Context architecture domain.
 //!
-//! Owns stable identities, architectural semantics, embedded Rules, Review
-//! quality, and Build signoff declarations. Persistence and workflows remain
-//! boundary concerns.
+//! Owns stable identities, component purpose, ownership, boundaries, and local
+//! review benchmarks. Persistence remains a boundary concern.
 
 use super::Error;
 use crate::shared_ruleset::{NewRule, RuleUpdate, Ruleset, RulesetId};
-use rapport_command::ResourceKey;
 use rapport_files::Utf8Path;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::str::FromStr;
 
 pub(crate) const SCHEMA_VERSION: u16 = 1;
 
@@ -178,188 +175,17 @@ pub(crate) enum BoundaryOwnerUpdate {
     Clear,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub(crate) enum Grade {
-    #[display("F")]
-    F,
-    #[display("D-")]
-    DMinus,
-    #[display("D")]
-    D,
-    #[display("D+")]
-    DPlus,
-    #[display("C-")]
-    CMinus,
-    #[display("C")]
-    C,
-    #[display("C+")]
-    CPlus,
-    #[display("B-")]
-    BMinus,
-    #[display("B")]
-    B,
-    #[display("B+")]
-    BPlus,
-    #[display("A-")]
-    AMinus,
-    #[display("A")]
-    A,
-    #[display("A+")]
-    APlus,
-}
-
-impl Grade {
-    pub(crate) const DEFAULT: Self = Self::B;
-}
-
-impl FromStr for Grade {
-    type Err = Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "A+" => Ok(Self::APlus),
-            "A" => Ok(Self::A),
-            "A-" => Ok(Self::AMinus),
-            "B+" => Ok(Self::BPlus),
-            "B" => Ok(Self::B),
-            "B-" => Ok(Self::BMinus),
-            "C+" => Ok(Self::CPlus),
-            "C" => Ok(Self::C),
-            "C-" => Ok(Self::CMinus),
-            "D+" => Ok(Self::DPlus),
-            "D" => Ok(Self::D),
-            "D-" => Ok(Self::DMinus),
-            "F" => Ok(Self::F),
-            _ => Err(Error::InvalidGrade),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) struct BuildSignoff {
-    id: String,
-    target: String,
-    stage: u32,
-    resource_group: Option<String>,
-    included_paths: Vec<String>,
-}
-
-impl BuildSignoff {
-    pub(crate) fn try_new(
-        context: &ContextId,
-        target: String,
-        stage: u32,
-        resource_group: Option<String>,
-        included_paths: Vec<String>,
-    ) -> Result<Self, Error> {
-        if target.is_empty()
-            || !target
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-        {
-            return Err(Error::InvalidTarget);
-        }
-        if let Some(group) = &resource_group {
-            ResourceKey::new(group).map_err(|_| Error::InvalidResourceGroup)?;
-        }
-        let target_id = target
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() {
-                    character.to_ascii_uppercase()
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
-        Ok(Self {
-            id: format!("{}_SIGNOFF_{target_id}", context.as_str()),
-            target,
-            stage,
-            resource_group,
-            included_paths,
-        })
-    }
-
-    pub(crate) fn from_parts(
-        id: String,
-        target: String,
-        stage: u32,
-        resource_group: Option<String>,
-        included_paths: Vec<String>,
-    ) -> Self {
-        Self {
-            id,
-            target,
-            stage,
-            resource_group,
-            included_paths,
-        }
-    }
-
-    pub(crate) fn id(&self) -> &str {
-        &self.id
-    }
-
-    pub(crate) fn target(&self) -> &str {
-        &self.target
-    }
-
-    pub(crate) fn stage(&self) -> u32 {
-        self.stage
-    }
-
-    pub(crate) fn resource_group(&self) -> Option<&str> {
-        self.resource_group.as_deref()
-    }
-
-    pub(crate) fn included_paths(&self) -> &[String] {
-        &self.included_paths
-    }
-
-    pub(crate) fn add_path(&mut self, path: String) -> Result<(), Error> {
-        if self.included_paths.contains(&path) {
-            return Err(Error::InvalidIncludedPath);
-        }
-        self.included_paths.push(path);
-        self.included_paths.sort();
-        Ok(())
-    }
-
-    pub(crate) fn remove_path(&mut self, path: &str) -> Result<(), Error> {
-        let before = self.included_paths.len();
-        self.included_paths.retain(|candidate| candidate != path);
-        if before == self.included_paths.len() {
-            return Err(Error::InvalidIncludedPath);
-        }
-        Ok(())
-    }
-}
-
-impl fmt::Debug for BuildSignoff {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("BuildSignoff")
-            .field("id", &self.id)
-            .field("target", &self.target)
-            .field("stage", &self.stage)
-            .field("resource_group", &self.resource_group)
-            .field("included_path_count", &self.included_paths.len())
-            .finish()
-    }
-}
-
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Context {
     id: ContextId,
     purpose: String,
+    component_type: Option<String>,
+    namespaced: bool,
     next_ownership: u16,
     next_boundary: u16,
     ownership: Vec<Entry>,
     boundaries: Vec<Boundary>,
     ruleset: Ruleset,
-    minimum_grade: Option<Grade>,
-    signoffs: Vec<BuildSignoff>,
 }
 
 impl Context {
@@ -368,6 +194,8 @@ impl Context {
         Ok(Self {
             id,
             purpose: required(purpose)?,
+            component_type: None,
+            namespaced: false,
             next_ownership: 1,
             next_boundary: 1,
             ownership: Vec::new(),
@@ -379,15 +207,9 @@ impl Context {
                 Vec::new(),
                 Vec::new(),
             )?,
-            minimum_grade: None,
-            signoffs: Vec::new(),
         })
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the constructor validates the complete versioned Context boundary record"
-    )]
     pub(crate) fn from_parts(
         id: ContextId,
         purpose: String,
@@ -396,24 +218,37 @@ impl Context {
         ownership: Vec<Entry>,
         boundaries: Vec<Boundary>,
         ruleset: Ruleset,
-        minimum_grade: Option<Grade>,
-        signoffs: Vec<BuildSignoff>,
     ) -> Result<Self, Error> {
         Ok(Self {
             id,
             purpose: required(purpose)?,
+            component_type: None,
+            namespaced: false,
             next_ownership,
             next_boundary,
             ownership,
             boundaries,
             ruleset,
-            minimum_grade,
-            signoffs,
         })
     }
 
     pub(crate) fn id(&self) -> &ContextId {
         &self.id
+    }
+    pub(crate) fn component_type(&self) -> Option<&str> {
+        self.component_type.as_deref()
+    }
+    pub(crate) fn namespaced(&self) -> bool {
+        self.namespaced
+    }
+    pub(crate) fn set_schema(
+        &mut self,
+        namespaced: bool,
+        component_type: Option<String>,
+    ) -> Result<(), Error> {
+        self.namespaced = namespaced;
+        self.component_type = component_type.map(required).transpose()?;
+        Ok(())
     }
     pub(crate) fn purpose(&self) -> &str {
         &self.purpose
@@ -433,18 +268,6 @@ impl Context {
     }
     pub(crate) fn ruleset_mut(&mut self) -> &mut Ruleset {
         &mut self.ruleset
-    }
-    pub(crate) fn minimum_grade(&self) -> Option<Grade> {
-        self.minimum_grade
-    }
-    pub(crate) fn set_minimum_grade(&mut self, grade: Option<Grade>) {
-        self.minimum_grade = grade;
-    }
-    pub(crate) fn signoffs(&self) -> &[BuildSignoff] {
-        &self.signoffs
-    }
-    pub(crate) fn signoffs_mut(&mut self) -> &mut Vec<BuildSignoff> {
-        &mut self.signoffs
     }
     pub(crate) fn next_ownership(&self) -> u16 {
         self.next_ownership
@@ -535,33 +358,7 @@ impl Context {
             self.boundaries.iter().map(Boundary::id),
         )?;
 
-        let mut signoff_ids = BTreeSet::new();
-        for signoff in &self.signoffs {
-            if !signoff_ids.insert(signoff.id()) {
-                return Err(Error::DuplicateSignoff(signoff.id().to_owned()));
-            }
-            let expected = Self::signoff_identity(&self.id, signoff)?;
-            if expected != signoff.id() {
-                return Err(Error::MissingSignoff(signoff.id().to_owned()));
-            }
-            let unique_paths = signoff.included_paths().iter().collect::<BTreeSet<_>>();
-            if unique_paths.len() != signoff.included_paths().len() {
-                return Err(Error::InvalidIncludedPath);
-            }
-        }
         Ok(())
-    }
-
-    fn signoff_identity(id: &ContextId, signoff: &BuildSignoff) -> Result<String, Error> {
-        Ok(BuildSignoff::try_new(
-            id,
-            signoff.target().to_owned(),
-            signoff.stage(),
-            signoff.resource_group().map(str::to_owned),
-            signoff.included_paths().to_vec(),
-        )?
-        .id()
-        .to_owned())
     }
 }
 
@@ -571,13 +368,13 @@ impl fmt::Debug for Context {
             .debug_struct("Context")
             .field("id", &self.id)
             .field("purpose", &self.purpose)
+            .field("component_type", &self.component_type)
+            .field("namespaced", &self.namespaced)
             .field("next_ownership", &self.next_ownership)
             .field("next_boundary", &self.next_boundary)
             .field("ownership", &self.ownership)
             .field("boundaries", &self.boundaries)
             .field("ruleset", &self.ruleset)
-            .field("minimum_grade", &self.minimum_grade)
-            .field("signoffs", &self.signoffs)
             .finish()
     }
 }

@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     /// When ignored build metadata changes, the effective policy digest remains bound to Git-visible policy files.
-    fn policy_digest_should_ignore_context_files_beneath_an_ignored_directory() {
+    fn review_policy_should_ignore_context_files_beneath_an_ignored_directory() {
         const ROOT_CONTEXT: &str = r#"version = 1
 id = "ROOT"
 purpose = "Repository policy."
@@ -226,7 +226,7 @@ includes = []
         repository.git(&["add", ".gitignore", "context.toml", "src/lib.rs"]);
         repository.git(&["commit", "-q", "-m", "add repository policy"]);
         let mut fs = RealFileSystem;
-        let before = crate::policy_context::effective_policy_digest_for_paths(
+        let before = crate::policy_context::review_policy_for_paths(
             &mut fs,
             &repository.root,
             [Utf8Path::new("src/lib.rs")],
@@ -236,13 +236,13 @@ includes = []
         repository.write("build/cache/context.toml", ROOT_CONTEXT);
         repository.write("build/cache/metadata.txt", "updated build metadata");
 
-        let after = crate::policy_context::effective_policy_digest_for_paths(
+        let after = crate::policy_context::review_policy_for_paths(
             &mut fs,
             &repository.root,
             [Utf8Path::new("src/lib.rs")],
         )
         .unwrap();
 
-        assert_eq!(after, before);
+        assert_eq!(after.markdown, before.markdown);
     }
 }

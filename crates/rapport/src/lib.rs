@@ -1,25 +1,21 @@
-//! Rapport repository workflow library.
+//! Rapport architecture and review library.
 //!
-//! This crate root exposes the intentional embedding API and delegates CLI,
-//! policy, work-ledger, filesystem, and presentation behavior to owned modules.
+//! Exposes the CLI embedding boundary and delegates context, standards, and
+//! prompt generation to their owned modules.
 
 mod cli;
 mod context;
-mod doctor;
-mod github;
 mod init;
 mod paths;
 mod policy_context;
 mod prime;
 mod repository_files;
-mod runner;
+mod review;
 mod shared_ruleset;
 mod view;
-mod work_ledger;
 
-pub use context::{Clock, CommandContext, SystemClock, find_repo_root};
+pub use context::{CommandContext, find_repo_root};
 pub use paths::RapportPaths;
-pub use runner::{CommandOutcome, CommandRunner, CommandSpec, RealCommandRunner};
 pub use view::{Outcome, RunHint, View, ViewBuilder};
 
 use clap::{CommandFactory, Parser, error::ErrorKind};
@@ -29,7 +25,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 /// Run the current `rapport` binary entrypoint.
-pub fn run<I, O, E>(argv: I, runner: &dyn CommandRunner, out: &mut O, err: &mut E) -> ExitCode
+pub fn run<I, O, E>(argv: I, out: &mut O, err: &mut E) -> ExitCode
 where
     I: IntoIterator<Item = String>,
     O: Write,
@@ -43,15 +39,12 @@ where
         }
     };
     let mut fs = RealFileSystem;
-    let clock = SystemClock;
-    run_with_environment(argv, runner, &mut fs, &clock, cwd, out, err)
+    run_with_environment(argv, &mut fs, cwd, out, err)
 }
 
-fn run_with_environment<I, F, C, O, E>(
+fn run_with_environment<I, F, O, E>(
     argv: I,
-    runner: &dyn CommandRunner,
     fs: &mut F,
-    clock: &C,
     cwd: Utf8PathBuf,
     out: &mut O,
     err: &mut E,
@@ -59,7 +52,6 @@ fn run_with_environment<I, F, C, O, E>(
 where
     I: IntoIterator<Item = String>,
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
@@ -70,7 +62,7 @@ where
     }
     match Cli::try_parse_from(std::iter::once(String::from("rapport")).chain(arguments)) {
         Ok(cli) => {
-            let mut context = CommandContext::new(cwd, fs, clock, runner, out, err);
+            let mut context = CommandContext::new(cwd, fs, out, err);
             execute_command(&cli, &mut context)
         }
         Err(error) if error.kind() == ErrorKind::DisplayHelp => {
@@ -95,25 +87,18 @@ fn current_utf8_dir() -> Result<Utf8PathBuf, String> {
         .map_err(|path| format!("current dir is not valid UTF-8: {}", path.to_string_lossy()))
 }
 
-fn execute_command<F, C, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+fn execute_command<F, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
     match &cli.command {
         Command::Prime => prime::run(context),
-        Command::Doctor => doctor::run(context),
-        Command::Github(github_args) => github::run(github_args, context),
         Command::Init => init::run(context),
         Command::Ruleset(ruleset_args) => shared_ruleset::run(ruleset_args, context),
-        Command::Work(work_args) => work_ledger::run(work_args, context),
-        Command::Develop(develop_args) => work_ledger::run_develop(develop_args, context),
         Command::Context(context_args) => policy_context::run(context_args, context),
-        Command::Build(build_args) => work_ledger::run_build(build_args, context),
-        Command::Review(review_args) => work_ledger::run_review(review_args, context),
-        Command::Integrate(integrate_args) => work_ledger::run_integrate(integrate_args, context),
+        Command::Review(review_args) => review::run(review_args, context),
     }
 }
 
@@ -126,32 +111,6 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
     use rapport_files::InMemoryFileSystem;
-    use rstest::rstest;
-    use std::collections::VecDeque;
-    use std::io;
-    use std::sync::Mutex;
-
-    #[derive(Debug)]
-    struct FixedClock;
-
-    impl Clock for FixedClock {
-        fn now_rfc3339(&self) -> String {
-            String::from("2026-07-07T23:00:00Z")
-        }
-    }
-
-    #[derive(Debug)]
-    struct NeverRunner;
-
-    impl CommandRunner for NeverRunner {
-        fn run(
-            &self,
-            _spec: &CommandSpec,
-            _cwd: &rapport_files::Utf8Path,
-        ) -> io::Result<CommandOutcome> {
-            panic!("placeholder CLI must not run external commands");
-        }
-    }
 
     fn run_with(args: &[&str]) -> (ExitCode, String, String) {
         let mut fs = InMemoryFileSystem::default();
@@ -159,22 +118,12 @@ mod tests {
     }
 
     fn run_with_fs(args: &[&str], fs: &mut InMemoryFileSystem) -> (ExitCode, String, String) {
-        run_with_runner(args, fs, &NeverRunner)
-    }
-
-    fn run_with_runner(
-        args: &[&str],
-        fs: &mut InMemoryFileSystem,
-        runner: &dyn CommandRunner,
-    ) -> (ExitCode, String, String) {
         let mut out = Vec::new();
         let mut err = Vec::new();
         fs.add_directory("/repo/.git");
         let code = run_with_environment(
             args.iter().map(|arg| (*arg).to_string()),
-            runner,
             fs,
-            &FixedClock,
             Utf8PathBuf::from("/repo"),
             &mut out,
             &mut err,
@@ -186,252 +135,44 @@ mod tests {
         )
     }
 
-    #[derive(Debug)]
-    struct FakeRunner {
-        outcomes: Mutex<VecDeque<io::Result<CommandOutcome>>>,
-        calls: Mutex<Vec<(CommandSpec, Utf8PathBuf)>>,
-    }
-
-    impl FakeRunner {
-        fn with_outcomes(outcomes: impl IntoIterator<Item = io::Result<CommandOutcome>>) -> Self {
-            Self {
-                outcomes: Mutex::new(outcomes.into_iter().collect()),
-                calls: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn successful(stdout: &str) -> Self {
-            Self::with_outcomes([Ok(CommandOutcome {
-                success: true,
-                stdout: stdout.to_string(),
-                stderr: String::new(),
-            })])
-        }
-
-        fn failing(stderr: &str) -> Self {
-            Self::with_outcomes([Ok(CommandOutcome {
-                success: false,
-                stdout: String::new(),
-                stderr: stderr.to_string(),
-            })])
-        }
-
-        fn calls(&self) -> Vec<(CommandSpec, Utf8PathBuf)> {
-            self.calls.lock().unwrap().clone()
-        }
-    }
-
-    impl CommandRunner for FakeRunner {
-        fn run(
-            &self,
-            spec: &CommandSpec,
-            cwd: &rapport_files::Utf8Path,
-        ) -> io::Result<CommandOutcome> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((spec.clone(), cwd.to_path_buf()));
-            self.outcomes.lock().unwrap().pop_front().unwrap()
-        }
-    }
-
     #[test]
     fn no_args_renders_root_help() {
-        let (code, out, err) = run_with(&[]);
+        let (code, _, err) = run_with(&[]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("repository rapport for human-directed agent work"));
-        assert!(out.contains("prime -> doctor -> work -> develop -> build -> review -> integrate"));
-        assert!(out.contains("prime"));
-        assert!(out.contains("doctor"));
-        assert!(out.contains("work"));
+        let commands = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(commands, ["prime", "init", "ruleset", "context", "review"]);
         assert_eq!(err, "");
     }
 
     #[test]
     fn help_flag_renders_root_help() {
-        let (code, out, err) = run_with(&["--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Rapport keeps human-directed agent work grounded"));
-        assert!(out.contains("prime -> doctor -> work -> develop -> build -> review -> integrate"));
-        assert_eq!(err, "");
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn version_flag_renders_package_version() {
-        let (code, out, err) = run_with(&["--version"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert_eq!(out, format!("rapport {}\n", env!("CARGO_PKG_VERSION")));
-        assert_eq!(err, "");
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "--version"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
     }
 
     #[test]
     fn prime_help_exists() {
-        let (code, out, err) = run_with(&["prime", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Show how agents should use Rapport"));
-        assert_eq!(err, "");
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "prime", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
-    fn prime_renders_workflow() {
+    fn prime_should_print_the_complete_markdown_verbatim() {
         let (code, out, err) = run_with(&["prime"]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("rapport prime"));
-        assert!(out.contains("planning, coding, testing, building, reviewing"));
-        assert!(out.contains("rapport work start"));
-        assert!(out.contains("rapport context show"));
-        assert!(out.contains("rapport work task next"));
-        assert!(out.contains("rapport work checkpoint start"));
-        assert!(out.contains("rapport doctor"));
-        assert!(out.contains("rapport build"));
-        assert!(out.contains("rapport integrate"));
-        assert!(out.contains("rapport integrate complete"));
+        assert_eq!(out, include_str!("../prime.md"));
         assert_eq!(err, "");
-    }
-
-    #[test]
-    fn doctor_help_exists() {
-        let (code, out, err) = run_with(&["doctor", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Check repository prerequisites"));
-        assert_eq!(err, "");
-    }
-
-    #[test]
-    fn github_setup_help_should_document_applying_setup_and_dry_run() {
-        let (code, out, err) = run_with(&["github", "setup", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Enable repository settings used by Rapport integration"));
-        assert!(out.contains("--dry-run"));
-        assert!(!out.contains("--confirm"));
-        assert_eq!(err, "");
-    }
-
-    #[rstest]
-    #[case::default(&["github", "setup"])]
-    #[case::legacy_confirm(&["github", "setup", "--confirm"])]
-    fn github_setup_should_apply_by_default_and_accept_legacy_confirm(#[case] arguments: &[&str]) {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = github_setup_runner();
-
-        let (code, out, err) = run_with_runner(arguments, &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("`applied` — true"));
-        assert_eq!(err, "");
-        let calls = runner.calls();
-        assert_eq!(calls.len(), 3);
-        assert_eq!(calls[2].0.args[0..2], ["repo", "edit"]);
-        assert!(!calls.iter().any(|(spec, _)| {
-            spec.args
-                .iter()
-                .any(|argument| argument.contains("ruleset"))
-        }));
-    }
-
-    #[test]
-    fn github_setup_should_show_changes_without_mutating_github_when_dry_run() {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = FakeRunner::with_outcomes([
-            successful_result("authenticated\n"),
-            successful_result(github_repository_identity()),
-        ]);
-
-        let (code, out, err) = run_with_runner(&["github", "setup", "--dry-run"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("`branch rules` — unmanaged"));
-        assert!(out.contains("`squash merge` — enabled"));
-        assert!(out.contains("`delete merged branches` — enabled"));
-        assert!(out.contains("`applied` — false"));
-        assert_eq!(err, "");
-        assert_eq!(runner.calls().len(), 2);
-    }
-
-    fn github_setup_runner() -> FakeRunner {
-        FakeRunner::with_outcomes([
-            successful_result("authenticated\n"),
-            successful_result(github_repository_identity()),
-            successful_result(""),
-        ])
-    }
-
-    fn github_repository_identity() -> &'static str {
-        r#"{"nameWithOwner":"hedge-ops/rapport","defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"deleteBranchOnMerge":true,"viewerPermission":"ADMIN"}"#
-    }
-
-    #[test]
-    fn doctor_reports_github_origin_success() {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = FakeRunner::with_outcomes([
-            successful_result("git@github.com:hedge-ops/rapport.git\n"),
-            successful_result("authenticated\n"),
-            successful_result(
-                r#"{"nameWithOwner":"hedge-ops/rapport","defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"deleteBranchOnMerge":true,"viewerPermission":"ADMIN"}"#,
-            ),
-        ]);
-
-        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("git repository"));
-        assert!(out.contains("origin remote"));
-        assert!(out.contains("GitHub origin"));
-        assert!(out.contains("GitHub integration"));
-        assert!(out.contains("rapport integrate"));
-        assert_eq!(err, "");
-        assert_eq!(runner.calls().len(), 3);
-    }
-
-    #[test]
-    fn doctor_should_not_require_github_branch_rules() {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = FakeRunner::with_outcomes([
-            successful_result("git@github.com:hedge-ops/rapport.git\n"),
-            successful_result("authenticated\n"),
-            successful_result(github_repository_identity()),
-        ]);
-
-        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("branch rules unmanaged"));
-        assert_eq!(err, "");
-    }
-
-    #[test]
-    fn doctor_rejects_missing_origin() {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = FakeRunner::failing("error: No such remote 'origin'\n");
-
-        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::from(2));
-        assert_eq!(out, "");
-        assert!(err.contains("origin remote"));
-        assert!(err.contains("No such remote"));
-        assert!(err.contains("configure GitHub origin"));
-    }
-
-    #[test]
-    fn doctor_rejects_non_github_origin() {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = FakeRunner::successful("https://gitlab.com/hedge-ops/rapport.git\n");
-
-        let (code, out, err) = run_with_runner(&["doctor"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::from(2));
-        assert_eq!(out, "");
-        assert!(err.contains("GitHub origin"));
-        assert!(err.contains("does not point at GitHub"));
-        assert!(err.contains("https://gitlab.com/hedge-ops/rapport.git"));
     }
 
     /// Phase 1 manages catalog and repository Rulesets through the public CLI grammar.
@@ -446,14 +187,8 @@ mod tests {
         let (catalog_list_code, catalog_list, catalog_list_error) =
             run_with_fs(&["ruleset", "catalog", "list"], &mut fs);
         assert_eq!(catalog_list_code, ExitCode::SUCCESS);
-        assert!(
-            catalog_list.contains("`RUST_CRATE`"),
-            "expecting catalog list to include the Rust aggregate"
-        );
-        assert!(
-            catalog_list_error.is_empty(),
-            "expecting catalog list not to emit an error"
-        );
+        assert_eq!(catalog_list, include_str!("testdata/catalog-list.md"));
+        assert_eq!(catalog_list_error, "");
 
         assert_eq!(
             run_with_fs(&["ruleset", "catalog", "install", "RUST_CRATE"], &mut fs).0,
@@ -582,18 +317,9 @@ mod tests {
         let (_, shown_rule, _) =
             run_with_fs(&["ruleset", "show", "APP", "--rule", "CODE_001"], &mut fs);
         let (_, listed, _) = run_with_fs(&["ruleset", "list"], &mut fs);
-        assert!(
-            composition.contains("`CODE`"),
-            "expecting composition status to show the direct Ruleset"
-        );
-        assert!(
-            shown_rule.contains("Use explicit names."),
-            "expecting show to resolve a composed Rule"
-        );
-        assert!(
-            listed.contains("Repository coding expectations."),
-            "expecting list to show the updated Ruleset purpose"
-        );
+        assert_eq!(composition, include_str!("testdata/ruleset-composition.md"));
+        assert_eq!(shown_rule, include_str!("testdata/ruleset-rule.md"));
+        assert_eq!(listed, include_str!("testdata/ruleset-list.md"));
 
         assert_eq!(
             run_with_fs(
@@ -622,72 +348,15 @@ mod tests {
     }
 
     #[test]
-    fn work_help_exists() {
-        let (code, out, err) = run_with(&["work", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Manage active local work state"));
-        assert!(out.contains("start"));
-        assert!(out.contains("status"));
-        assert!(out.contains("complete"));
-        assert_eq!(err, "");
-    }
-
-    #[test]
-    fn context_help_explains_project_context_intent() {
-        let (code, out, err) = run_with(&["context", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("what a project area is about"));
-        assert!(out.contains("Ownership records what belongs"));
-        assert!(out.contains("numbered, reviewable benchmarks"));
-        assert!(out.contains("context.toml"));
-        assert_eq!(err, "");
-    }
-
-    #[test]
-    fn build_help_exists() {
-        let (code, out, err) = run_with(&["build", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Validate active work"));
-        assert!(out.contains("[PATH]"));
-        assert_eq!(err, "");
+    fn context_help_exists() {
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "context", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn init_help_exists() {
-        let (code, out, err) = run_with(&["init", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Record Rapport usage"));
-        assert_eq!(err, "");
-    }
-
-    #[test]
-    fn integrate_help_exists() {
-        let (code, out, err) = run_with(&["integrate", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Git/GitHub integration"));
-        assert!(out.contains("start"));
-        assert!(out.contains("status"));
-        assert!(out.contains("cancel"));
-        assert!(out.contains("complete"));
-        assert_eq!(err, "");
-    }
-
-    #[test]
-    fn integrate_requires_active_work() {
-        let mut fs = InMemoryFileSystem::default();
-        let runner = FakeRunner::successful("must not run");
-
-        let (code, out, err) = run_with_runner(&["integrate", "start"], &mut fs, &runner);
-
-        assert_eq!(code, ExitCode::from(2));
-        assert_eq!(out, "");
-        assert!(err.contains("no active Work exists"));
-        assert!(runner.calls().is_empty());
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "init", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
@@ -697,21 +366,12 @@ mod tests {
         let (code, out, err) = run_with_fs(&["init"], &mut fs);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("status` — created"));
-        assert!(out.contains("AGENTS.md"));
-        assert!(out.contains(".github/workflows/rapport-signoff.yml"));
+        assert_eq!(out, include_str!("testdata/init-created.md"));
         assert_eq!(err, "");
         let agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
 
-        assert!(agents.contains("## Software Factory"));
-        assert!(agents.contains("rapport prime"));
-        assert!(!agents.contains("rapport work start"));
-        let signoff = fs
-            .read_to_string("/repo/.github/workflows/rapport-signoff.yml")
-            .unwrap();
-        assert!(signoff.contains("workflow_call:"));
-        assert!(signoff.contains("context=${IDENTITY}"));
-        assert!(signoff.contains("context=${AGGREGATE}"));
+        assert_eq!(agents, include_str!("../rapport agents section.md"));
+        assert!(!fs.exists("/repo/.github/workflows/rapport-signoff.yml"));
     }
 
     #[test]
@@ -729,33 +389,18 @@ mod tests {
         let second_agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
 
         assert_eq!(first_code, ExitCode::SUCCESS);
-        assert!(first_out.contains("status` — updated"));
+        assert_eq!(first_out, include_str!("testdata/init-updated.md"));
         assert_eq!(first_err, "");
         assert_eq!(second_code, ExitCode::SUCCESS);
-        assert!(second_out.contains("status` — updated"));
+        assert_eq!(second_out, first_out);
         assert_eq!(second_err, "");
         assert_eq!(first_agents, second_agents);
-        assert!(second_agents.contains("# Agent Notes"));
         assert_eq!(
-            second_agents.matches("<!-- rapport:init:start -->").count(),
-            1
+            second_agents,
+            format!(
+                "# Agent Notes\n\nKeep local context current.\n\n{}",
+                include_str!("../rapport agents section.md")
+            )
         );
-    }
-
-    type FakeOutcome = io::Result<CommandOutcome>;
-
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "test helper builds io::Result queues consumed by the fake runner"
-    )]
-    fn successful_result(stdout: &str) -> FakeOutcome {
-        Ok(successful_outcome(stdout))
-    }
-    fn successful_outcome(stdout: &str) -> CommandOutcome {
-        CommandOutcome {
-            success: true,
-            stdout: stdout.to_string(),
-            stderr: String::new(),
-        }
     }
 }

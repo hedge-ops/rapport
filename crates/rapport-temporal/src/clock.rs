@@ -97,7 +97,7 @@ mod tests {
 
         let actual = clock.today();
 
-        assert_eq!(actual.into_iso_string(), "2025-09-30");
+        assert_eq!(actual, Date::from_str_unchecked("2025-09-30"));
     }
 
     #[test]
@@ -106,7 +106,12 @@ mod tests {
 
         fake.add_days(2);
 
-        assert_eq!(fake.now().to_string(), "2025-10-02 10:07:00 UTC");
+        assert_eq!(
+            fake.now(),
+            crate::time::Instant::from_utc_datetime(claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 10, 2, 10, 7, 0).single()
+            ))
+        );
     }
 
     #[test]
@@ -116,6 +121,11 @@ mod tests {
 
         fake.set_time(Instant::from_timestamp(1_764_497_220));
 
-        assert_eq!(cloned.now().to_string(), "2025-11-30 10:07:00 UTC");
+        assert_eq!(
+            cloned.now(),
+            crate::time::Instant::from_utc_datetime(claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 11, 30, 10, 7, 0).single()
+            ))
+        );
     }
 }

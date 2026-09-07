@@ -4,7 +4,30 @@ All notable changes to `rapport` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this crate
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-09-07
+
+### Added
+
+- Direct `rapport review [PATH ...]` Markdown prompts with inherited architecture,
+  full benchmarks, actual source paths, and no Work or integration prerequisites.
+- Namespace-based component contexts, optional component types, inferred entry
+  counters, and `context init --namespace <ID> --type <TYPE>`.
+
+### Changed
+
+- Removed Work, development, build, integration, GitHub setup, and lifecycle review
+  commands. Rapport now owns architecture, benchmarks, and review prompts only.
+- Replaced `context doctor` with `context validate`; removed grade and signoff
+  commands and reject their obsolete fields with explicit migration guidance.
+- Removed lifecycle storage, clock, and external-command runner APIs from the CLI
+  crate. The embedding entry point is now `run(argv, out, err)`.
+- Resolve review benchmarks from parsed packs, deduplicate repeated includes, and
+  reject conflicting definitions without emitting a partial prompt.
+- Removed generated signoff workflows from this repository; ordinary CI runs
+  `just ci`. Rapport no longer creates, repairs, or removes workflow files.
+- Updated `JUST_WORKFLOW` to 1.0.1 so its benchmarks assign validation to repository
+  tools rather than Rapport signoffs. Updated the review-command example in
+  RUST_TEST 1.0.2 and its RUST_CRATE 1.0.3 / CRUX_APP 1.0.2 aggregates.
 
 ## [0.6.1] - 2026-07-16
 
@@ -329,7 +352,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.1...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.7.0...HEAD
+[0.7.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.1...rapport-v0.7.0
 [0.6.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.0...rapport-v0.6.1
 [0.6.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.5...rapport-v0.6.0
 [0.5.5]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.4...rapport-v0.5.5
