@@ -4,7 +4,7 @@ All notable changes to `rapport` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this crate
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-09-07
 
 ### Added
 
@@ -352,7 +352,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.1...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.7.0...HEAD
+[0.7.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.1...rapport-v0.7.0
 [0.6.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.0...rapport-v0.6.1
 [0.6.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.5...rapport-v0.6.0
 [0.5.5]: https://github.com/hedge-ops/rapport/compare/rapport-v0.5.4...rapport-v0.5.5

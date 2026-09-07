@@ -1,0 +1,7 @@
+# rapport:init-rules:start
+.rapport/**
+!.rapport/
+!.rapport/rules/
+!.rapport/rules/**
+!.rapport/rules.lock
+# rapport:init-rules:end

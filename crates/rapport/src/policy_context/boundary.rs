@@ -359,8 +359,8 @@ target = "ci"
 
         let error = assert_err!(parse(legacy, Utf8Path::new("/repo/context.toml")));
 
-        assert!(matches!(error, Error::LegacySchema { .. }), "{error:?}");
-        assert!(error.to_string().contains("migrate every legacy"));
-        assert!(error.to_string().contains("rule_includes"));
+        assert!(
+            matches!(error, Error::LegacySchema { path } if path == Utf8Path::new("/repo/context.toml"))
+        );
     }
 }

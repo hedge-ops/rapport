@@ -52,11 +52,10 @@ fn debug_output_includes_operations_and_redacts_environment_values() {
 
     let debug = format!("{spec:?} {outcome:?}");
 
-    assert!(debug.contains("PRIVATE ARGUMENT"));
-    assert!(debug.contains("PRIVATE STDOUT"));
-    assert!(debug.contains("PRIVATE STDERR"));
-    assert!(debug.contains("TOKEN"));
-    assert!(!debug.contains("PRIVATE TOKEN"));
+    assert_eq!(
+        debug,
+        r#"CommandSpec { program: "tool", args: ["PRIVATE ARGUMENT"], current_dir: None, environment_variables: ["TOKEN"] } CommandOutcome { success: false, exit_code: Some(1), stdout: "PRIVATE STDOUT", stderr: "PRIVATE STDERR", elapsed: 0ns }"#
+    );
 }
 
 #[test]

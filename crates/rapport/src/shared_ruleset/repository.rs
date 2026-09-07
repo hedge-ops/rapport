@@ -470,10 +470,11 @@ mod tests {
 
         assert_err!(store.compose("CODE", "APP"));
         let code = assert_ok!(fs.read_to_string("/repo/.rapport/rules/code.toml"));
-        assert!(
-            !code.contains("APP"),
-            "expecting a rejected cycle not to mutate repository state"
-        );
+        let ruleset = assert_ok!(crate::shared_ruleset::boundary::parse_repository(
+            &code,
+            Utf8Path::new("/repo/.rapport/rules/code.toml")
+        ));
+        assert!(ruleset.includes().is_empty());
     }
 
     #[test]

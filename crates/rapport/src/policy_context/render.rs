@@ -188,7 +188,12 @@ fn render_shared_rulesets(
 }
 
 pub(super) fn display(root: &Utf8Path, path: &Utf8Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).to_string()
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    if relative.as_str().is_empty() {
+        ".".to_owned()
+    } else {
+        relative.to_string()
+    }
 }
 pub(super) fn or_none(value: &str) -> String {
     if value.is_empty() {

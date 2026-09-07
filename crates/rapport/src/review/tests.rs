@@ -2,9 +2,12 @@
 //!
 //! Verifies schema compatibility, sourced inheritance, and failures through the CLI.
 
+use crate::policy_context::{Error, review_policy_for_paths};
 use crate::run_with_environment;
-use claims::assert_ok;
+use claims::{assert_err, assert_ok, assert_some};
+use clap::Parser;
 use pretty_assertions::assert_eq;
+use rapport_files::Utf8Path;
 use rapport_files::{FileSystem, InMemoryFileSystem, Utf8PathBuf};
 use rstest::rstest;
 use std::process::ExitCode;
@@ -89,24 +92,7 @@ fn review_should_resolve_architecture_and_deduplicate_inherited_packs_without_wo
         ExitCode::SUCCESS,
         "expecting a stateless component review: {err}"
     );
-    for expected in [
-        "Repository architecture.",
-        "SYNC_OWNERSHIP_001",
-        "SYNC_BOUNDARY_001",
-        "`SYNC_001`",
-        "Rationale:",
-        "Avoid (text):",
-        "Prefer (text):",
-        "app/core/workspace_sync/context.toml",
-        ".rapport/rules/custom/team-standards.toml",
-        "Type: `crate`",
-    ] {
-        assert!(
-            out.contains(expected),
-            "expecting sourced architecture and standards: {expected}"
-        );
-    }
-    assert_eq!(out.matches("`TEAM_001`").count(), 1);
+    assert_eq!(out, include_str!("../testdata/review-component.md"));
     assert!(!fs.exists("/repo/.rapport/work.toml"));
     assert!(!fs.exists("/repo/.rapport/tasks"));
 }
@@ -124,8 +110,7 @@ fn context_show_should_accept_namespace_in_unrelated_buildkite_context() {
         ExitCode::SUCCESS,
         "expecting namespace parsing across the repository: {err}"
     );
-    assert!(out.contains("`SYNC_001`"));
-    assert!(out.contains("`type` — `crate`"));
+    assert_eq!(out, include_str!("../testdata/context-sync.md"));
 }
 
 #[test]
@@ -148,17 +133,23 @@ fn context_update_should_preserve_namespace_type_and_identifiers() {
         "expecting mutation to derive the next identifier: {err}"
     );
     let contents = assert_ok!(fs.read_to_string("/repo/app/core/workspace_sync/context.toml"));
-    for expected in [
-        "namespace = \"SYNC\"",
-        "type = \"crate\"",
-        "SYNC_OWNERSHIP_002",
-        "ruleset.rules.SYNC_001",
-    ] {
-        assert!(
-            contents.contains(expected),
-            "expecting schema metadata to survive mutation: {expected}"
-        );
-    }
+    let document: toml::Value = assert_ok!(toml::from_str(&contents));
+    assert_eq!(document["namespace"].as_str(), Some("SYNC"));
+    assert_eq!(document["type"].as_str(), Some("crate"));
+    assert_eq!(
+        assert_some!(document["ownership"].as_table())
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["SYNC_OWNERSHIP_001", "SYNC_OWNERSHIP_002"]
+    );
+    assert_eq!(
+        assert_some!(document["ruleset"]["rules"].as_table())
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["SYNC_001"]
+    );
     assert_eq!(
         run(&mut fs, &["review", "app/core/workspace_sync"]).0,
         ExitCode::SUCCESS
@@ -168,30 +159,45 @@ fn context_update_should_preserve_namespace_type_and_identifiers() {
 #[rstest]
 #[case::missing_include(
     "namespace = 'ROOT'\npurpose = 'Root.'\n[ruleset]\nincludes = ['MISSING']",
-    "MISSING"
+    Failure::MissingInclude
 )]
 #[case::unknown_field(
     "namespace = 'ROOT'\npurpose = 'Root.'\nunsupported = true",
-    "unsupported"
+    Failure::Decode
 )]
-#[case::ambiguous_identity("namespace = 'ROOT'\nid = 'ROOT'\npurpose = 'Root.'", "exactly one")]
+#[case::ambiguous_identity(
+    "namespace = 'ROOT'\nid = 'ROOT'\npurpose = 'Root.'",
+    Failure::Identity
+)]
 #[case::unknown_version(
     "version = 99\nnamespace = 'ROOT'\npurpose = 'Root.'",
-    "schema version"
+    Failure::Version
 )]
 fn review_should_fail_explicitly_without_partial_prompt(
     #[case] contents: &str,
-    #[case] diagnostic: &str,
+    #[case] failure: Failure,
 ) {
     let mut fs = repository();
     assert_ok!(fs.write_string("/repo/context.toml", contents));
     let (code, out, err) = run(&mut fs, &["review", "."]);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(
-        err.contains(diagnostic),
-        "expecting an actionable failure: {err}"
-    );
+    let error = review_error(&mut fs, ".");
+    match (failure, error) {
+        (Failure::MissingInclude, Error::UnresolvedInclude { path, included }) => {
+            assert_eq!(path, Utf8Path::new("/repo/context.toml"));
+            assert_eq!(included, "MISSING");
+        }
+        (Failure::Decode, Error::Decode { path, .. })
+        | (Failure::Identity, Error::SchemaIdentity { path }) => {
+            assert_eq!(path, Utf8Path::new("/repo/context.toml"));
+        }
+        (Failure::Version, Error::SchemaVersion { path, version }) => {
+            assert_eq!(path, Utf8Path::new("/repo/context.toml"));
+            assert_eq!(version, 99);
+        }
+        (_, error) => panic!("unexpected failure: {error:?}"),
+    }
 }
 
 #[test]
@@ -205,21 +211,21 @@ fn review_should_reject_conflicting_local_and_included_identifiers() {
         )
     ));
     let (code, out, err) = run(&mut fs, &["review", "other"]);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(err.contains("TEAM_001"));
-    assert!(err.contains("other/context.toml"));
-    assert!(err.contains(".rapport/rules/custom/team-standards.toml"));
+    assert_conflict(review_error(&mut fs, "other"));
 }
 
 #[test]
-fn review_should_report_missing_context_with_creation_guidance() {
+fn review_should_report_missing_context() {
     let mut fs = InMemoryFileSystem::default();
     fs.add_directory("/repo");
     let (code, out, err) = run(&mut fs, &["review", "."]);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(err.contains("rapport context init"));
+    assert!(
+        matches!(review_error(&mut fs, "."), Error::MissingContext(path) if path == Utf8Path::new("/repo"))
+    );
 }
 
 #[test]
@@ -237,14 +243,31 @@ fn review_should_resolve_installed_catalog_packs_transitively() {
         "/repo/context.toml",
         "namespace = 'ROOT'\npurpose = 'Root.'\n[ruleset]\nincludes = ['RUST_CRATE', 'CRUX_APP']"
     ));
-    let (code, out, err) = run(&mut fs, &["review", "app/core/workspace_sync"]);
+    let (code, _, err) = run(&mut fs, &["review", "app/core/workspace_sync"]);
     assert_eq!(
         code,
         ExitCode::SUCCESS,
         "expecting transitive catalog resolution: {err}"
     );
-    assert_eq!(out.matches("`RUST_CODING_001`").count(), 1);
-    assert!(out.contains("`CRUX_MODEL_001`"));
+    let shared = assert_ok!(crate::shared_ruleset::SharedRulesets::load(
+        &mut fs,
+        Utf8Path::new("/repo")
+    ));
+    for (pack, dependency) in [("RUST_CRATE", "RUST_CODING"), ("CRUX_APP", "CRUX_MODEL")] {
+        let pack_id = assert_ok!(crate::shared_ruleset::RulesetId::parse(pack));
+        let dependency_id = assert_ok!(crate::shared_ruleset::RulesetId::parse(dependency));
+        assert!(
+            assert_ok!(shared.require(&pack_id))
+                .transitive()
+                .contains(&dependency_id)
+        );
+        assert_eq!(
+            assert_some!(assert_ok!(shared.require(&dependency_id)).rules().first())
+                .id()
+                .as_str(),
+            format!("{dependency}_001")
+        );
+    }
 }
 
 #[test]
@@ -276,9 +299,10 @@ fn context_init_should_create_namespaced_architecture() {
         ExitCode::SUCCESS,
         "expecting immediate review without lifecycle setup: {err}"
     );
-    assert!(out.contains("Type: `swift_package`"));
+    assert_eq!(out, include_str!("../testdata/review-new-component.md"));
     let contents = assert_ok!(fs.read_to_string("/repo/app/context.toml"));
-    assert!(contents.contains("namespace = \"APP\""));
+    let document: toml::Value = assert_ok!(toml::from_str(&contents));
+    assert_eq!(document["namespace"].as_str(), Some("APP"));
 }
 
 #[test]
@@ -292,8 +316,7 @@ fn review_should_ignore_invalid_work_state_and_accept_multiple_paths() {
         ExitCode::SUCCESS,
         "expecting work state not to affect review: {err}"
     );
-    assert_eq!(out.matches("`TEAM_001`").count(), 1);
-    assert!(out.contains("`SYNC_001`"));
+    assert_eq!(out, include_str!("../testdata/review-multiple.md"));
     assert_eq!(
         assert_ok!(fs.read_to_string("/repo/.rapport/work.toml")),
         invalid_work
@@ -316,9 +339,7 @@ fn review_should_merge_identical_standards_and_preserve_both_sources() {
         ExitCode::SUCCESS,
         "expecting identical standards to merge: {err}"
     );
-    assert_eq!(out.matches("`TEAM_001`").count(), 1);
-    assert!(out.contains(".rapport/rules/custom/team-standards.toml"));
-    assert!(out.contains("other/context.toml"));
+    assert_eq!(out, include_str!("../testdata/review-merged-sources.md"));
 }
 
 #[test]
@@ -329,9 +350,9 @@ fn review_should_reject_duplicate_namespaces() {
         "namespace = 'SYNC'\npurpose = 'Duplicate identity.'"
     ));
     let (code, out, err) = run(&mut fs, &["review", "other"]);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(err.contains("SYNC"));
+    assert!(matches!(review_error(&mut fs, "other"), Error::DuplicateContext(id) if id == "SYNC"));
 }
 
 #[test]
@@ -346,11 +367,14 @@ fn review_should_reject_persisted_include_cycles() {
         "version = 1\nid = 'OTHER'\npurpose = 'Other.'\nincludes = ['TEAM']"
     ));
     let (code, out, err) = run(&mut fs, &["review", "."]);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(err.contains("cycle"));
-    assert!(err.contains("TEAM"));
-    assert!(err.contains("OTHER"));
+    let Error::Ruleset(crate::shared_ruleset::Error::IncludeCycle(cycle)) =
+        review_error(&mut fs, ".")
+    else {
+        panic!("expected include cycle");
+    };
+    assert_eq!(cycle, ["OTHER", "TEAM", "OTHER"]);
 }
 
 #[test]
@@ -362,15 +386,14 @@ fn review_should_default_to_root_and_treat_former_commands_as_paths() {
         ExitCode::SUCCESS,
         "expecting default root review: {err}"
     );
-    assert!(out.contains("`TEAM_001`"));
-    assert!(!out.contains("`SYNC_001`"));
+    assert_eq!(out, include_str!("../testdata/review-root.md"));
     let (code, out, err) = run(&mut fs, &["review", "start"]);
     assert_eq!(
         code,
         ExitCode::SUCCESS,
         "expecting a path named after a legacy command: {err}"
     );
-    assert!(out.contains("`ROOT` — start"));
+    assert_eq!(out, include_str!("../testdata/review-start-path.md"));
 }
 
 #[rstest]
@@ -387,26 +410,41 @@ fn review_should_default_to_root_and_treat_former_commands_as_paths() {
 fn cli_should_reject_removed_lifecycle_commands(#[case] args: &[&str]) {
     let mut fs = repository();
     let (code, out, err) = run(&mut fs, args);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(err.contains("unrecognized") || err.contains("unexpected argument"));
+    let error = assert_err!(crate::cli::Cli::try_parse_from(
+        std::iter::once("rapport").chain(args.iter().copied())
+    ));
+    assert_eq!(
+        error.kind(),
+        if args[0] == "review" {
+            clap::error::ErrorKind::UnknownArgument
+        } else {
+            clap::error::ErrorKind::InvalidSubcommand
+        }
+    );
 }
 
 #[rstest]
-#[case::grade("[review]\nminimum_grade = 'A-'")]
-#[case::signoff("[[signoffs]]\nid = 'ROOT_SIGNOFF_CI'\ntarget = 'ci'")]
-fn context_validate_should_explain_removed_fields(#[case] obsolete: &str) {
+#[case::grade("[review]\nminimum_grade = 'A-'", "review")]
+#[case::signoff("[[signoffs]]\nid = 'ROOT_SIGNOFF_CI'\ntarget = 'ci'", "signoffs")]
+fn context_validate_should_reject_removed_fields(
+    #[case] obsolete: &str,
+    #[case] expected_field: &str,
+) {
     let mut fs = repository();
     assert_ok!(fs.write_string(
         "/repo/context.toml",
         format!("namespace = 'ROOT'\npurpose = 'Root.'\n{obsolete}")
     ));
     let (code, out, err) = run(&mut fs, &["context", "validate"]);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(err.contains("/repo/context.toml"));
-    assert!(err.contains("no longer supported"));
-    assert!(err.contains("repository tooling"));
+    let Error::LifecycleField { path, field } = review_error(&mut fs, ".") else {
+        panic!("expected retired lifecycle field");
+    };
+    assert_eq!(path, Utf8Path::new("/repo/context.toml"));
+    assert_eq!(field, expected_field);
 }
 
 #[test]
@@ -424,10 +462,9 @@ fn context_validate_should_ignore_work_and_generated_workflows() {
         ExitCode::SUCCESS,
         "expecting only architecture validation: {err}"
     );
-    assert!(out.contains("`contexts` — 2"));
+    assert_eq!(out, include_str!("../testdata/context-validate-two.md"));
     let (_, shown, _) = run(&mut fs, &["context", "show", "app/core/workspace_sync"]);
-    assert!(!shown.contains("signoff"));
-    assert!(!shown.contains("review minimum"));
+    assert_eq!(shown, include_str!("../testdata/context-sync.md"));
     let (code, _, err) = run(&mut fs, &["context", "remove", "app/core/workspace_sync"]);
     assert_eq!(
         code,
@@ -460,10 +497,9 @@ fn context_validate_should_find_effective_conflicts_in_descendants() {
         )
     ));
     let (code, out, err) = run(&mut fs, &["context", "validate"]);
-    assert_eq!(code, ExitCode::from(2));
+    assert_eq!(code, ExitCode::from(2), "{err}");
     assert!(out.is_empty());
-    assert!(err.contains("TEAM_001"));
-    assert!(err.contains("other/context.toml"));
+    assert_conflict(review_error(&mut fs, "other"));
 }
 
 #[test]
@@ -476,5 +512,53 @@ fn context_validate_should_accept_components_without_a_root_context() {
         ExitCode::SUCCESS,
         "expecting all declared components to be validated: {err}"
     );
-    assert!(out.contains("`contexts` — 1"));
+    assert_eq!(out, include_str!("../testdata/context-validate-one.md"));
+}
+
+fn review_error(fs: &mut InMemoryFileSystem, path: &str) -> Error {
+    match review_policy_for_paths(fs, Utf8Path::new("/repo"), [Utf8Path::new(path)]) {
+        Ok(_) => panic!("expected review resolution to fail"),
+        Err(error) => error,
+    }
+}
+
+#[derive(Debug)]
+enum Failure {
+    MissingInclude,
+    Decode,
+    Identity,
+    Version,
+}
+
+fn assert_conflict(error: Error) {
+    let Error::Ruleset(crate::shared_ruleset::Error::ConflictingRule {
+        rule,
+        first,
+        second,
+    }) = error
+    else {
+        panic!("expected benchmark conflict: {error:?}");
+    };
+    assert_eq!(rule, "TEAM_001");
+    assert_eq!(first, "other/context.toml");
+    assert_eq!(second, ".rapport/rules/custom/team-standards.toml");
+}
+
+#[test]
+fn review_should_render_transitive_benchmarks_once_with_their_defining_sources() {
+    let mut fs = repository();
+    assert_ok!(fs.write_string(
+        "/repo/.rapport/rules/foundation.toml",
+        format!(
+            "version = 1\nid = 'FOUNDATION'\npurpose = 'Foundation standards.'\n{}",
+            rule("rules", "FOUNDATION_001", "Keep state changes explicit.")
+        )
+    ));
+    let team_path = "/repo/.rapport/rules/custom/team-standards.toml";
+    let team = assert_ok!(fs.read_to_string(team_path));
+    assert_ok!(fs.write_string(team_path, format!("includes = ['FOUNDATION']\n{team}")));
+    assert_ok!(fs.write_string("/repo/context.toml", "namespace = 'ROOT'\npurpose = 'Repository architecture.'\n[ruleset]\nincludes = ['TEAM', 'FOUNDATION']\n"));
+    let (code, out, err) = run(&mut fs, &["review", "."]);
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    assert_eq!(out, include_str!("../testdata/review-transitive.md"));
 }

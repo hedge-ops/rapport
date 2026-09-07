@@ -137,54 +137,41 @@ mod tests {
 
     #[test]
     fn no_args_renders_root_help() {
-        let (code, out, err) = run_with(&[]);
+        let (code, _, err) = run_with(&[]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Repository architecture and review benchmarks"));
-        assert!(out.contains("rapport review <path>"));
-        assert!(out.contains("prime"));
-        assert!(!out.contains("  doctor"));
-        assert!(!out.contains("  work"));
+        let commands = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(commands, ["prime", "init", "ruleset", "context", "review"]);
         assert_eq!(err, "");
     }
 
     #[test]
     fn help_flag_renders_root_help() {
-        let (code, out, err) = run_with(&["--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Rapport turns repository-owned architecture"));
-        assert!(out.contains("rapport review <path>"));
-        assert_eq!(err, "");
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn version_flag_renders_package_version() {
-        let (code, out, err) = run_with(&["--version"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert_eq!(out, format!("rapport {}\n", env!("CARGO_PKG_VERSION")));
-        assert_eq!(err, "");
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "--version"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
     }
 
     #[test]
     fn prime_help_exists() {
-        let (code, out, err) = run_with(&["prime", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Show how agents should use Rapport"));
-        assert_eq!(err, "");
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "prime", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
-    fn prime_renders_workflow() {
+    fn prime_should_print_the_complete_markdown_verbatim() {
         let (code, out, err) = run_with(&["prime"]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("rapport prime"));
-        assert!(out.contains("rapport review <path>"));
-        assert!(out.contains("rapport context show"));
-        assert!(out.contains("without Work"));
+        assert_eq!(out, include_str!("../prime.md"));
         assert_eq!(err, "");
     }
 
@@ -200,14 +187,8 @@ mod tests {
         let (catalog_list_code, catalog_list, catalog_list_error) =
             run_with_fs(&["ruleset", "catalog", "list"], &mut fs);
         assert_eq!(catalog_list_code, ExitCode::SUCCESS);
-        assert!(
-            catalog_list.contains("`RUST_CRATE`"),
-            "expecting catalog list to include the Rust aggregate"
-        );
-        assert!(
-            catalog_list_error.is_empty(),
-            "expecting catalog list not to emit an error"
-        );
+        assert_eq!(catalog_list, include_str!("testdata/catalog-list.md"));
+        assert_eq!(catalog_list_error, "");
 
         assert_eq!(
             run_with_fs(&["ruleset", "catalog", "install", "RUST_CRATE"], &mut fs).0,
@@ -336,18 +317,9 @@ mod tests {
         let (_, shown_rule, _) =
             run_with_fs(&["ruleset", "show", "APP", "--rule", "CODE_001"], &mut fs);
         let (_, listed, _) = run_with_fs(&["ruleset", "list"], &mut fs);
-        assert!(
-            composition.contains("`CODE`"),
-            "expecting composition status to show the direct Ruleset"
-        );
-        assert!(
-            shown_rule.contains("Use explicit names."),
-            "expecting show to resolve a composed Rule"
-        );
-        assert!(
-            listed.contains("Repository coding expectations."),
-            "expecting list to show the updated Ruleset purpose"
-        );
+        assert_eq!(composition, include_str!("testdata/ruleset-composition.md"));
+        assert_eq!(shown_rule, include_str!("testdata/ruleset-rule.md"));
+        assert_eq!(listed, include_str!("testdata/ruleset-list.md"));
 
         assert_eq!(
             run_with_fs(
@@ -376,24 +348,15 @@ mod tests {
     }
 
     #[test]
-    fn context_help_explains_project_context_intent() {
-        let (code, out, err) = run_with(&["context", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("what a project area is about"));
-        assert!(out.contains("Ownership records what belongs"));
-        assert!(out.contains("numbered, reviewable benchmarks"));
-        assert!(out.contains("context.toml"));
-        assert_eq!(err, "");
+    fn context_help_exists() {
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "context", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn init_help_exists() {
-        let (code, out, err) = run_with(&["init", "--help"]);
-
-        assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Record Rapport usage"));
-        assert_eq!(err, "");
+        let error = claims::assert_err!(Cli::try_parse_from(["rapport", "init", "--help"]));
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
@@ -403,15 +366,11 @@ mod tests {
         let (code, out, err) = run_with_fs(&["init"], &mut fs);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("status` — created"));
-        assert!(out.contains("AGENTS.md"));
-        assert!(!out.contains(".github/workflows/rapport-signoff.yml"));
+        assert_eq!(out, include_str!("testdata/init-created.md"));
         assert_eq!(err, "");
         let agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
 
-        assert!(agents.contains("## Repository Architecture and Reviews"));
-        assert!(agents.contains("rapport prime"));
-        assert!(!agents.contains("rapport work start"));
+        assert_eq!(agents, include_str!("../rapport agents section.md"));
         assert!(!fs.exists("/repo/.github/workflows/rapport-signoff.yml"));
     }
 
@@ -430,16 +389,18 @@ mod tests {
         let second_agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
 
         assert_eq!(first_code, ExitCode::SUCCESS);
-        assert!(first_out.contains("status` — updated"));
+        assert_eq!(first_out, include_str!("testdata/init-updated.md"));
         assert_eq!(first_err, "");
         assert_eq!(second_code, ExitCode::SUCCESS);
-        assert!(second_out.contains("status` — updated"));
+        assert_eq!(second_out, first_out);
         assert_eq!(second_err, "");
         assert_eq!(first_agents, second_agents);
-        assert!(second_agents.contains("# Agent Notes"));
         assert_eq!(
-            second_agents.matches("<!-- rapport:init:start -->").count(),
-            1
+            second_agents,
+            format!(
+                "# Agent Notes\n\nKeep local context current.\n\n{}",
+                include_str!("../rapport agents section.md")
+            )
         );
     }
 }

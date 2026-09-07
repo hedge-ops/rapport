@@ -648,7 +648,7 @@ mod tests {
 
         let actual = instant.into_date();
 
-        assert_eq!(actual.into_iso_string(), "2025-09-30");
+        assert_eq!(actual, Date::from_str_unchecked("2025-09-30"));
     }
 
     #[test]

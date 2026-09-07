@@ -562,14 +562,8 @@ mod tests {
         let output = assert_ok!(execute(&cli.command, &mut fs, Utf8Path::new("/repo")));
         let list = assert_ok!(execute(&Action::List, &mut fs, Utf8Path::new("/repo")));
 
-        assert!(
-            output.contains("`RUST_CRATE`"),
-            "expecting install output to name the selected aggregate"
-        );
-        assert!(
-            list.contains("`RUST_CODING`"),
-            "expecting repository listing to include installed dependencies"
-        );
+        assert_eq!(output, include_str!("../testdata/catalog-installed.md"));
+        assert_eq!(list, include_str!("../testdata/catalog-installed-list.md"));
         assert!(fs.is_file("/repo/.rapport/rules.lock"));
     }
 }

@@ -11,6 +11,9 @@ use std::io;
 use std::io::Write;
 use std::process::ExitCode;
 
+const AGENTS_SECTION: &str = include_str!("../rapport agents section.md");
+const RULES_IGNORE_SECTION: &str = include_str!("../rapport.gitignore");
+
 const FAILURE: u8 = 2;
 const AGENTS_FILE: &str = "AGENTS.md";
 const START_MARKER: &str = "<!-- rapport:init:start -->";
@@ -71,19 +74,17 @@ fn write_rules_gitignore(
 }
 
 fn upsert_rules_ignore(existing: Option<&str>) -> String {
-    let section = format!(
-        "{RULES_START_MARKER}\n.rapport/**\n!.rapport/\n!.rapport/rules/\n!.rapport/rules/**\n!.rapport/rules.lock\n{RULES_END_MARKER}\n"
-    );
+    let section = RULES_IGNORE_SECTION;
     match existing {
         Some(contents)
             if contents.contains(RULES_START_MARKER) && contents.contains(RULES_END_MARKER) =>
         {
-            replace_marked(contents, &section, RULES_START_MARKER, RULES_END_MARKER)
+            replace_marked(contents, section, RULES_START_MARKER, RULES_END_MARKER)
         }
         Some(contents) if !contents.trim().is_empty() => {
             format!("{}\n\n{section}", contents.trim_end())
         }
-        _ => section,
+        _ => section.to_owned(),
     }
 }
 
@@ -119,14 +120,14 @@ fn load_agents(
 }
 
 fn upsert_rapport_section(existing: Option<&str>) -> String {
-    let section = rapport_section();
+    let section = AGENTS_SECTION;
     match existing {
         Some(contents) if contents.contains(START_MARKER) && contents.contains(END_MARKER) => {
-            replace_section(contents, &section)
+            replace_section(contents, section)
         }
-        Some(contents) if contents.trim().is_empty() => section,
-        Some(contents) => append_section(contents, &section),
-        None => section,
+        Some(contents) if contents.trim().is_empty() => section.to_owned(),
+        Some(contents) => append_section(contents, section),
+        None => section.to_owned(),
     }
 }
 
@@ -165,12 +166,6 @@ fn append_section(contents: &str, section: &str) -> String {
     updated
 }
 
-fn rapport_section() -> String {
-    format!(
-        "{START_MARKER}\n## Repository Architecture and Reviews\n\nThis project uses Rapport for structured architecture and review benchmarks. Call `rapport prime` for guidance and `rapport review <path>` to generate a component review prompt.\n{END_MARKER}\n"
-    )
-}
-
 fn render_initialized(status: &str) -> String {
     ViewBuilder::new()
         .title("rapport init")
@@ -201,10 +196,16 @@ mod tests {
     fn upsert_rapport_section_appends_to_existing_content() {
         let updated = upsert_rapport_section(Some("# Instructions\n\nKeep it tidy.\n"));
 
-        assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("## Repository Architecture and Reviews"));
-        assert!(updated.contains("rapport prime"));
-        assert_eq!(updated.matches(START_MARKER).count(), 1);
+        assert_eq!(
+            updated,
+            format!(
+                "# Instructions
+
+Keep it tidy.
+
+{AGENTS_SECTION}"
+            )
+        );
     }
 
     #[test]
@@ -213,11 +214,14 @@ mod tests {
             "# Instructions\n\n<!-- rapport:init:start -->\nold\n<!-- rapport:init:end -->\n",
         ));
 
-        assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("structured architecture and review benchmarks"));
-        assert!(updated.contains("rapport prime"));
-        assert!(!updated.contains("\nold\n"));
-        assert_eq!(updated.matches(START_MARKER).count(), 1);
+        assert_eq!(
+            updated,
+            format!(
+                "# Instructions
+
+{AGENTS_SECTION}"
+            )
+        );
     }
 
     #[test]
@@ -225,8 +229,13 @@ mod tests {
         let once = upsert_rules_ignore(Some("target/\n"));
         let twice = upsert_rules_ignore(Some(&once));
         assert_eq!(once, twice);
-        assert!(once.starts_with("target/"));
-        assert_eq!(once.matches(RULES_START_MARKER).count(), 1);
-        assert!(once.contains("!.rapport/rules/**"));
+        assert_eq!(
+            once,
+            format!(
+                "target/
+
+{RULES_IGNORE_SECTION}"
+            )
+        );
     }
 }

@@ -92,22 +92,50 @@ mod tests {
 
     #[test]
     fn fixed_dates_match_expected_values() {
-        assert_eq!(months_ago().into_iso_string(), "2025-05-01");
-        assert_eq!(yesterday().into_iso_string(), "2025-09-29");
-        assert_eq!(today().into_iso_string(), "2025-09-30");
-        assert_eq!(tomorrow().into_iso_string(), "2025-10-01");
-        assert_eq!(three_days_from_today().into_iso_string(), "2025-10-03");
-        assert_eq!(next_week().into_iso_string(), "2025-10-06");
-        assert_eq!(in_two_weeks().into_iso_string(), "2025-10-14");
-        assert_eq!(next_month().into_iso_string(), "2025-10-01");
+        assert_eq!(months_ago(), Date::from_str_unchecked("2025-05-01"));
+        assert_eq!(yesterday(), Date::from_str_unchecked("2025-09-29"));
+        assert_eq!(today(), Date::from_str_unchecked("2025-09-30"));
+        assert_eq!(tomorrow(), Date::from_str_unchecked("2025-10-01"));
+        assert_eq!(
+            three_days_from_today(),
+            Date::from_str_unchecked("2025-10-03")
+        );
+        assert_eq!(next_week(), Date::from_str_unchecked("2025-10-06"));
+        assert_eq!(in_two_weeks(), Date::from_str_unchecked("2025-10-14"));
+        assert_eq!(next_month(), Date::from_str_unchecked("2025-10-01"));
     }
 
     #[test]
     fn fixed_times_match_expected_values() {
-        assert_eq!(months_ago_time().to_string(), "2025-05-01 10:13:44 UTC");
-        assert_eq!(yesterday_time().to_string(), "2025-09-29 10:07:00 UTC");
-        assert_eq!(now().to_string(), "2025-09-30 10:07:00 UTC");
-        assert_eq!(next_month_time().to_string(), "2025-10-30 10:07:00 UTC");
-        assert_eq!(two_months_time().to_string(), "2025-11-30 10:07:00 UTC");
+        assert_eq!(
+            months_ago_time(),
+            crate::time::Instant::from_utc_datetime(claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 5, 1, 10, 13, 44).single()
+            ))
+        );
+        assert_eq!(
+            yesterday_time(),
+            crate::time::Instant::from_utc_datetime(claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 9, 29, 10, 7, 0).single()
+            ))
+        );
+        assert_eq!(
+            now(),
+            crate::time::Instant::from_utc_datetime(claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 9, 30, 10, 7, 0).single()
+            ))
+        );
+        assert_eq!(
+            next_month_time(),
+            crate::time::Instant::from_utc_datetime(claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 10, 30, 10, 7, 0).single()
+            ))
+        );
+        assert_eq!(
+            two_months_time(),
+            crate::time::Instant::from_utc_datetime(claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 11, 30, 10, 7, 0).single()
+            ))
+        );
     }
 }

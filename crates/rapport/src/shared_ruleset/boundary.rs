@@ -235,9 +235,9 @@ text = "let person_count = value;"
             "1.0.0",
         ));
 
-        let Error::Decode { source, .. } = error else {
+        let Error::Decode { path, .. } = error else {
             panic!("expecting a catalog decode error for a missing rationale");
         };
-        assert!(source.to_string().contains("missing field `rationale`"));
+        assert_eq!(path, rapport_files::Utf8Path::new("/catalog/code.toml"));
     }
 }

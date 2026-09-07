@@ -1535,7 +1535,7 @@ mod tests {
 
         let actual = Date::from_naive_date(naive_date);
 
-        assert_eq!(actual.into_iso_string(), "2025-09-30");
+        assert_eq!(actual, Date::from_str_unchecked("2025-09-30"));
     }
 
     #[test]
@@ -1684,7 +1684,7 @@ mod tests {
     #[case::december(YearMonth::new(Year(2025), Month::December), "2025-12-01")]
     fn first_day_of_month(#[case] year_month: YearMonth, #[case] expected: &str) {
         let actual = year_month.first_day();
-        assert_eq!(actual.into_iso_string(), expected);
+        assert_eq!(actual, Date::from_str_unchecked(expected));
 
         let actual = actual.year_month();
         assert_eq!(actual, year_month);
@@ -1739,7 +1739,12 @@ mod tests {
 
         let result = date.end_of_day_utc();
 
-        assert_eq!(result.to_string(), "2026-03-15 23:59:59 UTC");
+        assert_eq!(
+            result,
+            claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 3, 15, 23, 59, 59).single()
+            )
+        );
     }
 
     #[test]
@@ -1748,7 +1753,12 @@ mod tests {
 
         let result = date.start_of_day_utc();
 
-        assert_eq!(result.to_string(), "2026-03-15 00:00:00 UTC");
+        assert_eq!(
+            result,
+            claims::assert_some!(
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 3, 15, 0, 0, 0).single()
+            )
+        );
     }
 
     #[rstest]

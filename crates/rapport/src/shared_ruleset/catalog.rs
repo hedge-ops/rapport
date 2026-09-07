@@ -521,9 +521,12 @@ mod tests {
         );
         assert!(fs.is_file("/repo/.rapport/rules/rust/crate.toml"));
         assert!(fs.is_file("/repo/.rapport/rules/rust/coding.toml"));
-        assert!(
-            fs.read_to_string("/repo/.rapport/rules/rust/coding.toml")
-                .is_ok_and(|contents| contents.contains("purpose ="))
+        let path = Utf8Path::new("/repo/.rapport/rules/rust/coding.toml");
+        let contents = assert_ok!(fs.read_to_string(path));
+        let document: toml::Value = assert_ok!(toml::from_str(&contents));
+        assert_eq!(
+            document["purpose"].as_str(),
+            Some(assert_ok!(catalog.get("RUST_CODING")).ruleset().purpose())
         );
     }
 

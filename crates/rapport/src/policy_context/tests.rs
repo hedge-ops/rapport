@@ -47,8 +47,7 @@ fn context_commands_should_manage_architecture_and_benchmarks() {
         &["context", "init", "app", "--purpose", "Application policy."],
     );
     let listed = succeeds(&mut fs, &["context", "list"]);
-    assert!(listed.contains("`ROOT`"));
-    assert!(listed.contains("`APP`"));
+    assert_eq!(listed, include_str!("../testdata/context-list.md"));
 
     let ownership = succeeds(
         &mut fs,
@@ -61,7 +60,7 @@ fn context_commands_should_manage_architecture_and_benchmarks() {
             "Application behavior.",
         ],
     );
-    assert!(ownership.contains("`APP_OWNERSHIP_001`"));
+    assert_eq!(ownership, include_str!("../testdata/ownership-first.md"));
     succeeds(
         &mut fs,
         &[
@@ -84,7 +83,7 @@ fn context_commands_should_manage_architecture_and_benchmarks() {
             "Application behavior.",
         ],
     );
-    assert!(ownership.contains("`APP_OWNERSHIP_002`"));
+    assert_eq!(ownership, include_str!("../testdata/ownership-next.md"));
     succeeds(
         &mut fs,
         &[
@@ -112,9 +111,9 @@ fn context_commands_should_manage_architecture_and_benchmarks() {
             "ROOT",
         ],
     );
-    assert!(boundary.contains("`APP_BOUNDARY_001`"));
+    assert_eq!(boundary, include_str!("../testdata/boundary-added.md"));
     let boundaries = succeeds(&mut fs, &["context", "boundary", "list", "app"]);
-    assert!(boundaries.contains("owner ROOT"));
+    assert_eq!(boundaries, include_str!("../testdata/boundary-list.md"));
 
     succeeds(
         &mut fs,
@@ -158,9 +157,7 @@ fn context_commands_should_manage_architecture_and_benchmarks() {
     );
 
     let effective = succeeds(&mut fs, &["context", "show", "app"]);
-    assert!(effective.contains("`APP_RULE`"));
-    assert_eq!(effective.matches("`TEAM`").count(), 1);
-    assert!(effective.contains("declared by APP (direct, direct composition)"));
+    assert_eq!(effective, include_str!("../testdata/context-effective.md"));
     succeeds(&mut fs, &["context", "validate", "app"]);
 
     succeeds(
@@ -174,11 +171,10 @@ fn context_commands_should_manage_architecture_and_benchmarks() {
         ],
     );
     let declared = succeeds(&mut fs, &["context", "show", "app", "--declared"]);
-    assert!(declared.contains("Updated application policy."));
-    assert!(!declared.contains("Repository policy."));
+    assert_eq!(declared, include_str!("../testdata/context-declared.md"));
 
     let removed = succeeds(&mut fs, &["context", "remove", "app"]);
-    assert!(removed.contains("context` — APP"));
+    assert_eq!(removed, include_str!("../testdata/context-removed.md"));
     assert!(!fs.is_file("/repo/app/context.toml"));
 }
 
@@ -200,7 +196,7 @@ fn context_init_should_support_hidden_directories() {
             "GitHub automation.",
         ],
     );
-    assert!(github.contains("`context` — DOT_GITHUB"));
+    assert_eq!(github, include_str!("../testdata/context-github.md"));
     let agents = succeeds(
         &mut fs,
         &[
@@ -211,7 +207,7 @@ fn context_init_should_support_hidden_directories() {
             "Agent skills.",
         ],
     );
-    assert!(agents.contains("`context` — DOT_AGENTS_SKILLS"));
+    assert_eq!(agents, include_str!("../testdata/context-agents.md"));
 
     succeeds(&mut fs, &["context", "validate", ".agents/skills"]);
 }
@@ -236,8 +232,12 @@ includes = []
 "#,
     );
 
-    let (code, _, err) = run(&mut fs, &["context", "validate"]);
+    let (code, _, _) = run(&mut fs, &["context", "validate"]);
 
     assert_eq!(code, ExitCode::from(2));
-    assert!(err.contains("entry ID is invalid"));
+    let error = claims::assert_err!(super::repository::Repository::load(
+        &mut fs,
+        rapport_files::Utf8Path::new("/repo")
+    ));
+    assert!(matches!(error, super::Error::InvalidEntryId(id) if id == "ROOT"));
 }
