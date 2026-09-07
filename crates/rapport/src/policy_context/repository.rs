@@ -4,7 +4,7 @@
 
 use super::Error;
 use super::boundary;
-use super::domain::{Context, ContextId};
+use super::domain::{Context, ContextId, RepositoryPath};
 use crate::repository_files::find_named_files;
 use crate::shared_ruleset::SharedRulesets;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
@@ -107,6 +107,11 @@ impl Repository {
         &self.shared
     }
 
+    pub(super) fn record_for_component(&self, component: &RepositoryPath) -> Option<&Record> {
+        self.component_record_index(component)
+            .map(|index| &self.records[index])
+    }
+
     pub(super) fn at(&self, user_path: &Utf8Path) -> Result<&Record, Error> {
         let path = resolve_path(&self.repo_root, user_path)?;
         self.records
@@ -205,7 +210,81 @@ impl Repository {
                 }
             }
         }
+        self.validate_generated_dependencies()?;
         Ok(())
+    }
+
+    fn validate_generated_dependencies(&self) -> Result<(), Error> {
+        let mut edges = vec![Vec::new(); self.records.len()];
+        for (consumer_index, record) in self.records.iter().enumerate() {
+            for (input_name, input) in record.context().generated_inputs() {
+                let Some(producer_index) = self.component_record_index(input.component()) else {
+                    return Err(Error::MissingGeneratedProducer {
+                        path: record.path.clone(),
+                        input: input_name.to_string(),
+                        component: input.component().to_string(),
+                    });
+                };
+                let producer = &self.records[producer_index];
+                if !producer
+                    .context()
+                    .generated_outputs()
+                    .contains_key(input.output())
+                {
+                    return Err(Error::UnknownGeneratedOutput {
+                        path: record.path.clone(),
+                        input: input_name.to_string(),
+                        component: input.component().to_string(),
+                        output: input.output().to_string(),
+                        producer_path: producer.path.clone(),
+                    });
+                }
+                if !edges[consumer_index].contains(&producer_index) {
+                    edges[consumer_index].push(producer_index);
+                }
+            }
+        }
+
+        let mut visiting = Vec::new();
+        let mut visited = BTreeSet::new();
+        for index in 0..self.records.len() {
+            self.visit_dependency(index, &edges, &mut visiting, &mut visited)?;
+        }
+        Ok(())
+    }
+
+    fn visit_dependency(
+        &self,
+        index: usize,
+        edges: &[Vec<usize>],
+        visiting: &mut Vec<usize>,
+        visited: &mut BTreeSet<usize>,
+    ) -> Result<(), Error> {
+        if visited.contains(&index) {
+            return Ok(());
+        }
+        if let Some(start) = visiting.iter().position(|candidate| *candidate == index) {
+            let mut cycle = visiting[start..]
+                .iter()
+                .map(|candidate| self.records[*candidate].path.to_string())
+                .collect::<Vec<_>>();
+            cycle.push(self.records[index].path.to_string());
+            return Err(Error::GeneratedDependencyCycle(cycle));
+        }
+        visiting.push(index);
+        for dependency in &edges[index] {
+            self.visit_dependency(*dependency, edges, visiting, visited)?;
+        }
+        visiting.pop();
+        visited.insert(index);
+        Ok(())
+    }
+
+    fn component_record_index(&self, component: &RepositoryPath) -> Option<usize> {
+        let directory = resolve_path(&self.repo_root, component.as_path()).ok()?;
+        self.records
+            .iter()
+            .position(|record| record.directory == directory)
     }
 
     pub(super) fn save(&self, fs: &mut impl FileSystem, path: &Utf8Path) -> Result<(), Error> {

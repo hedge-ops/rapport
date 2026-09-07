@@ -68,6 +68,41 @@ Example language tags are preserved as Markdown fence labels. Supported tags are
 `terraform_module`, `zola_site`, and other repository-defined classifications.
 It describes architecture and does not select a build workflow.
 
+### Component declarations
+
+Contexts may also describe component composition and generated artifacts. All of
+these fields are optional and default to empty collections:
+
+```toml
+components = [
+  "app/apple/PeopleWorkKit",
+  "app/capabilities/apple/PeopleWorkCapabilitiesKit",
+]
+
+kustomizations = [
+  ".",
+  "applications/people-work-api/overlays/production",
+]
+
+[generated_outputs.facet_swift]
+tool = "facet_generate"
+target = "swift"
+
+[generated_inputs.app]
+component = "app/core/shared"
+output = "facet_swift"
+```
+
+`components` is explicit membership: it documents which repository-root-relative
+component paths make up a context and never expands `rapport review` selection.
+`generated_outputs` declares named producer capabilities, while
+`generated_inputs` declares direct consumer edges to a producer context and one
+of that context's outputs. These declarations are direct to their owning
+context; they are not inherited by child contexts. `kustomizations` contains
+paths relative to the declaring context directory. Rapport validates and renders
+these declarations and their source paths, but never runs the declared tools or
+targets.
+
 Install referenced catalog packs before adding includes:
 
 ```bash
@@ -95,15 +130,17 @@ Included packs resolve transitively. A pack included by several ancestors or
 through several packs contributes each standard once. Identical standards with
 the same ID merge their source references; different definitions sharing an ID
 are errors. There is no last-writer-wins override. Prompts include purpose,
-ownership, boundaries, full benchmark text, rationale, examples, and actual source
-paths, including packs stored at nonstandard filenames.
+ownership, boundaries, component declarations, generated dependency provenance,
+full benchmark text, rationale, examples, and actual source paths, including
+packs stored at nonstandard filenames.
 
 Rapport validates all discovered contexts and installed packs. Unknown fields,
-unresolved includes, include cycles, duplicate namespaces, invalid IDs, incompatible
-versions, and conflicting applicable standards fail explicitly. It emits no
-partial review prompt on failure. Correct the named declaration or install the
-missing pack; standards are never silently dropped. A missing governing context
-reports how to create one.
+unresolved includes, include cycles, duplicate namespaces, invalid IDs, invalid
+repository-relative paths, missing generated producers or outputs, generated
+dependency cycles, incompatible versions, and conflicting applicable standards
+fail explicitly. It emits no partial review prompt on failure. Correct the named
+declaration or install the missing pack; standards are never silently dropped. A
+missing governing context reports how to create one.
 
 ## Compatibility and scope
 
