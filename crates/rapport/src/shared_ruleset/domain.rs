@@ -90,6 +90,7 @@ pub(crate) enum ExampleLanguage {
     Typescript,
     Toml,
     Json,
+    Yaml,
     Markdown,
     Shell,
     Text,
@@ -110,6 +111,7 @@ impl FromStr for ExampleLanguage {
             "typescript" => Ok(Self::Typescript),
             "toml" => Ok(Self::Toml),
             "json" => Ok(Self::Json),
+            "yaml" => Ok(Self::Yaml),
             "markdown" => Ok(Self::Markdown),
             "shell" => Ok(Self::Shell),
             "text" => Ok(Self::Text),
@@ -137,6 +139,7 @@ impl ExampleLanguage {
             Self::Typescript => "typescript",
             Self::Toml => "toml",
             Self::Json => "json",
+            Self::Yaml => "yaml",
             Self::Markdown => "markdown",
             Self::Shell => "shell",
             Self::Text => "text",
@@ -463,7 +466,7 @@ fn required_text(field: &'static str, value: impl Into<String>) -> Result<String
 
 #[cfg(test)]
 mod tests {
-    use super::{NewRule, Rule, RulesetId};
+    use super::{Example, NewRule, Rule, RulesetId};
     use claims::{assert_err, assert_ok};
     use rstest::rstest;
 
@@ -498,5 +501,12 @@ mod tests {
             rule.reference().map(super::Reference::markdown),
             Some("[Rust Book](https://doc.rust-lang.org/book/)".to_owned())
         );
+    }
+
+    #[test]
+    fn example_should_accept_yaml_and_preserve_its_fence_label() {
+        let example = assert_ok!(Example::try_new("yaml", "command: just ci"));
+
+        assert_eq!(example.language().as_str(), "yaml");
     }
 }

@@ -59,6 +59,10 @@ Ownership and boundary IDs use `<NAMESPACE>_OWNERSHIP_001` and
 Namespaces must be unique across contexts. `purpose` and declaration text must
 be nonempty. Each rule requires rationale and both examples.
 
+Example language tags are preserved as Markdown fence labels. Supported tags are
+`rust`, `swift`, `kotlin`, `csharp`, `xaml`, `html`, `javascript`, `typescript`,
+`toml`, `json`, `yaml`, `markdown`, `shell`, and `text`.
+
 `type` is an optional nonempty classification. It accepts `group`, `crate`,
 `swift_package`, `apple_shell`, `cloudflare_worker`, `kustomize`,
 `terraform_module`, `zola_site`, and other repository-defined classifications.
