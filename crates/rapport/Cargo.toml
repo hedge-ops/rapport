@@ -1,7 +1,7 @@
 [package]
 name = "rapport"
-description = "repository factory workflow cli"
-keywords = ["cli", "workflow", "agent", "developer-tools", "automation"]
+description = "Repository architecture and component review CLI"
+keywords = ["cli", "architecture", "agent", "developer-tools", "review"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 version = "0.6.1"

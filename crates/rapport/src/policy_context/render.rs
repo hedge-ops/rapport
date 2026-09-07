@@ -88,6 +88,14 @@ fn render_context_record(
             .minimum_grade()
             .map_or_else(|| "inherited".to_owned(), |grade| grade.to_string())
     );
+    let _ = writeln!(
+        output,
+        "\n- `source` — `{}`",
+        display(repo_root, record.path())
+    );
+    if let Some(kind) = record.context().component_type() {
+        let _ = writeln!(output, "- `type` — `{kind}`");
+    }
     output.push_str("\n### Ownership — Prefer Here\n\n");
     output.push_str(&or_none(
         &record

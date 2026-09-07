@@ -10,7 +10,7 @@ use super::grade::ReviewGrade;
 use super::repository::Store;
 use super::{Error, build, develop};
 use crate::{Clock, CommandContext};
-use clap::{ArgGroup, Args, Subcommand};
+use clap::{ArgGroup, Subcommand};
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
 use rapport_git::{Git, Repository, WorktreeStatus};
 use rapport_prose::OutputBuilder;
@@ -30,22 +30,17 @@ const CATEGORIES: [&str; 7] = [
     "Compatibility and dependencies",
 ];
 
-#[derive(Debug, Args)]
-pub(crate) struct Cli {
-    #[command(subcommand)]
-    command: Action,
-}
-
 #[derive(Debug, Subcommand)]
-enum Action {
-    Start {
-        path: Option<Utf8PathBuf>,
-    },
+pub(crate) enum Action {
+    #[command(hide = true)]
+    Start { path: Option<Utf8PathBuf> },
+    #[command(hide = true)]
     Complete {
         #[arg(long)]
         result: Utf8PathBuf,
     },
     #[command(group(ArgGroup::new("decision").required(true).args(["accept", "dismiss"])))]
+    #[command(hide = true)]
     Reconcile {
         finding: String,
         #[arg(long)]
@@ -55,27 +50,31 @@ enum Action {
         #[arg(long, requires = "dismiss")]
         reason: Option<String>,
     },
+    #[command(hide = true)]
     Override {
         #[arg(long)]
         reason: String,
     },
+    #[command(hide = true)]
     Cancel {
         #[arg(long)]
         reason: String,
     },
-    Status {
-        task_id: Option<String>,
-    },
+    #[command(hide = true)]
+    Status { task_id: Option<String> },
 }
 
-pub(crate) fn run<F, C, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+pub(crate) fn run_action<F, C, O, E>(
+    action: &Action,
+    context: &mut CommandContext<'_, F, C, O, E>,
+) -> ExitCode
 where
     F: FileSystem,
     C: Clock,
     O: io::Write,
     E: io::Write,
 {
-    let result = match &cli.command {
+    let result = match action {
         Action::Start { path } => start(context, path.as_deref()),
         Action::Complete { result } => complete(context, result),
         Action::Reconcile {

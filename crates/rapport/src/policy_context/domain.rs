@@ -353,6 +353,8 @@ impl fmt::Debug for BuildSignoff {
 pub(crate) struct Context {
     id: ContextId,
     purpose: String,
+    component_type: Option<String>,
+    namespaced: bool,
     next_ownership: u16,
     next_boundary: u16,
     ownership: Vec<Entry>,
@@ -368,6 +370,8 @@ impl Context {
         Ok(Self {
             id,
             purpose: required(purpose)?,
+            component_type: None,
+            namespaced: false,
             next_ownership: 1,
             next_boundary: 1,
             ownership: Vec::new(),
@@ -402,6 +406,8 @@ impl Context {
         Ok(Self {
             id,
             purpose: required(purpose)?,
+            component_type: None,
+            namespaced: false,
             next_ownership,
             next_boundary,
             ownership,
@@ -414,6 +420,21 @@ impl Context {
 
     pub(crate) fn id(&self) -> &ContextId {
         &self.id
+    }
+    pub(crate) fn component_type(&self) -> Option<&str> {
+        self.component_type.as_deref()
+    }
+    pub(crate) fn namespaced(&self) -> bool {
+        self.namespaced
+    }
+    pub(crate) fn set_schema(
+        &mut self,
+        namespaced: bool,
+        component_type: Option<String>,
+    ) -> Result<(), Error> {
+        self.namespaced = namespaced;
+        self.component_type = component_type.map(required).transpose()?;
+        Ok(())
     }
     pub(crate) fn purpose(&self) -> &str {
         &self.purpose
@@ -571,6 +592,8 @@ impl fmt::Debug for Context {
             .debug_struct("Context")
             .field("id", &self.id)
             .field("purpose", &self.purpose)
+            .field("component_type", &self.component_type)
+            .field("namespaced", &self.namespaced)
             .field("next_ownership", &self.next_ownership)
             .field("next_boundary", &self.next_boundary)
             .field("ownership", &self.ownership)

@@ -53,6 +53,8 @@ impl Repository {
         fs: &mut impl FileSystem,
         user_path: &Utf8Path,
         purpose: String,
+        namespace: Option<&str>,
+        component_type: Option<String>,
     ) -> Result<&Record, Error> {
         let directory = resolve_path(&self.repo_root, user_path)?;
         if !fs.is_dir(&directory) {
@@ -62,7 +64,7 @@ impl Repository {
         let relative = directory
             .strip_prefix(&self.repo_root)
             .unwrap_or(&directory);
-        let id = ContextId::derive(relative)?;
+        let id = namespace.map_or_else(|| ContextId::derive(relative), ContextId::parse)?;
         if self
             .records
             .iter()
@@ -70,8 +72,19 @@ impl Repository {
         {
             return Err(Error::DuplicateContext(id.to_string()));
         }
+        let mut context = Context::new(id.clone(), purpose)?;
+        if namespace.is_some() {
+            *context.ruleset_mut() = crate::shared_ruleset::Ruleset::try_new(
+                id.as_str(),
+                "Context-owned architectural Rules.",
+                None,
+                Vec::new(),
+                Vec::new(),
+            )?;
+        }
+        context.set_schema(namespace.is_some(), component_type)?;
         self.records.push(Record {
-            context: Context::new(id, purpose)?,
+            context,
             path,
             directory,
         });
@@ -204,7 +217,12 @@ impl Repository {
                 }
             }
             for included in record.context.ruleset().includes() {
-                self.shared.require(included)?;
+                if self.shared.get(included).is_none() {
+                    return Err(Error::UnresolvedInclude {
+                        path: record.path.clone(),
+                        included: included.to_string(),
+                    });
+                }
             }
             for signoff in record.context.signoffs() {
                 for included in signoff.included_paths() {

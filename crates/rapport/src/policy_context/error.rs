@@ -11,6 +11,8 @@ pub(crate) enum Error {
     Ruleset(#[from] crate::shared_ruleset::Error),
     #[error("Context path must remain inside the repository")]
     InvalidPath,
+    #[error("`{path}` must declare exactly one of `namespace` or legacy `id`")]
+    SchemaIdentity { path: Utf8PathBuf },
     #[error("Context ID is not canonical")]
     InvalidContextId,
     #[error("Context entry ID is invalid for `{0}`")]
@@ -19,8 +21,14 @@ pub(crate) enum Error {
     EmptyText,
     #[error("Context `{0}` already exists")]
     DuplicateContext(String),
-    #[error("no Context governs `{0}`")]
+    #[error(
+        "no Context governs `{0}`; create context.toml with namespace and purpose, or run `rapport context init <path> --purpose <text>`"
+    )]
     MissingContext(Utf8PathBuf),
+    #[error(
+        "`{path}` includes unresolved standards pack `{included}`; install it with `rapport ruleset catalog install {included}` or define it under .rapport/rules"
+    )]
+    UnresolvedInclude { path: Utf8PathBuf, included: String },
     #[error("Context entry `{0}` was not found")]
     MissingEntry(String),
     #[error("Context `{context}` references unknown neighboring owner `{owner}`")]

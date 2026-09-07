@@ -30,6 +30,12 @@ pub(super) enum Action {
         path: Utf8PathBuf,
         #[arg(long)]
         purpose: String,
+        /// Stable namespace for architecture and benchmark identifiers.
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Component classification, such as crate or group.
+        #[arg(long = "type")]
+        component_type: Option<String>,
     },
     /// List Contexts at or below a path.
     List { path: Option<Utf8PathBuf> },

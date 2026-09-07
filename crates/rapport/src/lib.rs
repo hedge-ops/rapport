@@ -12,6 +12,7 @@ mod paths;
 mod policy_context;
 mod prime;
 mod repository_files;
+mod review;
 mod runner;
 mod shared_ruleset;
 mod view;
@@ -112,7 +113,7 @@ where
         Command::Develop(develop_args) => work_ledger::run_develop(develop_args, context),
         Command::Context(context_args) => policy_context::run(context_args, context),
         Command::Build(build_args) => work_ledger::run_build(build_args, context),
-        Command::Review(review_args) => work_ledger::run_review(review_args, context),
+        Command::Review(review_args) => review::run(review_args, context),
         Command::Integrate(integrate_args) => work_ledger::run_integrate(integrate_args, context),
     }
 }
@@ -240,11 +241,11 @@ mod tests {
         let (code, out, err) = run_with(&[]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("repository rapport for human-directed agent work"));
-        assert!(out.contains("prime -> doctor -> work -> develop -> build -> review -> integrate"));
+        assert!(out.contains("Repository architecture and review benchmarks"));
+        assert!(out.contains("rapport review <path>"));
         assert!(out.contains("prime"));
-        assert!(out.contains("doctor"));
-        assert!(out.contains("work"));
+        assert!(!out.contains("  doctor"));
+        assert!(!out.contains("  work"));
         assert_eq!(err, "");
     }
 
@@ -253,8 +254,8 @@ mod tests {
         let (code, out, err) = run_with(&["--help"]);
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(out.contains("Rapport keeps human-directed agent work grounded"));
-        assert!(out.contains("prime -> doctor -> work -> develop -> build -> review -> integrate"));
+        assert!(out.contains("Rapport turns repository-owned architecture"));
+        assert!(out.contains("rapport review <path>"));
         assert_eq!(err, "");
     }
 
@@ -282,15 +283,9 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("rapport prime"));
-        assert!(out.contains("planning, coding, testing, building, reviewing"));
-        assert!(out.contains("rapport work start"));
+        assert!(out.contains("rapport review <path>"));
         assert!(out.contains("rapport context show"));
-        assert!(out.contains("rapport work task next"));
-        assert!(out.contains("rapport work checkpoint start"));
-        assert!(out.contains("rapport doctor"));
-        assert!(out.contains("rapport build"));
-        assert!(out.contains("rapport integrate"));
-        assert!(out.contains("rapport integrate complete"));
+        assert!(out.contains("without Work"));
         assert_eq!(err, "");
     }
 
@@ -699,19 +694,14 @@ mod tests {
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(out.contains("status` — created"));
         assert!(out.contains("AGENTS.md"));
-        assert!(out.contains(".github/workflows/rapport-signoff.yml"));
+        assert!(!out.contains(".github/workflows/rapport-signoff.yml"));
         assert_eq!(err, "");
         let agents = fs.read_to_string("/repo/AGENTS.md").unwrap();
 
-        assert!(agents.contains("## Software Factory"));
+        assert!(agents.contains("## Repository Architecture and Reviews"));
         assert!(agents.contains("rapport prime"));
         assert!(!agents.contains("rapport work start"));
-        let signoff = fs
-            .read_to_string("/repo/.github/workflows/rapport-signoff.yml")
-            .unwrap();
-        assert!(signoff.contains("workflow_call:"));
-        assert!(signoff.contains("context=${IDENTITY}"));
-        assert!(signoff.contains("context=${AGGREGATE}"));
+        assert!(!fs.exists("/repo/.github/workflows/rapport-signoff.yml"));
     }
 
     #[test]

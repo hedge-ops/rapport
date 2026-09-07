@@ -1,19 +1,17 @@
 # rapport
 
-The repository workflow CLI for Rapport.
+Rapport structures repository architecture and review benchmarks in `context.toml`.
+Generate a complete sourced Markdown prompt for a human or agent with:
 
-Rapport keeps human-directed agent work grounded in repository-owned rules,
-build conventions, GitHub integration, and local state.
-
-The product workflow is:
-
-```text
-Plan -> Develop -> Build -> Review -> Integrate -> Ship
+```bash
+rapport review <component-path>
 ```
 
-Work is the durable local ledger connecting Develop through Integrate. Once
-finalized, its human prose, dates, Tasks, proof, decisions, and Git identities
-remain inspectable through `rapport work history` in local cross-platform state.
+No Work, build, integration, or GitHub state is required. Use `rapport context`
+to author component purpose, ownership, boundaries, and local benchmarks, and
+`rapport ruleset` to manage reusable standards. Lifecycle commands are deprecated.
+See the [repository guide](https://github.com/hedge-ops/rapport#readme) for schema,
+inheritance, and compatibility details.
 
 ## License
 

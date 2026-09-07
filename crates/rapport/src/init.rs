@@ -4,7 +4,6 @@
 //! and shared signoff workflow creation.
 
 use crate::context::{Clock, CommandContext};
-use crate::policy_context;
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
@@ -33,27 +32,18 @@ where
             let contents = upsert_rapport_section(existing.as_deref());
             match context.fs.write_string(&path, contents) {
                 Ok(()) => {
-                    match policy_context::write_shared(context.fs, context.paths.repo_root()) {
-                        Ok(()) => {
-                            if let Err(error) =
-                                write_rules_gitignore(context.fs, context.paths.repo_root())
-                            {
-                                let _ = writeln!(context.err, "{}", render_init_error(&error));
-                                return ExitCode::from(FAILURE);
-                            }
-                            let status = if existing.is_some() {
-                                "updated"
-                            } else {
-                                "created"
-                            };
-                            let _ = writeln!(context.out, "{}", render_initialized(status));
-                            ExitCode::SUCCESS
-                        }
-                        Err(error) => {
-                            let _ = writeln!(context.err, "{}", render_init_error(&error));
-                            ExitCode::from(FAILURE)
-                        }
+                    if let Err(error) = write_rules_gitignore(context.fs, context.paths.repo_root())
+                    {
+                        let _ = writeln!(context.err, "{}", render_init_error(&error));
+                        return ExitCode::from(FAILURE);
                     }
+                    let status = if existing.is_some() {
+                        "updated"
+                    } else {
+                        "created"
+                    };
+                    let _ = writeln!(context.out, "{}", render_initialized(status));
+                    ExitCode::SUCCESS
                 }
                 Err(error) => {
                     let _ = writeln!(context.err, "{}", render_init_error(&error));
@@ -178,7 +168,7 @@ fn append_section(contents: &str, section: &str) -> String {
 
 fn rapport_section() -> String {
     format!(
-        "{START_MARKER}\n## Software Factory\n\nThis project uses Rapport for planning, coding, testing, building, and reviewing code. Call `rapport prime` for all the details before doing any of these activities.\n{END_MARKER}\n"
+        "{START_MARKER}\n## Repository Architecture and Reviews\n\nThis project uses Rapport for structured architecture and review benchmarks. Call `rapport prime` for guidance and `rapport review <path>` to generate a component review prompt.\n{END_MARKER}\n"
     )
 }
 
@@ -191,10 +181,7 @@ fn render_initialized(status: &str) -> String {
                 ("path", AGENTS_FILE.to_string()),
             ])
         })
-        .section("Signoff Workflow", |b| {
-            b.entries([("path", policy_context::SHARED_WORKFLOW_PATH.to_string())])
-        })
-        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .next_actions(nonempty![RunHint::new("rapport context show .")])
         .build()
 }
 
@@ -216,7 +203,7 @@ mod tests {
         let updated = upsert_rapport_section(Some("# Instructions\n\nKeep it tidy.\n"));
 
         assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("## Software Factory"));
+        assert!(updated.contains("## Repository Architecture and Reviews"));
         assert!(updated.contains("rapport prime"));
         assert_eq!(updated.matches(START_MARKER).count(), 1);
     }
@@ -228,7 +215,7 @@ mod tests {
         ));
 
         assert!(updated.contains("# Instructions"));
-        assert!(updated.contains("planning, coding, testing, building, and reviewing code"));
+        assert!(updated.contains("structured architecture and review benchmarks"));
         assert!(updated.contains("rapport prime"));
         assert!(!updated.contains("\nold\n"));
         assert_eq!(updated.matches(START_MARKER).count(), 1);

@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Direct `rapport review [PATH ...]` Markdown prompts with inherited architecture,
+  full benchmarks, actual source paths, and no Work or integration prerequisites.
+- Namespace-based component contexts, optional component types, inferred entry
+  counters, and `context init --namespace <ID> --type <TYPE>`.
+
+### Changed
+
+- Centered help, initialization, and documentation on repository architecture and
+  reviews; deprecated lifecycle commands remain callable but hidden from primary help.
+- Resolve review benchmarks from parsed packs, deduplicate repeated includes, and
+  reject conflicting definitions without emitting a partial prompt.
+- `rapport init` no longer creates a GitHub signoff workflow. Explicit legacy
+  signoff commands still manage their workflows.
+
 ## [0.6.1] - 2026-07-16
 
 ### Fixed

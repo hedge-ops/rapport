@@ -45,9 +45,20 @@ fn execute(
     runner: &dyn crate::CommandRunner,
 ) -> Result<String, Error> {
     match action {
-        Action::Init { path, purpose } => {
+        Action::Init {
+            path,
+            purpose,
+            namespace,
+            component_type,
+        } => {
             let mut repository = Repository::load(fs, repo_root)?;
-            let record = repository.init(fs, path, purpose.clone())?;
+            let record = repository.init(
+                fs,
+                path,
+                purpose.clone(),
+                namespace.as_deref(),
+                component_type.clone(),
+            )?;
             Ok(changed("initialized", record))
         }
         Action::List { path } => {

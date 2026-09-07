@@ -26,40 +26,29 @@ fn render_prime() -> String {
         .title("rapport prime")
         .section("Purpose", |b| {
             b.items([
-                "Use Rapport before planning, coding, testing, building, reviewing, or integrating code.",
-                "Rapport records active work, resolves repository rules, runs validation, and carries local work into GitHub.",
+                "Rapport structures repository architecture and review benchmarks in context.toml.",
+                "Generate sourced review prompts for humans and agents without Work, build, integration, or GitHub state.",
             ])
         })
-        .section("Loop", |b| {
+        .section("Review", |b| {
             b.items([
-                "`rapport work start --ticket <ticket> --title \"...\" --target <branch>` - create active Work from a durable request",
-                "`rapport work status` - inspect the current candidate, Tasks, proof, blockers, and next command",
-                "`rapport context show <path>` - read folder purpose, ownership, boundaries, and applicable benchmarks",
-                "`rapport doctor` - verify Git and GitHub prerequisites before integration",
-                "`rapport work task next` - inspect the next ordered Develop Task action without executing it",
-                "`rapport develop task start <ID>` - start the pending Develop Task before performing its engineering correction",
-                "`rapport develop task complete <ID> --result \"<correction and evidence>\"` - complete the Task with a meaningful result; checkpoint first only when repository state changed",
-                "`rapport work checkpoint start` - reconcile and stage a coherent Git checkpoint",
-                "`rapport develop complete` - explicitly close Develop at the latest clean checkpoint without running validation",
-                "`rapport integrate start` - publish the completed checkpoint and create its pull request before acceptance proof",
-                "`rapport build` - prove the exact published pull-request candidate with applicable Context signoffs",
-                "`rapport review start` - request one independent Review; use `rapport review complete --result <file>` to record it",
-                "`rapport integrate update` - publish a corrected, explicitly completed checkpoint to the same pull request and invalidate stale proof",
-                "`rapport integrate status` - inspect GitHub state without changing it",
-                "`rapport integrate complete` - revalidate, squash-merge, delete the remote branch, and archive Work",
-                "`rapport work history list` - find finalized Work; use `rapport work history show <id>` for its complete record",
+                "`rapport context init <path> --purpose <text>` - create architecture context for a repository area",
+                "`rapport context show <path>` - inspect purpose, ownership, boundaries, and inherited standards",
+                "`rapport ruleset catalog list` - discover reusable standards packs",
+                "`rapport ruleset catalog install <ID>` - install a standards pack before including it",
+                "`rapport review <path> [<path> ...]` - print a complete Markdown review prompt with source paths",
+                "Pass the prompt and relevant code or diff to your reviewer; Rapport does not invoke an agent.",
             ])
         })
-        .section("Boundaries", |b| {
+        .section("Repository ownership", |b| {
             b.items([
-                "Keep `.rapport/work.toml` local; it is working memory, not project source.",
-                "Work History remains local in Rapport's platform state directory and is never uploaded implicitly.",
-                "Prefer repository tools and rules discovered by Rapport over ad hoc workflow guesses.",
-                "Repositories can install the catalog `JUST_WORKFLOW` Ruleset to expose conventional Just targets and operation boundaries during implementation and Review.",
-                "When changing Rapport itself, run an installed or copied Rapport binary for dogfooding builds.",
+                "Edit context.toml directly or use context commands; commit architecture and standards with the repository.",
+                "Ancestor context and included packs apply alongside local declarations. Conflicting or missing standards fail explicitly.",
+                "Planning, development, tests, builds, and integration belong to the repository's own tools and process.",
+                "Legacy lifecycle commands remain callable for compatibility but are deprecated; see docs/lifecycle-migration.md.",
             ])
         })
-        .next_actions(nonempty![RunHint::new("rapport work status")])
+        .next_actions(nonempty![RunHint::new("rapport context show .")])
         .build()
 }
 
@@ -68,36 +57,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prime_view_includes_the_core_workflow() {
+    fn prime_should_orient_users_to_stateless_review() {
         let view = render_prime();
-
-        assert!(view.contains("planning, coding, testing, building, reviewing"));
-        assert!(view.contains("rapport work start"));
-        assert!(view.contains("rapport context show"));
-        assert!(view.contains("rapport doctor"));
-        assert!(view.contains("rapport work task next"));
-        assert!(
-            view.contains("rapport develop task start <ID>"),
-            "expecting prime to show how to start a Develop Task"
-        );
-        assert!(
-            view.contains(
-                "rapport develop task complete <ID> --result \"<correction and evidence>\""
-            ),
-            "expecting prime to require a correction-and-evidence result"
-        );
-        assert!(
-            view.contains("checkpoint first only when repository state changed"),
-            "expecting prime to make checkpointing conditional on repository changes"
-        );
-        assert!(view.contains("rapport work checkpoint start"));
-        assert!(view.contains("rapport develop complete"));
-        assert!(view.contains("rapport build"));
-        assert!(view.contains("rapport review"));
-        assert!(view.contains("rapport integrate"));
-        assert!(view.contains("rapport integrate complete"));
-        assert!(view.contains("rapport integrate update"));
-        assert!(view.contains("JUST_WORKFLOW"));
-        assert!(view.contains("rapport work history list"));
+        assert!(view.contains("rapport review <path>"));
+        assert!(view.contains("rapport context init"));
+        assert!(view.contains("without Work"));
+        assert!(!view.contains("rapport work start"));
     }
 }

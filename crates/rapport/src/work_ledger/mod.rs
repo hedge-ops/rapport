@@ -26,4 +26,4 @@ pub(crate) use command::run;
 pub(crate) use develop::{Cli as DevelopCli, run as run_develop};
 pub(crate) use error::Error;
 pub(crate) use integrate::{Cli as IntegrateCli, run as run_integrate};
-pub(crate) use review::{Cli as ReviewCli, run as run_review};
+pub(crate) use review::{Action as LegacyReviewAction, run_action as run_review_action};

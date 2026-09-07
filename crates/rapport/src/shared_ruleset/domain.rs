@@ -361,9 +361,11 @@ impl Ruleset {
             .into_iter()
             .map(RulesetId::parse)
             .collect::<Result<Vec<_>, _>>()?;
-        if includes.iter().collect::<BTreeSet<_>>().len() != includes.len() {
-            return Err(Error::DuplicateRuleset(id.to_string()));
-        }
+        let mut seen = BTreeSet::new();
+        let includes = includes
+            .into_iter()
+            .filter(|included| seen.insert(included.clone()))
+            .collect();
         Ok(Self {
             id,
             purpose: required_text("Ruleset purpose", purpose)?,

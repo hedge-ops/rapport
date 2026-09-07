@@ -20,7 +20,6 @@ pub(crate) use cli::Cli;
 pub(crate) use command::run;
 pub(crate) use doctor::doctor_all;
 pub(crate) use error::Error;
-pub(crate) use workflow::{SHARED_PATH as SHARED_WORKFLOW_PATH, write_shared};
 
 use rapport_files::{FileSystem, Utf8Path};
 use sha2::{Digest, Sha256};
@@ -161,43 +160,29 @@ pub(crate) fn review_policy_for_paths<'path>(
             .push(path.to_string());
         minimum = minimum.max(repository.effective_grade(path)?);
         for record in repository.effective(path)? {
-            records.insert(record.context().id().to_string(), record);
+            records.insert(
+                (record.directory().components().count(), record.path()),
+                record,
+            );
         }
     }
-    let mut markdown = String::from("## Changed Files by Context\n\n");
+    let mut markdown = String::from("## Selected Paths by Context\n\n");
     for (context, files) in &grouped {
         let _ = writeln!(markdown, "- `{context}` — {}", files.join(", "));
     }
     markdown.push_str("\n## Effective Context\n");
     let mut rule_ids = BTreeSet::new();
     let mut shared = BTreeSet::new();
+    let mut standards = BTreeMap::new();
     for record in records.values() {
         let context = record.context();
-        let _ = write!(
-            markdown,
-            "\n### `{}`\n\nPurpose: {}\n\nOwnership — Prefer Here:\n",
-            context.id(),
-            context.purpose()
-        );
-        for entry in context.ownership() {
-            let _ = writeln!(markdown, "- `{}` — {}", entry.id(), entry.text());
-        }
-        markdown.push_str("\nBoundaries — Avoid Here:\n");
-        for boundary in context.boundaries() {
-            let _ = writeln!(
-                markdown,
-                "- `{}` — {}{}",
-                boundary.id(),
-                boundary.text(),
-                boundary
-                    .owner()
-                    .map_or_else(String::new, |owner| format!(" — owner `{owner}`"))
-            );
-        }
-        markdown.push_str("\nContext-owned Rules:\n");
+        render_architecture(&mut markdown, record, repo_root);
         for rule in context.ruleset().rules() {
-            rule_ids.insert(rule.id().to_string());
-            render_rule(&mut markdown, rule);
+            collect_standard(
+                &mut standards,
+                rule,
+                render::display(repo_root, record.path()),
+            )?;
         }
         for id in context.ruleset().includes() {
             shared.insert(id.clone());
@@ -213,26 +198,30 @@ pub(crate) fn review_policy_for_paths<'path>(
     }
     markdown.push_str("\n## Applicable Shared Rulesets\n");
     for id in shared {
-        let path = repo_root
-            .join(".rapport/rules")
-            .join(id.conventional_path());
-        let contents = fs.read_to_string(&path).map_err(|source| Error::Io {
-            path: path.clone(),
-            source,
-        })?;
-        for line in contents.lines() {
-            if let Some(id) = line
-                .trim()
-                .strip_prefix("id = \"")
-                .and_then(|v| v.strip_suffix('"'))
-                && id.rsplit_once('_').is_some_and(|(_, suffix)| {
-                    suffix.len() == 3 && suffix.bytes().all(|byte| byte.is_ascii_digit())
-                })
-            {
-                rule_ids.insert(id.to_owned());
-            }
+        let summary = repository.shared().require(&id)?;
+        let source = render::display(repo_root, summary.path());
+        let _ = writeln!(
+            markdown,
+            "\n- `{id}` — {} — source `{source}`",
+            summary.purpose()
+        );
+        for rule in summary.rules() {
+            collect_standard(&mut standards, rule, source.clone())?;
         }
-        let _ = write!(markdown, "\n### `{id}`\n\n```toml\n{contents}```\n");
+    }
+    markdown.push_str("\n## Review Benchmarks\n");
+    for (id, (rule, sources)) in standards {
+        rule_ids.insert(id);
+        render_rule(&mut markdown, rule);
+        let _ = writeln!(
+            markdown,
+            "\nSources: {}",
+            sources
+                .into_iter()
+                .map(|source| format!("`{source}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     Ok(ReviewPolicy {
         markdown,
@@ -241,21 +230,85 @@ pub(crate) fn review_policy_for_paths<'path>(
     })
 }
 
+fn render_architecture(markdown: &mut String, record: &repository::Record, repo_root: &Utf8Path) {
+    let context = record.context();
+    let _ = write!(
+        markdown,
+        "\n### `{}`\n\nPurpose: {}\n\nOwnership — Prefer Here:\n\n",
+        context.id(),
+        context.purpose()
+    );
+    for entry in context.ownership() {
+        let _ = writeln!(markdown, "- `{}` — {}", entry.id(), entry.text());
+    }
+    markdown.push_str("\nBoundaries — Avoid Here:\n\n");
+    for boundary in context.boundaries() {
+        let _ = writeln!(
+            markdown,
+            "- `{}` — {}{}",
+            boundary.id(),
+            boundary.text(),
+            boundary
+                .owner()
+                .map_or_else(String::new, |owner| format!(" — owner `{owner}`"))
+        );
+    }
+    let _ = writeln!(
+        markdown,
+        "\nSource: `{}`",
+        render::display(repo_root, record.path())
+    );
+    if let Some(kind) = context.component_type() {
+        let _ = writeln!(markdown, "\nType: `{kind}`");
+    }
+}
+
+fn collect_standard<'rule>(
+    standards: &mut BTreeMap<String, (&'rule crate::shared_ruleset::Rule, BTreeSet<String>)>,
+    rule: &'rule crate::shared_ruleset::Rule,
+    source: String,
+) -> Result<(), Error> {
+    if let Some((existing, sources)) = standards.get_mut(rule.id().as_str()) {
+        if *existing != rule {
+            return Err(crate::shared_ruleset::Error::ConflictingRule {
+                rule: rule.id().to_string(),
+                first: sources.iter().cloned().collect::<Vec<_>>().join(", "),
+                second: source,
+            }
+            .into());
+        }
+        sources.insert(source);
+    } else {
+        standards.insert(rule.id().to_string(), (rule, BTreeSet::from([source])));
+    }
+    Ok(())
+}
+
 fn render_rule(markdown: &mut String, rule: &crate::shared_ruleset::Rule) {
     let _ = write!(
         markdown,
-        "\n- `{}` — {}\n  - Rationale: {}\n  - Avoid ({}): {}\n  - Prefer ({}): {}{}\n",
+        "\n### `{}`\n\n{}\n\nRationale: {}\n",
         rule.id(),
         rule.text(),
-        rule.rationale(),
-        rule.avoid().language().as_str(),
-        rule.avoid().text(),
-        rule.prefer().language().as_str(),
-        rule.prefer().text(),
-        rule.reference()
-            .map_or_else(String::new, |reference| format!(
-                "\n  - Reference: {}",
-                reference.markdown()
-            ))
+        rule.rationale()
     );
+    for (label, example) in [("Avoid", rule.avoid()), ("Prefer", rule.prefer())] {
+        let longest = example
+            .text()
+            .split(|character| character != '`')
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        let fence = "`".repeat(3.max(longest + 1));
+        let _ = write!(
+            markdown,
+            "\n{label} ({}):\n\n{fence}{}\n{}\n{fence}\n",
+            example.language().as_str(),
+            example.language().as_str(),
+            example.text()
+        );
+    }
+    if let Some(reference) = rule.reference() {
+        let _ = writeln!(markdown, "\nReference: {}", reference.markdown());
+    }
 }

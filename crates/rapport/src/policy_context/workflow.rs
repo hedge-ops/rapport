@@ -58,11 +58,6 @@ jobs:
           fi
 "#;
 
-pub(crate) fn write_shared(fs: &mut impl FileSystem, repo_root: &Utf8Path) -> std::io::Result<()> {
-    fs.create_dir_all(repo_root.join(".github/workflows"))?;
-    fs.write_string(repo_root.join(SHARED_PATH), SHARED_CONTENTS)
-}
-
 pub(super) fn path(
     repo_root: &Utf8Path,
     context: &ContextId,

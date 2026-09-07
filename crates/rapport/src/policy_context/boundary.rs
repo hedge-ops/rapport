@@ -13,13 +13,15 @@ use std::str::FromStr;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContextFile {
+    #[serde(default = "schema_version")]
     version: u16,
-    id: String,
+    id: Option<String>,
+    namespace: Option<String>,
+    #[serde(rename = "type")]
+    component_type: Option<String>,
     purpose: String,
-    #[serde(default = "one")]
-    next_ownership: u16,
-    #[serde(default = "one")]
-    next_boundary: u16,
+    next_ownership: Option<u16>,
+    next_boundary: Option<u16>,
     #[serde(default)]
     ownership: BTreeMap<String, EntryFile>,
     #[serde(default)]
@@ -31,8 +33,24 @@ struct ContextFile {
     signoffs: Vec<SignoffFile>,
 }
 
-const fn one() -> u16 {
-    1
+const fn schema_version() -> u16 {
+    SCHEMA_VERSION
+}
+
+fn next_entry(explicit: Option<u16>, ids: impl Iterator<Item = String>) -> Result<u16, Error> {
+    if let Some(next) = explicit {
+        return Ok(next);
+    }
+    let maximum = ids
+        .filter_map(|id| {
+            id.rsplit_once('_')
+                .and_then(|(_, suffix)| suffix.parse::<u16>().ok())
+        })
+        .max()
+        .unwrap_or(0);
+    maximum
+        .checked_add(1)
+        .ok_or_else(|| Error::InvalidEntryId(maximum.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -108,7 +126,15 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
             version: file.version,
         });
     }
-    let id = ContextId::parse(file.id)?;
+    let namespaced = file.namespace.is_some();
+    let ((Some(identity), None) | (None, Some(identity))) = (file.id, file.namespace) else {
+        return Err(Error::SchemaIdentity {
+            path: path.to_path_buf(),
+        });
+    };
+    let id = ContextId::parse(identity)?;
+    let next_ownership = next_entry(file.next_ownership, file.ownership.keys().cloned())?;
+    let next_boundary = next_entry(file.next_boundary, file.boundaries.keys().cloned())?;
     let ownership = file
         .ownership
         .into_iter()
@@ -124,7 +150,11 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
             ))
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    let ruleset_id = id.embedded_ruleset_id()?;
+    let ruleset_id = if namespaced {
+        RulesetId::parse(id.as_str())?
+    } else {
+        id.embedded_ruleset_id()?
+    };
     let rules = file
         .ruleset
         .rules
@@ -151,12 +181,29 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
         .review
         .map(|review| Grade::from_str(&review.minimum_grade))
         .transpose()?;
-    let signoffs = file
-        .signoffs
+    let signoffs = parse_signoffs(file.signoffs, &id)?;
+    let mut context = Context::from_parts(
+        id,
+        file.purpose,
+        next_ownership,
+        next_boundary,
+        ownership,
+        boundaries,
+        ruleset,
+        minimum_grade,
+        signoffs,
+    )?;
+    context.set_schema(namespaced, file.component_type)?;
+    context.validate_identities()?;
+    Ok(context)
+}
+
+fn parse_signoffs(signoffs: Vec<SignoffFile>, id: &ContextId) -> Result<Vec<BuildSignoff>, Error> {
+    signoffs
         .into_iter()
         .map(|signoff| {
             let candidate = BuildSignoff::try_new(
-                &id,
+                id,
                 signoff.target.clone(),
                 signoff.stage,
                 signoff.resource_group.clone(),
@@ -173,18 +220,7 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
                 signoff.include,
             ))
         })
-        .collect::<Result<Vec<_>, Error>>()?;
-    Context::from_parts(
-        id,
-        file.purpose,
-        file.next_ownership,
-        file.next_boundary,
-        ownership,
-        boundaries,
-        ruleset,
-        minimum_grade,
-        signoffs,
-    )
+        .collect::<Result<Vec<_>, Error>>()
 }
 
 fn uses_legacy_schema(contents: &str) -> bool {
@@ -222,7 +258,12 @@ fn uses_legacy_schema(contents: &str) -> bool {
 #[derive(Serialize)]
 struct ContextFileRef<'context> {
     version: u16,
-    id: &'context str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<&'context str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace: Option<&'context str>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    component_type: Option<&'context str>,
     purpose: &'context str,
     next_ownership: u16,
     next_boundary: u16,
@@ -330,7 +371,9 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
         .collect();
     let file = ContextFileRef {
         version: SCHEMA_VERSION,
-        id: context.id().as_str(),
+        id: (!context.namespaced()).then(|| context.id().as_str()),
+        namespace: context.namespaced().then(|| context.id().as_str()),
+        component_type: context.component_type(),
         purpose: context.purpose(),
         next_ownership: context.next_ownership(),
         next_boundary: context.next_boundary(),
