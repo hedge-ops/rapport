@@ -98,6 +98,197 @@ fn review_should_resolve_architecture_and_deduplicate_inherited_packs_without_wo
 }
 
 #[test]
+fn review_should_render_direct_declarations_and_generated_producer_sources() {
+    let mut fs = InMemoryFileSystem::default();
+    fs.add_directory("/repo/.git");
+    assert_ok!(fs.write_string(
+        "/repo/context.toml",
+        r#"version = 1
+id = "ROOT"
+purpose = "Repository architecture."
+components = ["app/core/shared", "app/core/view"]
+
+[ruleset]
+includes = []
+"#,
+    ));
+    assert_ok!(fs.write_string(
+        "/repo/app/core/shared/context.toml",
+        r#"version = 1
+namespace = "SHARED"
+purpose = "Produces shared view inputs."
+
+[generated_outputs.facet_swift]
+tool = "facet_generate"
+target = "swift"
+
+[ruleset]
+includes = []
+"#,
+    ));
+    assert_ok!(fs.write_string(
+        "/repo/app/core/view/context.toml",
+        r#"version = 1
+namespace = "VIEW"
+purpose = "Owns the view."
+kustomizations = ["."]
+
+[generated_inputs.app]
+component = "app/core/shared"
+output = "facet_swift"
+
+[ruleset]
+includes = []
+"#,
+    ));
+
+    let (code, out, err) = run(&mut fs, &["review", "app/core/view"]);
+
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting a dependency-aware review: {err}"
+    );
+    let expected = format!("{}\n", include_str!("../testdata/review-dependencies.md"));
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn context_validate_should_reject_missing_generated_producer() {
+    let mut fs = repository();
+    assert_ok!(fs.write_string(
+        "/repo/app/core/workspace_sync/context.toml",
+        r#"version = 1
+namespace = "SYNC"
+purpose = "Coordinates synchronization."
+
+[generated_inputs.app]
+component = "app/core/missing"
+output = "facet_swift"
+
+[ruleset]
+includes = []
+"#,
+    ));
+
+    let error = review_error(&mut fs, "app/core/workspace_sync");
+
+    assert!(matches!(
+        error,
+        Error::MissingGeneratedProducer {
+            path,
+            input,
+            component,
+        } if path == Utf8Path::new("/repo/app/core/workspace_sync/context.toml")
+            && input == "app"
+            && component == "app/core/missing"
+    ));
+}
+
+#[test]
+fn context_validate_should_reject_unknown_generated_output() {
+    let mut fs = repository();
+    assert_ok!(fs.write_string(
+        "/repo/app/core/shared/context.toml",
+        r#"version = 1
+namespace = "SHARED"
+purpose = "Produces shared inputs."
+
+[generated_outputs.facet_swift]
+tool = "facet_generate"
+target = "swift"
+
+[ruleset]
+includes = []
+"#,
+    ));
+    assert_ok!(fs.write_string(
+        "/repo/app/core/workspace_sync/context.toml",
+        r#"version = 1
+namespace = "SYNC"
+purpose = "Coordinates synchronization."
+
+[generated_inputs.app]
+component = "app/core/shared"
+output = "missing_output"
+
+[ruleset]
+includes = []
+"#,
+    ));
+
+    let error = review_error(&mut fs, "app/core/workspace_sync");
+
+    assert!(matches!(
+        error,
+        Error::UnknownGeneratedOutput {
+            path,
+            input,
+            component,
+            output,
+            producer_path,
+        } if path == Utf8Path::new("/repo/app/core/workspace_sync/context.toml")
+            && input == "app"
+            && component == "app/core/shared"
+            && output == "missing_output"
+            && producer_path == Utf8Path::new("/repo/app/core/shared/context.toml")
+    ));
+}
+
+#[test]
+fn context_validate_should_reject_generated_dependency_cycles() {
+    let mut fs = repository();
+    assert_ok!(fs.write_string(
+        "/repo/app/core/first/context.toml",
+        r#"version = 1
+namespace = "FIRST"
+purpose = "First producer."
+
+[generated_outputs.first_output]
+tool = "first_generate"
+target = "first"
+
+[generated_inputs.second]
+component = "app/core/second"
+output = "second_output"
+
+[ruleset]
+includes = []
+"#,
+    ));
+    assert_ok!(fs.write_string(
+        "/repo/app/core/second/context.toml",
+        r#"version = 1
+namespace = "SECOND"
+purpose = "Second producer."
+
+[generated_outputs.second_output]
+tool = "second_generate"
+target = "second"
+
+[generated_inputs.first]
+component = "app/core/first"
+output = "first_output"
+
+[ruleset]
+includes = []
+"#,
+    ));
+
+    let error = review_error(&mut fs, ".");
+
+    assert!(matches!(
+        error,
+        Error::GeneratedDependencyCycle(cycle)
+            if cycle == [
+                "/repo/app/core/first/context.toml",
+                "/repo/app/core/second/context.toml",
+                "/repo/app/core/first/context.toml",
+            ]
+    ));
+}
+
+#[test]
 fn context_show_should_accept_namespace_in_unrelated_buildkite_context() {
     let mut fs = repository();
     assert_ok!(fs.write_string(

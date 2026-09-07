@@ -64,7 +64,7 @@ fn review_policy<'path>(
     let mut standards = BTreeMap::new();
     for record in records.values() {
         let context = record.context();
-        render_architecture(&mut markdown, record, repo_root);
+        render_architecture(&mut markdown, record, repo_root, repository);
         for rule in context.ruleset().rules() {
             collect_standard(
                 &mut standards,
@@ -113,7 +113,12 @@ fn review_policy<'path>(
     Ok(ReviewPolicy { markdown })
 }
 
-fn render_architecture(markdown: &mut String, record: &repository::Record, repo_root: &Utf8Path) {
+fn render_architecture(
+    markdown: &mut String,
+    record: &repository::Record,
+    repo_root: &Utf8Path,
+    repository: &repository::Repository,
+) {
     let context = record.context();
     let _ = write!(
         markdown,
@@ -144,6 +149,7 @@ fn render_architecture(markdown: &mut String, record: &repository::Record, repo_
     if let Some(kind) = context.component_type() {
         let _ = writeln!(markdown, "\nType: `{kind}`");
     }
+    render::render_component_declarations(markdown, record, repo_root, repository);
 }
 
 fn collect_standard<'rule>(

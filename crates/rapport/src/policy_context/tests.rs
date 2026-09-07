@@ -1,4 +1,5 @@
 use crate::run_with_environment;
+use claims::assert_ok;
 use rapport_files::{FileSystem, InMemoryFileSystem, Utf8PathBuf};
 use std::process::ExitCode;
 
@@ -240,4 +241,47 @@ includes = []
         rapport_files::Utf8Path::new("/repo")
     ));
     assert!(matches!(error, super::Error::InvalidEntryId(id) if id == "ROOT"));
+}
+
+#[test]
+fn component_declarations_should_remain_direct_to_their_context() {
+    let mut fs = InMemoryFileSystem::default();
+    fs.add_directory("/repo/.git");
+    assert_ok!(fs.write_string(
+        "/repo/context.toml",
+        r#"version = 1
+id = "ROOT"
+purpose = "Repository architecture."
+
+[generated_outputs.root_output]
+tool = "root_generate"
+target = "root"
+
+[ruleset]
+includes = []
+"#,
+    ));
+    assert_ok!(fs.write_string(
+        "/repo/app/context.toml",
+        r#"version = 1
+id = "APP"
+purpose = "Application architecture."
+
+[ruleset]
+includes = []
+"#,
+    ));
+
+    let repository = assert_ok!(super::repository::Repository::load(
+        &mut fs,
+        rapport_files::Utf8Path::new("/repo")
+    ));
+    let root = assert_ok!(repository.at(rapport_files::Utf8Path::new(".")));
+    let app = assert_ok!(repository.at(rapport_files::Utf8Path::new("app")));
+
+    assert_eq!(root.context().generated_outputs().len(), 1);
+    assert!(app.context().generated_outputs().is_empty());
+    assert!(app.context().generated_inputs().is_empty());
+    assert!(app.context().components().is_empty());
+    assert!(app.context().kustomizations().is_empty());
 }

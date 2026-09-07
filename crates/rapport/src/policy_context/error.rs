@@ -33,6 +33,46 @@ pub(crate) enum Error {
     MissingEntry(String),
     #[error("Context `{context}` references unknown neighboring owner `{owner}`")]
     UnknownBoundaryOwner { context: String, owner: String },
+    #[error("invalid repository-relative path `{value}` in `{field}` declared by `{path}`")]
+    InvalidRelativePath {
+        path: Utf8PathBuf,
+        field: String,
+        value: String,
+    },
+    #[error(
+        "invalid dependency name `{name}` in `{field}` declared by `{path}`; use lowercase words separated by underscores"
+    )]
+    InvalidDependencyName {
+        path: Utf8PathBuf,
+        field: String,
+        name: String,
+    },
+    #[error("generated output `{output}` in `{path}` has empty `{field}`")]
+    EmptyGeneratedOutputField {
+        path: Utf8PathBuf,
+        output: String,
+        field: &'static str,
+    },
+    #[error(
+        "generated input `{input}` in `{path}` references missing producer component `{component}`"
+    )]
+    MissingGeneratedProducer {
+        path: Utf8PathBuf,
+        input: String,
+        component: String,
+    },
+    #[error(
+        "generated input `{input}` in `{path}` references undeclared output `{output}` from producer component `{component}` at `{producer_path}`"
+    )]
+    UnknownGeneratedOutput {
+        path: Utf8PathBuf,
+        input: String,
+        component: String,
+        output: String,
+        producer_path: Utf8PathBuf,
+    },
+    #[error("generated dependency cycle: {}", .0.join(" -> "))]
+    GeneratedDependencyCycle(Vec<String>),
     #[error(
         "lifecycle field `{field}` in `{path}` is no longer supported; remove it and move build/acceptance policy to repository tooling (see docs/lifecycle-migration.md)"
     )]

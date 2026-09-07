@@ -4,6 +4,24 @@ All notable changes to `rapport` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this crate
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-09-07
+
+### Added
+
+- Added optional component membership, generated output, generated input, and
+  kustomization declarations to `context.toml`.
+- Added generated dependency validation with producer/output resolution,
+  repository-relative path checks, cycle diagnostics, and source-aware context and
+  review rendering.
+
+### Changed
+
+- Kept component and generation declarations direct to their owning context so
+  membership does not expand explicit review paths and parent generation
+  instructions are not inherited by child contexts.
+- Kept context inspection and review prompt generation stateless; declared tools,
+  builds, deployments, and lifecycle state are never executed or created.
+
 ## [0.7.1] - 2026-09-07
 
 ### Fixed
@@ -359,7 +377,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Name-reservation release. No functionality yet; running the binary prints
 a pointer to the workspace.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.7.1...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-v0.7.2...HEAD
+[0.7.2]: https://github.com/hedge-ops/rapport/compare/rapport-v0.7.1...rapport-v0.7.2
 [0.7.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.7.0...rapport-v0.7.1
 [0.7.0]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.1...rapport-v0.7.0
 [0.6.1]: https://github.com/hedge-ops/rapport/compare/rapport-v0.6.0...rapport-v0.6.1

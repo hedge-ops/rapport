@@ -6,7 +6,7 @@
 use super::Error;
 use crate::shared_ruleset::{NewRule, RuleUpdate, Ruleset, RulesetId};
 use rapport_files::Utf8Path;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 pub(crate) const SCHEMA_VERSION: u16 = 1;
@@ -79,6 +79,275 @@ impl fmt::Debug for ContextId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_tuple("ContextId").field(&self.0).finish()
     }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+#[display("{_0}")]
+pub(crate) struct DependencyName(String);
+
+impl DependencyName {
+    pub(crate) fn try_new(value: String, path: &Utf8Path, field: String) -> Result<Self, Error> {
+        let valid = value.split('_').enumerate().all(|(index, part)| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                && (index > 0 || part.as_bytes().first().is_some_and(u8::is_ascii_lowercase))
+        });
+        if !valid {
+            return Err(Error::InvalidDependencyName {
+                path: path.to_path_buf(),
+                field,
+                name: value,
+            });
+        }
+        Ok(Self(value))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for DependencyName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("DependencyName")
+            .field(&self.0)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct RepositoryPath {
+    value: String,
+    canonical: String,
+}
+
+impl RepositoryPath {
+    pub(crate) fn try_new(value: String, path: &Utf8Path, field: String) -> Result<Self, Error> {
+        let Some(canonical) = canonical_relative_path(&value) else {
+            return Err(Error::InvalidRelativePath {
+                path: path.to_path_buf(),
+                field,
+                value,
+            });
+        };
+        Ok(Self { value, canonical })
+    }
+
+    pub(crate) fn as_path(&self) -> &Utf8Path {
+        Utf8Path::new(&self.canonical)
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
+    }
+}
+
+impl fmt::Display for RepositoryPath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.value)
+    }
+}
+
+impl fmt::Debug for RepositoryPath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("RepositoryPath")
+            .field(&self.value)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display)]
+#[display("{_0}")]
+pub(crate) struct ComponentRelativePath(String);
+
+impl ComponentRelativePath {
+    pub(crate) fn try_new(value: String, path: &Utf8Path, field: String) -> Result<Self, Error> {
+        if !valid_relative_path(&value) {
+            return Err(Error::InvalidRelativePath {
+                path: path.to_path_buf(),
+                field,
+                value,
+            });
+        }
+        Ok(Self(value))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ComponentRelativePath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("ComponentRelativePath")
+            .field(&self.0)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct GeneratedOutput {
+    tool: String,
+    target: String,
+}
+
+impl GeneratedOutput {
+    pub(crate) fn try_new(
+        name: &DependencyName,
+        tool: String,
+        target: String,
+        path: &Utf8Path,
+    ) -> Result<Self, Error> {
+        if tool.trim().is_empty() {
+            return Err(Error::EmptyGeneratedOutputField {
+                path: path.to_path_buf(),
+                output: name.to_string(),
+                field: "tool",
+            });
+        }
+        if target.trim().is_empty() {
+            return Err(Error::EmptyGeneratedOutputField {
+                path: path.to_path_buf(),
+                output: name.to_string(),
+                field: "target",
+            });
+        }
+        Ok(Self { tool, target })
+    }
+
+    pub(crate) fn tool(&self) -> &str {
+        &self.tool
+    }
+
+    pub(crate) fn target(&self) -> &str {
+        &self.target
+    }
+}
+
+impl fmt::Debug for GeneratedOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GeneratedOutput")
+            .field("tool", &self.tool)
+            .field("target", &self.target)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct GeneratedInput {
+    component: RepositoryPath,
+    output: DependencyName,
+}
+
+impl GeneratedInput {
+    pub(crate) fn from_parts(component: RepositoryPath, output: DependencyName) -> Self {
+        Self { component, output }
+    }
+
+    pub(crate) fn component(&self) -> &RepositoryPath {
+        &self.component
+    }
+
+    pub(crate) fn output(&self) -> &DependencyName {
+        &self.output
+    }
+}
+
+impl fmt::Debug for GeneratedInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GeneratedInput")
+            .field("component", &self.component)
+            .field("output", &self.output)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ContextDeclarations {
+    pub(crate) components: Vec<RepositoryPath>,
+    pub(crate) generated_outputs: BTreeMap<DependencyName, GeneratedOutput>,
+    pub(crate) generated_inputs: BTreeMap<DependencyName, GeneratedInput>,
+    pub(crate) kustomizations: Vec<ComponentRelativePath>,
+}
+
+impl ContextDeclarations {
+    pub(crate) fn empty() -> Self {
+        Self {
+            components: Vec::new(),
+            generated_outputs: BTreeMap::new(),
+            generated_inputs: BTreeMap::new(),
+            kustomizations: Vec::new(),
+        }
+    }
+}
+
+impl fmt::Debug for ContextDeclarations {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ContextDeclarations")
+            .field("components", &self.components)
+            .field("generated_outputs", &self.generated_outputs)
+            .field("generated_inputs", &self.generated_inputs)
+            .field("kustomizations", &self.kustomizations)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ContextEntries {
+    pub(crate) next_ownership: u16,
+    pub(crate) next_boundary: u16,
+    pub(crate) ownership: Vec<Entry>,
+    pub(crate) boundaries: Vec<Boundary>,
+}
+
+impl fmt::Debug for ContextEntries {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ContextEntries")
+            .field("next_ownership", &self.next_ownership)
+            .field("next_boundary", &self.next_boundary)
+            .field("ownership", &self.ownership)
+            .field("boundaries", &self.boundaries)
+            .finish()
+    }
+}
+
+fn valid_relative_path(value: &str) -> bool {
+    canonical_relative_path(value).is_some()
+}
+
+fn canonical_relative_path(value: &str) -> Option<String> {
+    if value.is_empty()
+        || value.contains('\\')
+        || Utf8Path::new(value).is_absolute()
+        || value.as_bytes().get(1) == Some(&b':')
+    {
+        return None;
+    }
+    let components = Utf8Path::new(value)
+        .components()
+        .filter_map(|component| match component.as_str() {
+            "." => None,
+            ".." => Some(".."),
+            component => Some(component),
+        })
+        .collect::<Vec<_>>();
+    if components.contains(&"..") {
+        return None;
+    }
+    Some(if components.is_empty() {
+        ".".to_owned()
+    } else {
+        components.join("/")
+    })
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -181,6 +450,10 @@ pub(crate) struct Context {
     purpose: String,
     component_type: Option<String>,
     namespaced: bool,
+    components: Vec<RepositoryPath>,
+    generated_outputs: BTreeMap<DependencyName, GeneratedOutput>,
+    generated_inputs: BTreeMap<DependencyName, GeneratedInput>,
+    kustomizations: Vec<ComponentRelativePath>,
     next_ownership: u16,
     next_boundary: u16,
     ownership: Vec<Entry>,
@@ -191,11 +464,16 @@ pub(crate) struct Context {
 impl Context {
     pub(crate) fn new(id: ContextId, purpose: String) -> Result<Self, Error> {
         let ruleset_id = id.embedded_ruleset_id()?;
+        let declarations = ContextDeclarations::empty();
         Ok(Self {
             id,
             purpose: required(purpose)?,
             component_type: None,
             namespaced: false,
+            components: declarations.components,
+            generated_outputs: declarations.generated_outputs,
+            generated_inputs: declarations.generated_inputs,
+            kustomizations: declarations.kustomizations,
             next_ownership: 1,
             next_boundary: 1,
             ownership: Vec::new(),
@@ -213,10 +491,8 @@ impl Context {
     pub(crate) fn from_parts(
         id: ContextId,
         purpose: String,
-        next_ownership: u16,
-        next_boundary: u16,
-        ownership: Vec<Entry>,
-        boundaries: Vec<Boundary>,
+        entries: ContextEntries,
+        declarations: ContextDeclarations,
         ruleset: Ruleset,
     ) -> Result<Self, Error> {
         Ok(Self {
@@ -224,10 +500,14 @@ impl Context {
             purpose: required(purpose)?,
             component_type: None,
             namespaced: false,
-            next_ownership,
-            next_boundary,
-            ownership,
-            boundaries,
+            components: declarations.components,
+            generated_outputs: declarations.generated_outputs,
+            generated_inputs: declarations.generated_inputs,
+            kustomizations: declarations.kustomizations,
+            next_ownership: entries.next_ownership,
+            next_boundary: entries.next_boundary,
+            ownership: entries.ownership,
+            boundaries: entries.boundaries,
             ruleset,
         })
     }
@@ -252,6 +532,22 @@ impl Context {
     }
     pub(crate) fn purpose(&self) -> &str {
         &self.purpose
+    }
+
+    pub(crate) fn components(&self) -> &[RepositoryPath] {
+        &self.components
+    }
+
+    pub(crate) fn generated_outputs(&self) -> &BTreeMap<DependencyName, GeneratedOutput> {
+        &self.generated_outputs
+    }
+
+    pub(crate) fn generated_inputs(&self) -> &BTreeMap<DependencyName, GeneratedInput> {
+        &self.generated_inputs
+    }
+
+    pub(crate) fn kustomizations(&self) -> &[ComponentRelativePath] {
+        &self.kustomizations
     }
     pub(crate) fn set_purpose(&mut self, value: String) -> Result<(), Error> {
         self.purpose = required(value)?;
@@ -370,6 +666,10 @@ impl fmt::Debug for Context {
             .field("purpose", &self.purpose)
             .field("component_type", &self.component_type)
             .field("namespaced", &self.namespaced)
+            .field("components", &self.components)
+            .field("generated_outputs", &self.generated_outputs)
+            .field("generated_inputs", &self.generated_inputs)
+            .field("kustomizations", &self.kustomizations)
             .field("next_ownership", &self.next_ownership)
             .field("next_boundary", &self.next_boundary)
             .field("ownership", &self.ownership)

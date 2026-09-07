@@ -8,7 +8,7 @@
 ## Review
 
 - `rapport context init <path> --purpose <text>` - create architecture context for a repository area
-- `rapport context show <path>` - inspect purpose, ownership, boundaries, and inherited standards
+- `rapport context show <path>` - inspect architecture, direct declarations, and inherited standards
 - `rapport ruleset catalog list` - discover reusable standards packs
 - `rapport ruleset catalog install <ID>` - install a standards pack before including it
 - `rapport review <path> [<path> ...]` - print a complete Markdown review prompt with source paths
