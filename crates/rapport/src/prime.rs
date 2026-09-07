@@ -1,19 +1,17 @@
-//! Agent workflow orientation command.
+//! Agent orientation for architecture and reviews.
 //!
-//! This module owns the concise operational instructions printed before agents
-//! plan, change, validate, or integrate repository work.
+//! Owns the concise instructions for authoring context and generating review prompts.
 
-use crate::context::{Clock, CommandContext};
+use crate::context::CommandContext;
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
 use std::io::Write;
 use std::process::ExitCode;
 
-pub fn run<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+pub fn run<F, O, E>(context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
@@ -45,7 +43,7 @@ fn render_prime() -> String {
                 "Edit context.toml directly or use context commands; commit architecture and standards with the repository.",
                 "Ancestor context and included packs apply alongside local declarations. Conflicting or missing standards fail explicitly.",
                 "Planning, development, tests, builds, and integration belong to the repository's own tools and process.",
-                "Legacy lifecycle commands remain callable for compatibility but are deprecated; see docs/lifecycle-migration.md.",
+                "`rapport context validate [path]` checks architecture and effective standards without executing builds or modifying files.",
             ])
         })
         .next_actions(nonempty![RunHint::new("rapport context show .")])

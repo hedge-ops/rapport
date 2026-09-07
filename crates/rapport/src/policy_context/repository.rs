@@ -4,7 +4,7 @@
 
 use super::Error;
 use super::boundary;
-use super::domain::{Context, ContextId, Grade};
+use super::domain::{Context, ContextId};
 use crate::repository_files::find_named_files;
 use crate::shared_ruleset::SharedRulesets;
 use rapport_files::{FileSystem, Utf8Path, Utf8PathBuf};
@@ -177,26 +177,6 @@ impl Repository {
         Ok((removed, affected))
     }
 
-    pub(super) fn effective_grade(&self, user_path: &Utf8Path) -> Result<Grade, Error> {
-        Ok(self
-            .effective(user_path)?
-            .into_iter()
-            .filter_map(|record| record.context.minimum_grade())
-            .max()
-            .unwrap_or(Grade::DEFAULT))
-    }
-
-    pub(super) fn inherited_grade(&self, directory: &Utf8Path) -> Grade {
-        self.records
-            .iter()
-            .filter(|record| {
-                directory.starts_with(&record.directory) && record.directory != directory
-            })
-            .filter_map(|record| record.context.minimum_grade())
-            .max()
-            .unwrap_or(Grade::DEFAULT)
-    }
-
     pub(super) fn validate(&self) -> Result<(), Error> {
         let mut ids = BTreeSet::new();
         for record in &self.records {
@@ -224,93 +204,8 @@ impl Repository {
                     });
                 }
             }
-            for signoff in record.context.signoffs() {
-                for included in signoff.included_paths() {
-                    self.validate_stored_included_path(record.directory(), included)?;
-                }
-            }
-            let inherited = self.inherited_grade(&record.directory);
-            if let Some(direct) = record.context.minimum_grade()
-                && direct < inherited
-            {
-                return Err(Error::LowerReviewGrade {
-                    requested: direct.to_string(),
-                    inherited: inherited.to_string(),
-                });
-            }
         }
         Ok(())
-    }
-
-    fn validate_stored_included_path(
-        &self,
-        context_directory: &Utf8Path,
-        value: &str,
-    ) -> Result<(), Error> {
-        let relative = Utf8Path::new(value);
-        let canonical = !relative.is_absolute()
-            && !relative.as_str().is_empty()
-            && relative.components().all(|component| {
-                let part = component.as_str();
-                part != "." && part != ".." && !part.is_empty()
-            });
-        let absolute = self.repo_root.join(relative);
-        if !canonical
-            || !absolute.starts_with(&self.repo_root)
-            || absolute.starts_with(context_directory)
-        {
-            return Err(Error::InvalidIncludedPath);
-        }
-        Ok(())
-    }
-
-    pub(super) fn validate_included_path_existence(
-        &self,
-        fs: &impl FileSystem,
-    ) -> Result<(), Error> {
-        for record in &self.records {
-            for signoff in record.context.signoffs() {
-                for included in signoff.included_paths() {
-                    if !fs.exists(self.repo_root.join(included)) {
-                        return Err(Error::InvalidIncludedPath);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn applicable_signoffs(
-        &self,
-        user_path: &Utf8Path,
-    ) -> Result<Vec<SignoffMatch<'_>>, Error> {
-        let path = resolve_path(&self.repo_root, user_path)?;
-        let mut matches = Vec::new();
-        for record in &self.records {
-            for signoff in record.context.signoffs() {
-                if path.starts_with(record.directory()) {
-                    matches.push(SignoffMatch {
-                        record,
-                        signoff,
-                        trigger: display_relative(&self.repo_root, record.directory()),
-                    });
-                    continue;
-                }
-                if let Some(included) = signoff
-                    .included_paths()
-                    .iter()
-                    .find(|included| path.starts_with(self.repo_root.join(included)))
-                {
-                    matches.push(SignoffMatch {
-                        record,
-                        signoff,
-                        trigger: included.clone(),
-                    });
-                }
-            }
-        }
-        matches.sort_by(|left, right| left.signoff.id().cmp(right.signoff.id()));
-        Ok(matches)
     }
 
     pub(super) fn save(&self, fs: &mut impl FileSystem, path: &Utf8Path) -> Result<(), Error> {
@@ -321,53 +216,6 @@ impl Repository {
             .ok_or(Error::InvalidPath)?;
         write_record(fs, record)
     }
-
-    pub(super) fn normalize_included_path(
-        &self,
-        context_directory: &Utf8Path,
-        value: &Utf8Path,
-        fs: &impl FileSystem,
-        must_exist: bool,
-    ) -> Result<String, Error> {
-        if value.is_absolute() {
-            return Err(Error::InvalidIncludedPath);
-        }
-        let context_relative = context_directory
-            .strip_prefix(&self.repo_root)
-            .map_err(|_| Error::InvalidIncludedPath)?;
-        let mut parts = context_relative
-            .as_str()
-            .split('/')
-            .filter(|part| !part.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        for part in value.as_str().split('/') {
-            match part {
-                "" | "." => {}
-                ".." => {
-                    if parts.pop().is_none() {
-                        return Err(Error::InvalidIncludedPath);
-                    }
-                }
-                part => parts.push(part.to_owned()),
-            }
-        }
-        let relative = Utf8PathBuf::from(parts.join("/"));
-        let path = self.repo_root.join(&relative);
-        if !path.starts_with(&self.repo_root) || (must_exist && !fs.exists(&path)) {
-            return Err(Error::InvalidIncludedPath);
-        }
-        if relative.as_str().is_empty() || path.starts_with(context_directory) {
-            return Err(Error::InvalidIncludedPath);
-        }
-        Ok(relative.to_string())
-    }
-}
-
-pub(super) struct SignoffMatch<'record> {
-    pub(super) record: &'record Record,
-    pub(super) signoff: &'record super::domain::BuildSignoff,
-    pub(super) trigger: String,
 }
 
 impl std::fmt::Debug for Repository {
@@ -440,13 +288,4 @@ pub(super) fn resolve_path(repo_root: &Utf8Path, value: &Utf8Path) -> Result<Utf
         return Err(Error::InvalidPath);
     }
     Ok(path)
-}
-
-fn display_relative(root: &Utf8Path, path: &Utf8Path) -> String {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    if relative.as_str().is_empty() {
-        ".".to_owned()
-    } else {
-        relative.to_string()
-    }
 }

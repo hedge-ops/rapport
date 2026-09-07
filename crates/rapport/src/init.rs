@@ -1,9 +1,9 @@
 //! Repository initialization command.
 //!
 //! This module owns idempotent agent instructions, local rules ignore policy,
-//! and shared signoff workflow creation.
+//! and repository architecture guidance.
 
-use crate::context::{Clock, CommandContext};
+use crate::context::CommandContext;
 use crate::{RunHint, ViewBuilder};
 use nonempty::nonempty;
 use rapport_files::FileSystem;
@@ -19,10 +19,9 @@ const GITIGNORE_FILE: &str = ".gitignore";
 const RULES_START_MARKER: &str = "# rapport:init-rules:start";
 const RULES_END_MARKER: &str = "# rapport:init-rules:end";
 
-pub fn run<F, C, O, E>(context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+pub fn run<F, O, E>(context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {

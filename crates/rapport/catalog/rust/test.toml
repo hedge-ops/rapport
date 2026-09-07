@@ -232,7 +232,7 @@ rationale = "Tests should specify behavior. Searching an included fixture only p
 [rules.RUST_TEST_019.avoid]
 language = "rust"
 text = '''let guide = include_str!("../prime.md");
-assert!(guide.contains("rapport review start"));'''
+assert!(guide.contains("rapport review <path>"));'''
 
 [rules.RUST_TEST_019.prefer]
 language = "rust"

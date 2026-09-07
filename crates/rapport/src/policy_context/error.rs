@@ -33,29 +33,17 @@ pub(crate) enum Error {
     MissingEntry(String),
     #[error("Context `{context}` references unknown neighboring owner `{owner}`")]
     UnknownBoundaryOwner { context: String, owner: String },
-    #[error("minimum Review grade `{requested}` cannot lower inherited grade `{inherited}`")]
-    LowerReviewGrade {
-        requested: String,
-        inherited: String,
+    #[error(
+        "lifecycle field `{field}` in `{path}` is no longer supported; remove it and move build/acceptance policy to repository tooling (see docs/lifecycle-migration.md)"
+    )]
+    LifecycleField {
+        path: Utf8PathBuf,
+        field: &'static str,
     },
-    #[error("Review grade must be A+ through D- or F")]
-    InvalidGrade,
-    #[error("Just target is invalid or unavailable from the Context directory")]
-    InvalidTarget,
-    #[error("signoff `{0}` already exists")]
-    DuplicateSignoff(String),
-    #[error("signoff `{0}` was not found")]
-    MissingSignoff(String),
-    #[error("machine resource group is invalid")]
-    InvalidResourceGroup,
-    #[error("included signoff path is duplicate, equivalent, or outside the repository")]
-    InvalidIncludedPath,
-    #[error("generated signoff workflow `{0}` is missing or drifted")]
-    WorkflowDrift(Utf8PathBuf),
     #[error("unsupported Context schema version `{version}` in `{path}`")]
     SchemaVersion { path: Utf8PathBuf, version: u16 },
     #[error(
-        "legacy Rapport 0.4 Context schema in `{path}`; migrate every legacy `context.toml` together before using Rapport 0.5 (`rule_includes`, array ownership/boundaries, `kind` signoffs, and `[[rules]]` are unsupported)"
+        "legacy Context schema in `{path}`; migrate every legacy `context.toml` to named architecture and rule declarations (`rule_includes`, array ownership/boundaries, `kind` signoffs, and `[[rules]]` are unsupported)"
     )]
     LegacySchema { path: Utf8PathBuf },
     #[error("could not read or write `{path}`")]

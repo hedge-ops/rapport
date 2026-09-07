@@ -11,6 +11,7 @@ cargo binstall rapport
 rapport context init app/core/workspace_sync --namespace SYNC --type crate \
   --purpose 'Coordinates encrypted synchronization and transfer state.'
 rapport context show app/core/workspace_sync
+rapport context validate
 rapport review app/core/workspace_sync > review.md
 ```
 
@@ -102,8 +103,9 @@ reports how to create one.
 
 ## Compatibility and scope
 
-The namespace format above requires no version, counters, review grades, signoffs,
-or lifecycle state. Existing version-1 contexts using `id` remain supported,
+The namespace format above requires no version, counters, or lifecycle state.
+Legacy `[review]` and `[[signoffs]]` fields are rejected with migration guidance;
+move acceptance thresholds and build commands into repository tooling. Existing version-1 contexts using `id` remain supported,
 including their `<ID>_RULE_001` rule IDs. Do not mix `id` and `namespace` in one
 file. Converting to `namespace` also changes the rule prefix to `<NAMESPACE>_001`.
 Context commands preserve the identity format and component type when editing;
@@ -112,9 +114,13 @@ For compatibility, `context init` without `--namespace` still creates the `id` f
 Unsupported legacy array declarations still require explicit migration.
 
 Planning, coding, tests, builds, and integration belong to each repository's own
-process. Lifecycle commands remain callable but are deprecated and hidden from
-primary help. See the [migration and removal proposal](docs/lifecycle-migration.md)
-and the [legacy command reference](docs/legacy-workflow.md).
+process. Lifecycle commands have been removed. See the
+[migration guide](docs/lifecycle-migration.md) for the removed commands and fields.
+
+`rapport context validate [path]` validates all discovered schemas, namespaces,
+includes, and ownership references, then checks effective benchmark conflicts for
+each component at or below the selected path. Without a path it checks all
+components. It reports errors without changing files or executing repository tools.
 
 ## Development
 
@@ -125,9 +131,8 @@ just test
 just ci
 ```
 
-When changing Rapport itself, use an installed or copied binary for dogfooding
-instead of `cargo run -p rapport -- ...`, because legacy `rapport build` may rebuild
-the CLI executable.
+When changing Rapport itself, use an installed or copied binary for context
+validation and review prompts, and `just ci` for repository validation.
 
 ## License
 

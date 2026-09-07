@@ -6,7 +6,7 @@ use super::Error;
 use super::catalog::Catalog;
 use super::domain::{ExampleUpdate, NewRule, ReferenceUpdate, Rule, RuleUpdate, Ruleset};
 use super::repository::{Snapshot, Store, StoredRuleset};
-use crate::context::{Clock, CommandContext};
+use crate::context::CommandContext;
 use clap::{Args, Subcommand};
 use rapport_files::FileSystem;
 use std::fmt;
@@ -205,10 +205,9 @@ struct RuleUpdateArgs {
     clear_reference: bool,
 }
 
-pub(crate) fn run<F, C, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+pub(crate) fn run<F, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {

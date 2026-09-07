@@ -1,40 +1,13 @@
-use crate::{Clock, CommandOutcome, CommandRunner, CommandSpec, run_with_environment};
-use claims::assert_ok;
-use rapport_files::{FileSystem, InMemoryFileSystem, Utf8Path, Utf8PathBuf};
-use std::io;
+use crate::run_with_environment;
+use rapport_files::{FileSystem, InMemoryFileSystem, Utf8PathBuf};
 use std::process::ExitCode;
-
-#[derive(Debug)]
-struct FixedClock;
-
-impl Clock for FixedClock {
-    fn now_rfc3339(&self) -> String {
-        "2026-07-12T12:00:00Z".to_owned()
-    }
-}
-
-#[derive(Debug)]
-struct JustRunner;
-
-impl CommandRunner for JustRunner {
-    fn run(&self, spec: &CommandSpec, _cwd: &Utf8Path) -> io::Result<CommandOutcome> {
-        assert_eq!(spec, &CommandSpec::new("just", ["--summary"]));
-        Ok(CommandOutcome {
-            success: true,
-            stdout: "ci test skills-ci".to_owned(),
-            stderr: String::new(),
-        })
-    }
-}
 
 fn run(fs: &mut InMemoryFileSystem, args: &[&str]) -> (ExitCode, String, String) {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = run_with_environment(
         args.iter().map(|argument| (*argument).to_owned()),
-        &JustRunner,
         fs,
-        &FixedClock,
         Utf8PathBuf::from("/repo"),
         &mut out,
         &mut err,
@@ -56,10 +29,10 @@ fn succeeds(fs: &mut InMemoryFileSystem, args: &[&str]) -> String {
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "the sequential acceptance test makes the complete Phase 2 lifecycle auditable"
+    reason = "the sequential acceptance test covers architecture CRUD and benchmark composition"
 )]
-/// When Context policy changes, its request workflow and shared local-proof contract remain exact (CTX-002).
-fn phase_two_context_policy_lifecycle() {
+/// When component declarations change, architecture and benchmarks remain inspectable.
+fn context_commands_should_manage_architecture_and_benchmarks() {
     let mut fs = InMemoryFileSystem::default();
     fs.add_directory("/repo/.git");
     fs.add_directory("/repo/app");
@@ -184,116 +157,11 @@ fn phase_two_context_policy_lifecycle() {
         ],
     );
 
-    succeeds(
-        &mut fs,
-        &["context", "review", "set", ".", "--minimum-grade", "A-"],
-    );
-    succeeds(
-        &mut fs,
-        &["context", "review", "set", "app", "--minimum-grade", "A"],
-    );
-    let before_rejected_grade = assert_ok!(fs.read_to_string("/repo/app/context.toml"));
-    let (code, _, err) = run(
-        &mut fs,
-        &["context", "review", "set", "app", "--minimum-grade", "B"],
-    );
-    assert_eq!(code, ExitCode::from(2));
-    assert!(err.contains("cannot lower inherited grade"));
-    assert_eq!(
-        assert_ok!(fs.read_to_string("/repo/app/context.toml")),
-        before_rejected_grade
-    );
-
-    succeeds(
-        &mut fs,
-        &[
-            "context",
-            "signoff",
-            "add",
-            "app",
-            "--target",
-            "ci",
-            "--stage",
-            "1",
-            "--resource-group",
-            "mac-display",
-            "--include",
-            "../other",
-        ],
-    );
-    let workflow_path = "/repo/.github/workflows/rapport-app-signoff-ci.yml";
-    let shared_workflow_path = "/repo/.github/workflows/rapport-signoff.yml";
-    let workflow = assert_ok!(fs.read_to_string(workflow_path));
-    assert!(workflow.contains("name: \"Request Rapport App Signoff ci\""));
-    assert!(workflow.contains("uses: ./.github/workflows/rapport-signoff.yml"));
-    assert!(workflow.contains("identity: \"Rapport App Signoff ci\""));
-    assert!(!workflow.contains("run: just ci"));
-    assert!(workflow.contains("- \"other\""));
-    let shared_workflow = assert_ok!(fs.read_to_string(shared_workflow_path));
-    assert!(shared_workflow.contains("Request local Rapport signoff"));
-    assert!(shared_workflow.contains("state=pending"));
-    assert!(shared_workflow.contains("run Rapport locally and publish proof"));
-
     let effective = succeeds(&mut fs, &["context", "show", "app"]);
     assert!(effective.contains("`APP_RULE`"));
     assert_eq!(effective.matches("`TEAM`").count(), 1);
     assert!(effective.contains("declared by APP (direct, direct composition)"));
-    assert!(effective.contains("effective review minimum` — A"));
-
-    let additional_trigger = succeeds(&mut fs, &["context", "show", "other"]);
-    assert!(additional_trigger.contains("`APP_SIGNOFF_CI`"));
-    assert!(additional_trigger.contains("trigger other"));
-    assert!(!additional_trigger.contains("Application policy."));
-
-    succeeds(&mut fs, &["context", "doctor", "app"]);
-    assert_ok!(fs.write_string(shared_workflow_path, "drift"));
-    let (code, _, err) = run(&mut fs, &["context", "doctor", "app"]);
-    assert_eq!(code, ExitCode::from(2));
-    assert!(err.contains("missing or drifted"));
-    assert_ok!(fs.write_string(workflow_path, "drift"));
-    let (code, _, err) = run(&mut fs, &["context", "doctor", "app"]);
-    assert_eq!(code, ExitCode::from(2));
-    assert!(err.contains("missing or drifted"));
-    succeeds(
-        &mut fs,
-        &[
-            "context",
-            "signoff",
-            "repair",
-            "app",
-            "--signoff",
-            "APP_SIGNOFF_CI",
-        ],
-    );
-    succeeds(&mut fs, &["context", "doctor", "app"]);
-
-    succeeds(
-        &mut fs,
-        &[
-            "context",
-            "signoff",
-            "include",
-            "remove",
-            "app",
-            "--signoff",
-            "APP_SIGNOFF_CI",
-            "--path",
-            "../other",
-        ],
-    );
-    succeeds(
-        &mut fs,
-        &[
-            "context",
-            "signoff",
-            "remove",
-            "app",
-            "--signoff",
-            "APP_SIGNOFF_CI",
-        ],
-    );
-    assert!(!fs.is_file(workflow_path));
-    assert!(!fs.is_file(shared_workflow_path));
+    succeeds(&mut fs, &["context", "validate", "app"]);
 
     succeeds(
         &mut fs,
@@ -315,8 +183,8 @@ fn phase_two_context_policy_lifecycle() {
 }
 
 #[test]
-/// Hidden repository directories retain canonical Context IDs so their local Build signoffs can be declared.
-fn hidden_root_contexts_support_build_signoffs() {
+/// Hidden repository directories can own architecture context.
+fn context_init_should_support_hidden_directories() {
     let mut fs = InMemoryFileSystem::default();
     fs.add_directory("/repo/.git");
     fs.add_directory("/repo/.github");
@@ -345,21 +213,7 @@ fn hidden_root_contexts_support_build_signoffs() {
     );
     assert!(agents.contains("`context` — DOT_AGENTS_SKILLS"));
 
-    succeeds(
-        &mut fs,
-        &[
-            "context",
-            "signoff",
-            "add",
-            ".agents/skills",
-            "--target",
-            "skills-ci",
-            "--stage",
-            "1",
-        ],
-    );
-    let signoffs = succeeds(&mut fs, &["context", "signoff", "list", ".agents/skills"]);
-    assert!(signoffs.contains("`DOT_AGENTS_SKILLS_SIGNOFF_SKILLS_CI`"));
+    succeeds(&mut fs, &["context", "validate", ".agents/skills"]);
 }
 
 #[test]
@@ -382,54 +236,8 @@ includes = []
 "#,
     );
 
-    let (code, _, err) = run(&mut fs, &["context", "doctor"]);
+    let (code, _, err) = run(&mut fs, &["context", "validate"]);
 
     assert_eq!(code, ExitCode::from(2));
     assert!(err.contains("entry ID is invalid"));
-}
-
-#[test]
-fn stale_included_path_can_be_removed_after_doctor_reports_it() {
-    let mut fs = InMemoryFileSystem::default();
-    fs.add_directory("/repo/.git");
-    fs.add_directory("/repo/app");
-    fs.add_file_with_contents(
-        "/repo/app/context.toml",
-        r#"version = 1
-id = "APP"
-purpose = "Application policy."
-next_ownership = 1
-next_boundary = 1
-
-[ruleset]
-includes = []
-
-[[signoffs]]
-id = "APP_SIGNOFF_CI"
-target = "ci"
-stage = 0
-include = ["gone.txt"]
-"#,
-    );
-
-    let (doctor_code, _, doctor_error) = run(&mut fs, &["context", "doctor", "app"]);
-    assert_eq!(doctor_code, ExitCode::from(2));
-    assert!(doctor_error.contains("included signoff path"));
-
-    succeeds(
-        &mut fs,
-        &[
-            "context",
-            "signoff",
-            "include",
-            "remove",
-            "app",
-            "--signoff",
-            "APP_SIGNOFF_CI",
-            "--path",
-            "../gone.txt",
-        ],
-    );
-    let context = assert_ok!(fs.read_to_string("/repo/app/context.toml"));
-    assert!(!context.contains("gone.txt"));
 }

@@ -4,7 +4,7 @@ includes = []
 
 [rules.JUST_WORKFLOW_001]
 text = "Expose the standard Just lifecycle targets `default`, `doctor`, `dev`, `ci`, `fix`, `check`, `build`, `test`, and `clean`; add `init`, `cover`, and `test-mutants` only when the repository supports those capabilities."
-rationale = "A stable lifecycle vocabulary lets humans, agents, Context signoffs, and CI discover repository operations without reverse-engineering project-specific aliases."
+rationale = "A stable lifecycle vocabulary lets humans, agents, and CI discover repository operations without reverse-engineering project-specific aliases."
 
 [rules.JUST_WORKFLOW_001.avoid]
 language = "text"
@@ -66,7 +66,7 @@ test:
 
 [rules.JUST_WORKFLOW_005]
 text = "Use strict linting in `check` and `ci`, and do not conceal required validation behind opaque aliases or recipes whose names do not describe their effect."
-rationale = "Strict, plainly named validation keeps local feedback, Rapport signoffs, and independent Review aligned on the same executable contract."
+rationale = "Strict, plainly named validation keeps local feedback, CI, and review aligned on the same executable contract."
 
 [rules.JUST_WORKFLOW_005.avoid]
 language = "text"
@@ -93,15 +93,13 @@ Operations (agent-safe): doctor, clean
 Deployment (human-only): release, deploy'''
 
 [rules.JUST_WORKFLOW_007]
-text = "Keep repository validation in Justfiles and declare Context signoffs that select the applicable non-mutating `ci` targets; Rapport owns selection, ordering, and proof rather than reimplementing build logic."
-rationale = "One executable repository contract prevents local, CI, and Rapport behavior from drifting apart."
+text = "Keep repository validation in Justfiles and let repository CI or operators run the applicable non-mutating targets; Rapport supplies architecture and review benchmarks."
+rationale = "Repository tools own executable validation, while review benchmarks explain the expectations reviewers should assess."
 
 [rules.JUST_WORKFLOW_007.avoid]
 language = "text"
-text = '''copying cargo, npm, or xcode validation commands into Rapport configuration'''
+text = "Using Rapport to schedule builds or gate merges."
 
 [rules.JUST_WORKFLOW_007.prefer]
-language = "toml"
-text = '''[[signoffs]]
-target = "ci"
-stage = 0'''
+language = "text"
+text = "Run just ci through repository CI, then provide rapport review <path> and the diff to a reviewer."

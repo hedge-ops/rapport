@@ -2,34 +2,19 @@
 //!
 //! Verifies schema compatibility, sourced inheritance, and failures through the CLI.
 
-use crate::{Clock, CommandOutcome, CommandRunner, CommandSpec, run_with_environment};
+use crate::run_with_environment;
 use claims::assert_ok;
 use pretty_assertions::assert_eq;
-use rapport_files::{FileSystem, InMemoryFileSystem, Utf8Path, Utf8PathBuf};
+use rapport_files::{FileSystem, InMemoryFileSystem, Utf8PathBuf};
 use rstest::rstest;
-use std::{io, process::ExitCode};
-
-struct FixedClock;
-impl Clock for FixedClock {
-    fn now_rfc3339(&self) -> String {
-        "2026-09-07T00:00:00Z".to_owned()
-    }
-}
-struct NoCommands;
-impl CommandRunner for NoCommands {
-    fn run(&self, _: &CommandSpec, _: &Utf8Path) -> io::Result<CommandOutcome> {
-        panic!("component review must not execute external commands")
-    }
-}
+use std::process::ExitCode;
 
 fn run(fs: &mut InMemoryFileSystem, args: &[&str]) -> (ExitCode, String, String) {
     let mut out = Vec::new();
     let mut err = Vec::new();
     let code = run_with_environment(
         args.iter().map(|arg| (*arg).to_owned()),
-        &NoCommands,
         fs,
-        &FixedClock,
         Utf8PathBuf::from("/repo"),
         &mut out,
         &mut err,
@@ -369,7 +354,7 @@ fn review_should_reject_persisted_include_cycles() {
 }
 
 #[test]
-fn review_should_default_to_root_and_preserve_cli_disambiguation() {
+fn review_should_default_to_root_and_treat_former_commands_as_paths() {
     let mut fs = repository();
     let (code, out, err) = run(&mut fs, &["review"]);
     assert_eq!(
@@ -379,11 +364,117 @@ fn review_should_default_to_root_and_preserve_cli_disambiguation() {
     );
     assert!(out.contains("`TEAM_001`"));
     assert!(!out.contains("`SYNC_001`"));
-    let (code, out, err) = run(&mut fs, &["review", "--", "start"]);
+    let (code, out, err) = run(&mut fs, &["review", "start"]);
     assert_eq!(
         code,
         ExitCode::SUCCESS,
         "expecting a path named after a legacy command: {err}"
     );
     assert!(out.contains("`ROOT` — start"));
+}
+
+#[rstest]
+#[case::work(&["work", "--help"])]
+#[case::develop(&["develop", "--help"])]
+#[case::build(&["build", "--help"])]
+#[case::integrate(&["integrate", "--help"])]
+#[case::github(&["github", "--help"])]
+#[case::doctor(&["doctor", "--help"])]
+#[case::context_grade(&["context", "review", "--help"])]
+#[case::context_signoff(&["context", "signoff", "--help"])]
+#[case::context_doctor(&["context", "doctor", "--help"])]
+#[case::review_result(&["review", "complete", "--result", "result.json"])]
+fn cli_should_reject_removed_lifecycle_commands(#[case] args: &[&str]) {
+    let mut fs = repository();
+    let (code, out, err) = run(&mut fs, args);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(out.is_empty());
+    assert!(err.contains("unrecognized") || err.contains("unexpected argument"));
+}
+
+#[rstest]
+#[case::grade("[review]\nminimum_grade = 'A-'")]
+#[case::signoff("[[signoffs]]\nid = 'ROOT_SIGNOFF_CI'\ntarget = 'ci'")]
+fn context_validate_should_explain_removed_fields(#[case] obsolete: &str) {
+    let mut fs = repository();
+    assert_ok!(fs.write_string(
+        "/repo/context.toml",
+        format!("namespace = 'ROOT'\npurpose = 'Root.'\n{obsolete}")
+    ));
+    let (code, out, err) = run(&mut fs, &["context", "validate"]);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(out.is_empty());
+    assert!(err.contains("/repo/context.toml"));
+    assert!(err.contains("no longer supported"));
+    assert!(err.contains("repository tooling"));
+}
+
+#[test]
+fn context_validate_should_ignore_work_and_generated_workflows() {
+    let mut fs = repository();
+    for path in [
+        "/repo/.rapport/work.toml",
+        "/repo/.github/workflows/rapport-signoff.yml",
+    ] {
+        assert_ok!(fs.write_string(path, "deliberately invalid legacy state"));
+    }
+    let (code, out, err) = run(&mut fs, &["context", "validate"]);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting only architecture validation: {err}"
+    );
+    assert!(out.contains("`contexts` — 2"));
+    let (_, shown, _) = run(&mut fs, &["context", "show", "app/core/workspace_sync"]);
+    assert!(!shown.contains("signoff"));
+    assert!(!shown.contains("review minimum"));
+    let (code, _, err) = run(&mut fs, &["context", "remove", "app/core/workspace_sync"]);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting architecture removal: {err}"
+    );
+    for path in [
+        "/repo/.rapport/work.toml",
+        "/repo/.github/workflows/rapport-signoff.yml",
+    ] {
+        assert_eq!(
+            assert_ok!(fs.read_to_string(path)),
+            "deliberately invalid legacy state"
+        );
+    }
+}
+
+#[test]
+fn context_validate_should_find_effective_conflicts_in_descendants() {
+    let mut fs = repository();
+    assert_ok!(fs.write_string(
+        "/repo/other/context.toml",
+        format!(
+            "namespace = 'TEAM'\npurpose = 'Other component.'\n{}",
+            rule(
+                "ruleset.rules",
+                "TEAM_001",
+                "Contradict inherited standards."
+            )
+        )
+    ));
+    let (code, out, err) = run(&mut fs, &["context", "validate"]);
+    assert_eq!(code, ExitCode::from(2));
+    assert!(out.is_empty());
+    assert!(err.contains("TEAM_001"));
+    assert!(err.contains("other/context.toml"));
+}
+
+#[test]
+fn context_validate_should_accept_components_without_a_root_context() {
+    let mut fs = repository();
+    assert_ok!(fs.remove_file("/repo/context.toml"));
+    let (code, out, err) = run(&mut fs, &["context", "validate"]);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting all declared components to be validated: {err}"
+    );
+    assert!(out.contains("`contexts` — 1"));
 }

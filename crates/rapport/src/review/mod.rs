@@ -1,34 +1,26 @@
 //! Stateless component review entry point.
 //!
-//! Owns prompt generation from explicitly selected repository paths and routing
-//! of deprecated lifecycle review commands.
+//! Owns prompt generation from explicitly selected repository paths without lifecycle state.
 
-use crate::{Clock, CommandContext, policy_context, work_ledger};
+use crate::{CommandContext, policy_context};
 use clap::Args;
 use rapport_files::{FileSystem, Utf8PathBuf};
 use std::io::Write;
 use std::process::ExitCode;
 
 #[derive(Debug, Args)]
-#[command(subcommand_negates_reqs = true)]
 pub(crate) struct Cli {
     /// Repository-relative component or file paths (default: repository root).
     #[arg(value_name = "PATH", num_args = 1..)]
     paths: Vec<Utf8PathBuf>,
-    #[command(subcommand)]
-    legacy: Option<work_ledger::LegacyReviewAction>,
 }
 
-pub(crate) fn run<F, C, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+pub(crate) fn run<F, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
-    if let Some(action) = &cli.legacy {
-        return work_ledger::run_review_action(action, context);
-    }
     let paths = if cli.paths.is_empty() {
         vec![Utf8PathBuf::from(".")]
     } else {

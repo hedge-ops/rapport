@@ -5,7 +5,7 @@ next_ownership = 2
 next_boundary = 2
 
 [ownership.SPECS_OWNERSHIP_001]
-text = "Rapport lifecycle requirements, shared language, and known specification gaps."
+text = "Rapport architecture and review requirements, shared language, and known specification gaps."
 
 [boundaries.SPECS_BOUNDARY_001]
 text = "Implementation status and issue-specific plans remain outside requirement bodies."

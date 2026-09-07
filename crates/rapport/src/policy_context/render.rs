@@ -1,7 +1,6 @@
-//! Context policy rendering.
+//! Context architecture rendering.
 //!
-//! This module owns list and show views, effective Ruleset attribution, signoff
-//! presentation, and stable display helpers shared by mutations.
+//! Owns list and show views, inherited standards attribution, and display helpers.
 
 use super::Error;
 use super::repository::{Record, Repository};
@@ -45,7 +44,6 @@ pub(super) fn show(
     } else {
         repository.effective(path)?
     };
-    let grade = repository.effective_grade(path)?;
     let nearest = records
         .last()
         .ok_or_else(|| Error::MissingContext(path.to_path_buf()))?;
@@ -56,12 +54,8 @@ pub(super) fn show(
 
     let shared = shared_attributions(&records, nearest, &repository)?;
     render_shared_rulesets(&mut output, &shared, &repository)?;
-    render_required_signoffs(&mut output, declared, nearest, &repository, path, repo_root)?;
     let digest = format!("{:x}", Sha256::digest(output.as_bytes()));
-    let _ = write!(
-        output,
-        "\n\n- `effective review minimum` — {grade}\n- `policy digest` — `{digest}`"
-    );
+    let _ = write!(output, "\n\n- `policy digest` — `{digest}`");
     Ok(output)
 }
 
@@ -78,15 +72,11 @@ fn render_context_record(
     };
     let _ = write!(
         output,
-        "\n## `{}`\n\n- `path` — {}\n- `scope` — {scope}\n- `purpose` — {}\n- `embedded Ruleset` — `{}`\n- `declared review minimum` — {}\n",
+        "\n## `{}`\n\n- `path` — {}\n- `scope` — {scope}\n- `purpose` — {}\n- `embedded Ruleset` — `{}`\n",
         record.context().id(),
         display(repo_root, record.directory()),
         record.context().purpose(),
         record.context().ruleset().id(),
-        record
-            .context()
-            .minimum_grade()
-            .map_or_else(|| "inherited".to_owned(), |grade| grade.to_string())
     );
     let _ = writeln!(
         output,
@@ -194,53 +184,6 @@ fn render_shared_rulesets(
     if !shared.is_empty() {
         output.push_str("\n\nUse `rapport ruleset show <RULESET_ID>` for complete shared Rules.");
     }
-    Ok(())
-}
-
-fn render_required_signoffs(
-    output: &mut String,
-    declared: bool,
-    nearest: &Record,
-    repository: &Repository,
-    path: &Utf8Path,
-    repo_root: &Utf8Path,
-) -> Result<(), Error> {
-    output.push_str("\n\n## Required Build Signoffs\n\n");
-    let signoff_lines = if declared {
-        nearest
-            .context()
-            .signoffs()
-            .iter()
-            .map(|signoff| {
-                format!(
-                    "- `{}` — source `{}` — just {} — stage {} — resource {} — trigger {}",
-                    signoff.id(),
-                    nearest.context().id(),
-                    signoff.target(),
-                    signoff.stage(),
-                    signoff.resource_group().unwrap_or("none"),
-                    display(repo_root, nearest.directory())
-                )
-            })
-            .collect::<Vec<_>>()
-    } else {
-        repository
-            .applicable_signoffs(path)?
-            .into_iter()
-            .map(|matched| {
-                format!(
-                    "- `{}` — source `{}` — just {} — stage {} — resource {} — trigger {}",
-                    matched.signoff.id(),
-                    matched.record.context().id(),
-                    matched.signoff.target(),
-                    matched.signoff.stage(),
-                    matched.signoff.resource_group().unwrap_or("none"),
-                    matched.trigger
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    output.push_str(&or_none(&signoff_lines.join("\n")));
     Ok(())
 }
 

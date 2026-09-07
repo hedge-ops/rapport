@@ -9,7 +9,8 @@ rapport review <component-path>
 
 No Work, build, integration, or GitHub state is required. Use `rapport context`
 to author component purpose, ownership, boundaries, and local benchmarks, and
-`rapport ruleset` to manage reusable standards. Lifecycle commands are deprecated.
+`rapport ruleset` to manage reusable standards. Lifecycle commands have been removed. `rapport context validate` checks architecture
+and benchmark declarations.
 See the [repository guide](https://github.com/hedge-ops/rapport#readme) for schema,
 inheritance, and compatibility details.
 

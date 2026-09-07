@@ -3,12 +3,11 @@
 //! This module owns canonical Context TOML conversion; domain values own identity and semantic validation.
 
 use super::Error;
-use super::domain::{Boundary, BuildSignoff, Context, ContextId, Entry, Grade, SCHEMA_VERSION};
+use super::domain::{Boundary, Context, ContextId, Entry, SCHEMA_VERSION};
 use crate::shared_ruleset::{NewRule, Reference, Ruleset, RulesetId};
 use rapport_files::Utf8Path;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::str::FromStr;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,9 +27,6 @@ struct ContextFile {
     boundaries: BTreeMap<String, BoundaryFile>,
     #[serde(default)]
     ruleset: EmbeddedRulesetFile,
-    review: Option<ReviewFile>,
-    #[serde(default)]
-    signoffs: Vec<SignoffFile>,
 }
 
 const fn schema_version() -> u16 {
@@ -92,30 +88,13 @@ struct ExampleFile {
     text: String,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReviewFile {
-    minimum_grade: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SignoffFile {
-    id: String,
-    target: String,
-    #[serde(default)]
-    stage: u32,
-    resource_group: Option<String>,
-    #[serde(default)]
-    include: Vec<String>,
-}
-
 pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
     if uses_legacy_schema(contents) {
         return Err(Error::LegacySchema {
             path: path.to_path_buf(),
         });
     }
+    reject_lifecycle_fields(contents, path)?;
     let file: ContextFile = toml::from_str(contents).map_err(|source| Error::Decode {
         path: path.to_path_buf(),
         source,
@@ -177,11 +156,6 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
         file.ruleset.includes,
         rules,
     )?;
-    let minimum_grade = file
-        .review
-        .map(|review| Grade::from_str(&review.minimum_grade))
-        .transpose()?;
-    let signoffs = parse_signoffs(file.signoffs, &id)?;
     let mut context = Context::from_parts(
         id,
         file.purpose,
@@ -190,37 +164,24 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
         ownership,
         boundaries,
         ruleset,
-        minimum_grade,
-        signoffs,
     )?;
     context.set_schema(namespaced, file.component_type)?;
     context.validate_identities()?;
     Ok(context)
 }
 
-fn parse_signoffs(signoffs: Vec<SignoffFile>, id: &ContextId) -> Result<Vec<BuildSignoff>, Error> {
-    signoffs
-        .into_iter()
-        .map(|signoff| {
-            let candidate = BuildSignoff::try_new(
-                id,
-                signoff.target.clone(),
-                signoff.stage,
-                signoff.resource_group.clone(),
-                signoff.include.clone(),
-            )?;
-            if candidate.id() != signoff.id {
-                return Err(Error::MissingSignoff(signoff.id));
+fn reject_lifecycle_fields(contents: &str, path: &Utf8Path) -> Result<(), Error> {
+    if let Ok(value) = toml::from_str::<toml::Value>(contents) {
+        for field in ["review", "signoffs"] {
+            if value.get(field).is_some() {
+                return Err(Error::LifecycleField {
+                    path: path.to_path_buf(),
+                    field,
+                });
             }
-            Ok(BuildSignoff::from_parts(
-                signoff.id,
-                signoff.target,
-                signoff.stage,
-                signoff.resource_group,
-                signoff.include,
-            ))
-        })
-        .collect::<Result<Vec<_>, Error>>()
+        }
+    }
+    Ok(())
 }
 
 fn uses_legacy_schema(contents: &str) -> bool {
@@ -272,10 +233,6 @@ struct ContextFileRef<'context> {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     boundaries: BTreeMap<&'context str, BoundaryFileRef<'context>>,
     ruleset: EmbeddedRulesetFileRef<'context>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    review: Option<ReviewFileRef>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    signoffs: Vec<SignoffFileRef<'context>>,
 }
 
 #[derive(Serialize)]
@@ -311,21 +268,6 @@ struct RuleFileRef<'context> {
 struct ExampleFileRef<'context> {
     language: &'context str,
     text: &'context str,
-}
-
-#[derive(Serialize)]
-struct ReviewFileRef {
-    minimum_grade: String,
-}
-
-#[derive(Serialize)]
-struct SignoffFileRef<'context> {
-    id: &'context str,
-    target: &'context str,
-    stage: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resource_group: Option<&'context str>,
-    include: &'context [String],
 }
 
 pub(super) fn render(context: &Context) -> Result<String, Error> {
@@ -388,20 +330,6 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
                 .collect(),
             rules,
         },
-        review: context.minimum_grade().map(|grade| ReviewFileRef {
-            minimum_grade: grade.to_string(),
-        }),
-        signoffs: context
-            .signoffs()
-            .iter()
-            .map(|signoff| SignoffFileRef {
-                id: signoff.id(),
-                target: signoff.target(),
-                stage: signoff.stage(),
-                resource_group: signoff.resource_group(),
-                include: signoff.included_paths(),
-            })
-            .collect(),
     };
     toml_edit::ser::to_string_pretty(&file).map_err(Error::Encode)
 }

@@ -59,12 +59,8 @@ pub(super) enum Action {
     Boundary(BoundaryArgs),
     /// Manage the Context-owned Ruleset.
     Ruleset(RulesetArgs),
-    /// Manage inherited Review quality.
-    Review(ReviewArgs),
-    /// Manage required Build signoffs.
-    Signoff(SignoffArgs),
-    /// Validate Context policy and generated workflows.
-    Doctor { path: Option<Utf8PathBuf> },
+    /// Validate architecture, identifiers, inheritance, and standards packs.
+    Validate { path: Option<Utf8PathBuf> },
 }
 
 impl Action {
@@ -78,9 +74,7 @@ impl Action {
             Self::Ownership(_) => "ownership",
             Self::Boundary(_) => "boundary",
             Self::Ruleset(_) => "ruleset",
-            Self::Review(_) => "review",
-            Self::Signoff(_) => "signoff",
-            Self::Doctor { .. } => "doctor",
+            Self::Validate { .. } => "validate",
         }
     }
 }
@@ -250,92 +244,4 @@ pub(super) struct RuleUpdateArgs {
     pub(super) reference: Option<String>,
     #[arg(long, conflicts_with = "reference")]
     pub(super) clear_reference: bool,
-}
-
-#[derive(Args)]
-#[command(arg_required_else_help = true)]
-pub(super) struct ReviewArgs {
-    #[command(subcommand)]
-    pub(super) command: ReviewAction,
-}
-
-#[derive(Subcommand)]
-pub(super) enum ReviewAction {
-    Show {
-        path: Utf8PathBuf,
-    },
-    Set {
-        path: Utf8PathBuf,
-        #[arg(long)]
-        minimum_grade: String,
-    },
-    Clear {
-        path: Utf8PathBuf,
-    },
-}
-
-#[derive(Args)]
-#[command(arg_required_else_help = true)]
-pub(super) struct SignoffArgs {
-    #[command(subcommand)]
-    pub(super) command: SignoffAction,
-}
-
-#[derive(Subcommand)]
-pub(super) enum SignoffAction {
-    List {
-        path: Utf8PathBuf,
-    },
-    Add {
-        path: Utf8PathBuf,
-        #[arg(long)]
-        target: String,
-        #[arg(long, default_value_t = 0)]
-        stage: u32,
-        #[arg(long)]
-        resource_group: Option<String>,
-        #[arg(long = "include")]
-        include: Vec<Utf8PathBuf>,
-    },
-    Remove {
-        path: Utf8PathBuf,
-        #[arg(long)]
-        signoff: String,
-    },
-    Repair {
-        path: Utf8PathBuf,
-        #[arg(long)]
-        signoff: String,
-    },
-    Include(SignoffIncludeArgs),
-}
-
-#[derive(Args)]
-#[command(arg_required_else_help = true)]
-pub(super) struct SignoffIncludeArgs {
-    #[command(subcommand)]
-    pub(super) command: SignoffIncludeAction,
-}
-
-#[derive(Subcommand)]
-pub(super) enum SignoffIncludeAction {
-    List {
-        path: Utf8PathBuf,
-        #[arg(long)]
-        signoff: String,
-    },
-    Add {
-        path: Utf8PathBuf,
-        #[arg(long)]
-        signoff: String,
-        #[arg(long = "path")]
-        path_included: Utf8PathBuf,
-    },
-    Remove {
-        path: Utf8PathBuf,
-        #[arg(long)]
-        signoff: String,
-        #[arg(long = "path")]
-        path_included: Utf8PathBuf,
-    },
 }

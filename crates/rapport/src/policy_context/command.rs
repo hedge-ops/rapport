@@ -3,29 +3,26 @@
 //! This module dispatches parsed Context actions into repository mutations and
 //! renders their user-facing outcomes.
 
+use super::Error;
 use super::cli::{
-    Action, BoundaryAction, Cli, ComposeAction, ContextRuleAction, OwnershipAction, ReviewAction,
-    RulesetAction,
+    Action, BoundaryAction, Cli, ComposeAction, ContextRuleAction, OwnershipAction, RulesetAction,
 };
-use super::domain::{BoundaryOwnerUpdate, BuildSignoff, ContextId, Grade};
+use super::domain::{BoundaryOwnerUpdate, ContextId};
 use super::render::or_none;
 use super::repository::{Record, Repository};
-use super::{Error, workflow};
-use crate::context::{Clock, CommandContext};
+use crate::context::CommandContext;
 use crate::shared_ruleset::{ExampleUpdate, NewRule, ReferenceUpdate, RuleUpdate, RulesetId};
 use rapport_files::{FileSystem, Utf8Path};
 use std::io::Write;
 use std::process::ExitCode;
-use std::str::FromStr;
 
-pub(crate) fn run<F, C, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, C, O, E>) -> ExitCode
+pub(crate) fn run<F, O, E>(cli: &Cli, context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where
     F: FileSystem,
-    C: Clock,
     O: Write,
     E: Write,
 {
-    let result = execute(&cli.command, context.fs, &context.repo_root, context.runner);
+    let result = execute(&cli.command, context.fs, &context.repo_root);
     match result {
         Ok(output) => {
             let _ = writeln!(context.out, "{output}");
@@ -42,7 +39,6 @@ fn execute(
     action: &Action,
     fs: &mut impl FileSystem,
     repo_root: &Utf8Path,
-    runner: &dyn crate::CommandRunner,
 ) -> Result<String, Error> {
     match action {
         Action::Init {
@@ -72,14 +68,9 @@ fn execute(
         Action::Ownership(args) => ownership(&args.command, fs, repo_root),
         Action::Boundary(args) => boundary(&args.command, fs, repo_root),
         Action::Ruleset(args) => ruleset(&args.command, fs, repo_root),
-        Action::Review(args) => review(&args.command, fs, repo_root),
-        Action::Signoff(args) => super::signoff::run(&args.command, fs, repo_root, runner),
-        Action::Doctor { path } => super::doctor::run(
-            fs,
-            repo_root,
-            path.as_deref().unwrap_or(Utf8Path::new(".")),
-            runner,
-        ),
+        Action::Validate { path } => {
+            super::validation::run(fs, repo_root, path.as_deref().unwrap_or(Utf8Path::new(".")))
+        }
     }
 }
 
@@ -329,87 +320,13 @@ fn context_rule(
     }
 }
 
-fn review(
-    action: &ReviewAction,
-    fs: &mut impl FileSystem,
-    repo_root: &Utf8Path,
-) -> Result<String, Error> {
-    match action {
-        ReviewAction::Show { path } => {
-            let repository = Repository::load(fs, repo_root)?;
-            let record = repository.at(path)?;
-            Ok(format!(
-                "# rapport context review show\n\n- `declared` — {}\n- `effective` — {}",
-                record
-                    .context()
-                    .minimum_grade()
-                    .map_or_else(|| "none".to_owned(), |grade| grade.to_string()),
-                repository.effective_grade(path)?
-            ))
-        }
-        ReviewAction::Set {
-            path,
-            minimum_grade,
-        } => {
-            let grade = Grade::from_str(minimum_grade)?;
-            let mut repository = Repository::load(fs, repo_root)?;
-            let record_path = repository.at(path)?.path().to_path_buf();
-            let directory = repository.at(path)?.directory().to_path_buf();
-            let inherited = repository.inherited_grade(&directory);
-            if grade < inherited {
-                return Err(Error::LowerReviewGrade {
-                    requested: grade.to_string(),
-                    inherited: inherited.to_string(),
-                });
-            }
-            repository
-                .at_mut(path)?
-                .context_mut()
-                .set_minimum_grade(Some(grade));
-            repository.validate()?;
-            repository.save(fs, &record_path)?;
-            Ok(changed("updated Review grade", repository.at(path)?))
-        }
-        ReviewAction::Clear { path } => mutate(fs, repo_root, path, |record| {
-            record.context_mut().set_minimum_grade(None);
-            Ok(())
-        }),
-    }
-}
-
 fn remove_context(
     fs: &mut impl FileSystem,
     repo_root: &Utf8Path,
     path: &Utf8Path,
 ) -> Result<String, Error> {
     let mut repository = Repository::load(fs, repo_root)?;
-    let record = repository.at(path)?;
-    let workflows = record
-        .context()
-        .signoffs()
-        .iter()
-        .map(|signoff| workflow::path(repo_root, record.context().id(), signoff))
-        .collect::<Vec<_>>();
     let (removed, affected) = repository.remove(fs, path)?;
-    for path in workflows {
-        if fs.is_file(&path) {
-            fs.remove_file(&path)
-                .map_err(|source| Error::Io { path, source })?;
-        }
-    }
-    let shared_path = workflow::shared_path(repo_root);
-    if repository_has_signoffs(&repository) {
-        fs.write_string(&shared_path, workflow::shared_contents())
-            .map_err(|source| Error::Io {
-                path: shared_path,
-                source,
-            })?;
-    } else if fs.is_file(&shared_path) {
-        fs.remove_file(&shared_path).map_err(|source| Error::Io {
-            path: shared_path,
-            source,
-        })?;
-    }
     Ok(format!(
         "# rapport context remove\n\n- `status` — removed\n- `context` — {}\n- `affected descendants` — {}",
         removed.context().id(),
@@ -421,13 +338,6 @@ fn remove_context(
                 .join(", ")
         )
     ))
-}
-
-pub(super) fn repository_has_signoffs(repository: &Repository) -> bool {
-    repository
-        .records()
-        .iter()
-        .any(|record| !record.context().signoffs().is_empty())
 }
 
 fn mutate(
@@ -459,18 +369,6 @@ fn mutate_with_detail(
         "{}\n- `{kind}` — `{id}`",
         changed("updated", repository.at(path)?)
     ))
-}
-
-pub(super) fn find_signoff<'record>(
-    record: &'record Record,
-    id: &str,
-) -> Result<&'record BuildSignoff, Error> {
-    record
-        .context()
-        .signoffs()
-        .iter()
-        .find(|candidate| candidate.id() == id)
-        .ok_or_else(|| Error::MissingSignoff(id.to_owned()))
 }
 
 pub(super) fn changed(status: &str, record: &Record) -> String {
