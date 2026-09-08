@@ -16,6 +16,7 @@ pub enum Clock {
 
 impl Clock {
     /// Captures the machine timezone; construct a new clock to refresh it.
+    /// Use [`Self::system_utc`] for an infallible system clock with a UTC calendar.
     ///
     /// ```no_run
     /// use rapport_temporal::{clock::Clock, Error};
@@ -29,6 +30,16 @@ impl Clock {
     /// Returns an error if the machine zone cannot be resolved or validated.
     pub fn system() -> Result<Self, Error> {
         Timezone::system().map(Self::System)
+    }
+
+    /// Creates a real advancing system clock whose calendar calculations use UTC.
+    ///
+    /// Unlike [`Self::system`], this is infallible and does not resolve or modify
+    /// the machine timezone or process environment. Unlike [`FakeClock::new`],
+    /// time advances with the system clock rather than through explicit updates.
+    #[must_use]
+    pub const fn system_utc() -> Self {
+        Self::System(Timezone::Utc)
     }
 
     /// Returns the captured calendar context, suitable for passing to a pure core.
@@ -130,6 +141,16 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn system_utc_should_select_the_system_clock_with_utc_calendar() {
+        const CLOCK: Clock = Clock::system_utc();
+
+        assert!(
+            matches!(CLOCK, Clock::System(Timezone::Utc)),
+            "expecting a system clock with a UTC calendar"
+        );
+    }
 
     #[test]
     fn clock_today_should_use_the_current_instant() {

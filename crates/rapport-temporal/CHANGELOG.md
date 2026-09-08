@@ -6,6 +6,13 @@ crate adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-08
+
+### Added
+
+- `Clock::system_utc()` creates an infallible, real advancing clock with a UTC
+  calendar, independent of machine timezone resolution and process environment.
+
 ## [0.3.1] - 2026-09-08
 
 ### Added
