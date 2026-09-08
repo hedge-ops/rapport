@@ -10,7 +10,8 @@
 //! Also with error handling, yes it might be the heat death date of the universe, but we don't want
 //! or need error handling to fail when this is the case. If someone is being weird and giving the
 //! library extreme data, we fall back to sensible dates, to make the whole thing ergonomic and
-//! delightful to use.
+//! delightful to use. Explicit timezone operations instead return typed errors for
+//! invalid ranges and ambiguous or nonexistent midnight; they never guess a calendar policy.
 //!
 //! ## Modules
 //!
@@ -24,10 +25,15 @@
 
 pub mod clock;
 pub mod date;
+mod error;
 pub mod offset;
 pub mod query;
 pub mod recurrence;
 pub mod time;
+pub mod timezone;
+
+pub use error::Error;
+pub use timezone::Timezone;
 
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -40,22 +46,6 @@ impl<T: std::fmt::Display> DisplayExt for Option<T> {
     fn displayed(self) -> String {
         self.map_or_else(|| "none".to_string(), |v| v.to_string())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("date is not a valid format. Use YYYY-mm-dd format, surrounded by double quotes.")]
-    InvalidDate,
-    #[error("unable to parse recurrence string: {0}")]
-    InvalidRecurrence(String),
-    #[error("invalid offset: {0}")]
-    InvalidOffset(String),
-    #[error(
-        "instant is not a valid RFC 3339 timestamp (expected e.g. `2026-06-17T12:00:00Z`): {0}"
-    )]
-    InvalidInstant(String),
-    #[error("instant must be UTC (offset must be zero, e.g. a `Z` suffix or `+00:00`): {0}")]
-    NonUtcInstant(String),
 }
 
 #[cfg(test)]

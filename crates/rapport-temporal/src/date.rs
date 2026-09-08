@@ -361,6 +361,7 @@ impl Date {
         Utc.from_utc_datetime(&self.0.and_hms_opt(0, 0, 0).unwrap_or_default())
     }
 
+    /// Reads the host-local current date; prefer an injected [`crate::clock::Clock`].
     #[must_use]
     pub fn today() -> Self {
         Self::from(chrono::Local::now().date_naive())

@@ -4,37 +4,65 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-use crate::{date::Date, time::Instant};
+use crate::{Error, Timezone, date::Date, time::Instant};
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum Clock {
     #[display("system time")]
-    System,
+    System(Timezone),
     #[display("{_0}")]
     Fake(FakeClock),
 }
 
 impl Clock {
+    /// Captures the machine timezone; construct a new clock to refresh it.
+    ///
+    /// ```no_run
+    /// use rapport_temporal::{clock::Clock, Error};
+    /// let clock = Clock::system()?;
+    /// let timezone = clock.timezone();
+    /// let today = timezone.date_at(clock.now())?;
+    /// # Ok::<(), Error>(())
+    /// ```
+    ///
+    /// # Errors
+    /// Returns an error if the machine zone cannot be resolved or validated.
+    pub fn system() -> Result<Self, Error> {
+        Timezone::system().map(Self::System)
+    }
+
+    /// Returns the captured calendar context, suitable for passing to a pure core.
     #[must_use]
-    pub fn now(&self) -> Instant {
+    pub fn timezone(&self) -> Timezone {
         match self {
-            Clock::System => Instant::from_utc_datetime(Utc::now()),
-            Clock::Fake(provider) => provider.now(),
+            Self::System(timezone) => *timezone,
+            Self::Fake(clock) => clock.timezone(),
         }
     }
 
     #[must_use]
-    pub fn today(&self) -> Date {
-        self.now().into_date()
+    pub fn now(&self) -> Instant {
+        match self {
+            Clock::System(_) => Instant::from_utc_datetime(Utc::now()),
+            Clock::Fake(provider) => provider.now(),
+        }
+    }
+
+    /// Projects the current instant using this clock's captured timezone.
+    ///
+    /// # Errors
+    /// Returns an error when the instant or local date is outside the supported range.
+    pub fn today(&self) -> Result<Date, Error> {
+        self.timezone().date_at(self.now())
     }
 }
 
-/// A substute for the real clock for testing purposes, can be cloned but still refer to the same
-/// shared time, which can be updated centrally from tests.
+/// A clock with shared mutable time and immutable calendar context for testing.
 #[derive(Debug, Clone, derive_more::Display)]
 #[display("fake time (for testing), current time: {}", time.read().to_string())]
 pub struct FakeClock {
     time: Arc<RwLock<Instant>>,
+    timezone: Timezone,
 }
 
 impl Default for FakeClock {
@@ -45,11 +73,24 @@ impl Default for FakeClock {
 }
 
 impl FakeClock {
+    /// Creates a fake whose calendar calculations use UTC, independent of the host.
     #[must_use]
     pub fn new(time: Instant) -> Self {
+        Self::with_timezone(time, Timezone::Utc)
+    }
+
+    /// Creates a fake with immutable calendar context and shared mutable time.
+    #[must_use]
+    pub fn with_timezone(time: Instant, timezone: Timezone) -> Self {
         Self {
             time: Arc::new(RwLock::new(time)),
+            timezone,
         }
+    }
+
+    #[must_use]
+    pub fn timezone(&self) -> Timezone {
+        self.timezone
     }
 
     pub fn add_days(&self, value: u32) {
@@ -95,7 +136,7 @@ mod tests {
         let fake = FakeClock::new(Instant::from_timestamp(1_759_226_820));
         let clock = Clock::from(&fake);
 
-        let actual = clock.today();
+        let actual = claims::assert_ok!(clock.today());
 
         assert_eq!(actual, Date::from_str_unchecked("2025-09-30"));
     }

@@ -6,6 +6,29 @@ crate adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-08
+
+### Added
+
+- Explicit `Timezone::{Utc, Named(chrono_tz::Tz)}` calendar context with validated
+  parsing and Serde transport, using bundled IANA rules and system discovery via
+  `iana-time-zone`.
+- Pure `date_at`, `start_of_day`, and nanosecond-precise
+  `duration_until_midnight` operations. Repeated/missing midnight (including
+  skipped dates) returns a typed error consistently; invalid ranges never fall
+  back to UTC or an unrelated date.
+- `Clock::timezone()` and `FakeClock::with_timezone(instant, timezone)`.
+
+### Changed
+
+- **Breaking:** `Clock::System` now holds a `Timezone`; `Clock::system()` resolves
+  the machine's OS timezone once and returns `Result<Clock, Error>`. Recreate it
+  to refresh zone selection after a machine timezone change.
+- **Breaking:** `Clock::today()` returns `Result<Date, Error>` and projects with
+  the captured timezone. Fake clocks default to UTC, independent of the host.
+- Documented migration examples and preserved legacy host-local conversions.
+
+
 ## [0.2.5] - 2026-08-20
 
 ### Added
@@ -71,7 +94,8 @@ Initial release.
 - `query` parser turning human/agent expressions into typed values.
 - `clock` for testable time.
 
-[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.5...HEAD
+[Unreleased]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.3.0...HEAD
+[0.3.0]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.5...rapport-temporal-v0.3.0
 [0.2.5]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.4...rapport-temporal-v0.2.5
 [0.2.4]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.3...rapport-temporal-v0.2.4
 [0.2.3]: https://github.com/hedge-ops/rapport/compare/rapport-temporal-v0.2.2...rapport-temporal-v0.2.3

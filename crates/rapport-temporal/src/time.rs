@@ -19,6 +19,9 @@ pub struct Instant {
 }
 
 impl Instant {
+    /// Legacy host-local calculation, including a UTC fallback for missing midnight.
+    /// Use [`crate::Timezone::duration_until_midnight`] for explicit calendar context
+    /// and nanosecond-precise, fallible calculations.
     #[must_use]
     pub fn duration_until_midnight(self) -> Duration {
         let secs = self.seconds.try_into().unwrap_or_default();
@@ -55,6 +58,8 @@ impl Instant {
         Duration::from_secs(seconds_until_midnight.try_into().unwrap_or_default())
     }
 
+    /// Legacy host-local date projection; use [`crate::Timezone::date_at`] for
+    /// deterministic calendar context.
     #[must_use]
     pub fn into_date(self) -> Date {
         self.into()
@@ -227,6 +232,9 @@ pub mod rfc3339 {
     }
 }
 
+/// Legacy host-local midnight conversion: chooses the earliest repeated midnight,
+/// falls back to UTC for missing midnight, and clamps pre-epoch timestamps to zero.
+/// Use [`crate::Timezone::start_of_day`] for an explicit, fallible policy.
 impl From<Date> for Instant {
     fn from(value: Date) -> Self {
         // Convert Date to NaiveDate
@@ -255,6 +263,7 @@ impl From<Date> for Instant {
     }
 }
 
+/// Legacy host-local projection; use [`crate::Timezone::date_at`] for explicit context.
 impl From<Instant> for Date {
     fn from(value: Instant) -> Self {
         let seconds = i64::try_from(value.seconds).unwrap_or(i64::MAX);
