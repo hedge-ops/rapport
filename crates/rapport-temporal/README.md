@@ -96,6 +96,29 @@ ambiguous next midnight returns the same typed error as `start_of_day`.
 `date_at` can still project instants within a date whose midnight is missing or
 ambiguous.
 
+For daily refresh scheduling, use `duration_until_date_change(instant)`. It
+returns a strictly positive, nanosecond-precise duration to the earliest subsequent
+instant whose local date differs. It selects the first repeated midnight when
+approaching from the previous date, ignores a second midnight within the same
+date, and handles missing midnight or an entirely skipped date at the actual
+transition. Historical backward transitions to an earlier date count too. A call
+exactly at a boundary schedules the following date change.
+
+```rust
+use rapport_temporal::{Error, time::Instant, Timezone};
+
+let timezone: Timezone = "America/Havana".parse()?;
+let now = Instant::from_rfc3339("2020-10-31T12:00:00Z")?;
+let delay = timezone.duration_until_date_change(now)?;
+assert_eq!(delay.as_secs(), 16 * 3600);
+# Ok::<(), Error>(())
+```
+
+The calculation visits successive whole seconds in the bundled timezone rules
+until the date changes. This preserves even brief backward date changes without
+assuming that local dates increase monotonically; input subseconds are retained
+in the returned duration. No host timezone lookup is performed.
+
 Explicit operations return `Error::CalendarOutOfRange` for invalid instants,
 nanoseconds outside `0..1_000_000_000` (leap-second encodings are unsupported),
 unsupported date ranges, or a start of day before the Unix epoch (`Instant` uses

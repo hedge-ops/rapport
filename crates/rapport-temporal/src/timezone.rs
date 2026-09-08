@@ -115,6 +115,43 @@ impl Timezone {
         Ok(Duration { nanos })
     }
 
+    /// Measures until the first subsequent instant with a different local date.
+    ///
+    /// Preserves nanoseconds and always returns a positive duration. Repeated
+    /// midnight uses its first occurrence when approaching from the previous date;
+    /// missing midnight and skipped dates use the actual date-change boundary.
+    /// A backward transition to an earlier date also counts as a date change.
+    /// Calling exactly at a boundary schedules the following change.
+    ///
+    /// # Errors
+    /// Returns `CalendarOutOfRange` for invalid instants, local calendar overflow,
+    /// or an unrepresentable boundary or duration.
+    pub fn duration_until_date_change(self, instant: Instant) -> Result<Duration, Error> {
+        let date = self.date_at(instant)?;
+        let mut boundary = Instant {
+            seconds: instant.seconds,
+            nanos: 0,
+        };
+        // IANA offsets and transitions have whole-second precision. Visiting each
+        // subsequent second cannot miss a brief backward date change, unlike a
+        // coarse search that assumes local dates increase monotonically.
+        loop {
+            boundary.seconds = boundary
+                .seconds
+                .checked_add(1)
+                .ok_or(Error::CalendarOutOfRange)?;
+            let nanos = boundary
+                .seconds
+                .checked_sub(instant.seconds)
+                .and_then(|seconds| seconds.checked_mul(1_000_000_000))
+                .and_then(|nanos| nanos.checked_sub(u64::from(instant.nanos)))
+                .ok_or(Error::CalendarOutOfRange)?;
+            if self.date_at(boundary)? != date {
+                return Ok(Duration { nanos });
+            }
+        }
+    }
+
     fn zone(self) -> Tz {
         match self {
             Self::Utc => chrono_tz::UTC,
@@ -281,6 +318,136 @@ mod tests {
     }
 
     #[rstest]
+    #[case::utc(
+        "UTC",
+        "2026-01-01T12:00:00Z",
+        "2026-01-02T00:00:00Z",
+        43_200_000_000_000,
+        "2026-01-02"
+    )]
+    #[case::fractional(
+        "UTC",
+        "2026-01-01T23:59:59.123456789Z",
+        "2026-01-02T00:00:00Z",
+        876_543_211,
+        "2026-01-02"
+    )]
+    #[case::midnight(
+        "UTC",
+        "2026-01-01T00:00:00Z",
+        "2026-01-02T00:00:00Z",
+        86_400_000_000_000,
+        "2026-01-02"
+    )]
+    #[case::epoch(
+        "UTC",
+        "1970-01-01T00:00:00Z",
+        "1970-01-02T00:00:00Z",
+        86_400_000_000_000,
+        "1970-01-02"
+    )]
+    #[case::spring(
+        "America/Los_Angeles",
+        "2026-03-08T08:00:00Z",
+        "2026-03-09T07:00:00Z",
+        82_800_000_000_000,
+        "2026-03-09"
+    )]
+    #[case::autumn(
+        "America/Los_Angeles",
+        "2026-11-01T07:00:00Z",
+        "2026-11-02T08:00:00Z",
+        90_000_000_000_000,
+        "2026-11-02"
+    )]
+    #[case::before_repeated(
+        "America/Havana",
+        "2020-10-31T12:00:00Z",
+        "2020-11-01T04:00:00Z",
+        57_600_000_000_000,
+        "2020-11-01"
+    )]
+    #[case::first_midnight(
+        "America/Havana",
+        "2020-11-01T04:00:00Z",
+        "2020-11-02T05:00:00Z",
+        90_000_000_000_000,
+        "2020-11-02"
+    )]
+    #[case::between_midnights(
+        "America/Havana",
+        "2020-11-01T04:30:00Z",
+        "2020-11-02T05:00:00Z",
+        88_200_000_000_000,
+        "2020-11-02"
+    )]
+    #[case::second_midnight(
+        "America/Havana",
+        "2020-11-01T05:00:00Z",
+        "2020-11-02T05:00:00Z",
+        86_400_000_000_000,
+        "2020-11-02"
+    )]
+    #[case::missing(
+        "America/Sao_Paulo",
+        "2018-11-03T12:00:00Z",
+        "2018-11-04T03:00:00Z",
+        54_000_000_000_000,
+        "2018-11-04"
+    )]
+    #[case::skipped(
+        "Pacific/Apia",
+        "2011-12-29T12:00:00Z",
+        "2011-12-30T10:00:00Z",
+        79_200_000_000_000,
+        "2011-12-31"
+    )]
+    #[case::backward_date(
+        "America/Goose_Bay",
+        "1988-10-30T02:00:00Z",
+        "1988-10-30T02:01:00Z",
+        60_000_000_000,
+        "1988-10-29"
+    )]
+    fn duration_until_date_change_should_find_first_boundary(
+        #[case] zone: &str,
+        #[case] input: &str,
+        #[case] boundary: &str,
+        #[case] nanos: u64,
+        #[case] next_date: &str,
+    ) {
+        let timezone = assert_ok!(zone.parse::<Timezone>());
+        let instant = assert_ok!(Instant::from_rfc3339(input));
+        let boundary = assert_ok!(Instant::from_rfc3339(boundary));
+        let before = Instant {
+            seconds: boundary.seconds - 1,
+            nanos: 999_999_999,
+        };
+
+        let duration = assert_ok!(timezone.duration_until_date_change(instant));
+
+        assert_eq!(duration, Duration { nanos });
+        assert_eq!(
+            assert_ok!(Timezone::utc_datetime(instant))
+                + chrono::Duration::nanoseconds(assert_ok!(i64::try_from(duration.nanos))),
+            assert_ok!(Timezone::utc_datetime(boundary))
+        );
+        assert_eq!(
+            assert_ok!(timezone.date_at(before)),
+            assert_ok!(timezone.date_at(instant))
+        );
+        assert_eq!(
+            assert_ok!(timezone.date_at(boundary)),
+            Date::from_str_unchecked(next_date)
+        );
+        assert_ne!(
+            assert_ok!(timezone.date_at(boundary)),
+            assert_ok!(timezone.date_at(instant))
+        );
+        assert!(duration.nanos > 0);
+    }
+
+    #[rstest]
     #[case::missing_midnight(chrono_tz::America::Sao_Paulo, "2018-11-04", "2018-11-03T12:00:00Z")]
     #[case::skipped_date(chrono_tz::Pacific::Apia, "2011-12-30", "2011-12-29T12:00:00Z")]
     fn start_of_day_should_reject_missing_midnight_consistently(
@@ -366,6 +533,10 @@ mod tests {
             Error::CalendarOutOfRange
         ));
         assert!(matches!(
+            assert_err!(Timezone::Utc.duration_until_date_change(instant)),
+            Error::CalendarOutOfRange
+        ));
+        assert!(matches!(
             assert_err!(Timezone::Utc.duration_until_midnight(instant)),
             Error::CalendarOutOfRange
         ));
@@ -401,6 +572,12 @@ mod tests {
             assert_err!(Timezone::Utc.duration_until_midnight(midnight)),
             Error::CalendarOutOfRange
         ));
+        for (timezone, instant) in [(Timezone::Utc, midnight), (east, last_second)] {
+            assert!(matches!(
+                assert_err!(timezone.duration_until_date_change(instant)),
+                Error::CalendarOutOfRange
+            ));
+        }
         assert!(matches!(
             assert_err!(east.date_at(last_second)),
             Error::CalendarOutOfRange
