@@ -16,7 +16,7 @@ query parsing, and clock primitives for business-facing Rust applications.
 
 - `Date` is a calendar date with no time-of-day.
 - `Instant` is a UTC timestamp-like value suitable for storage and boundaries.
-- `Clock` supplies current time; production code uses `Clock::System`, tests use
+- `Clock` supplies current time; production code uses `Clock::system()`, tests use
   `FakeClock`.
 - `RecurrenceSchedule` describes repeat cadence; `RecurrenceRule` pairs a
   schedule with a start date.
