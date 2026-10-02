@@ -12,6 +12,23 @@ pub(crate) enum Target {
     Validate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    Check,
+    Build,
+    Test,
+}
+impl Target {
+    pub(crate) fn steps(self) -> &'static [Step] {
+        match self {
+            Self::Check => &[Step::Check],
+            Self::Build => &[Step::Build],
+            Self::Test => &[Step::Test],
+            Self::Validate => &[Step::Check, Step::Build, Step::Test],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Artifact {
     pub(crate) component: Utf8PathBuf,

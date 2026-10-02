@@ -126,14 +126,19 @@ fn prepared(root: &Utf8Path, committed: bool) -> Vec<Prepared> {
         }),
         commands: vec![CommandSpec::new("fake-generator").current_dir(root)],
         generator: Some(declaration::Generator {
-            inputs: vec!["source.txt".to_owned()],
-            outputs: vec!["output.txt".to_owned()],
-            destination: "output.txt".to_owned(),
-            candidates: vec![],
+            inputs: assert_ok!(vec!["source.txt".to_owned()].try_into()),
+            outputs: assert_ok!(
+                vec![declaration::Output {
+                    path: "output.txt".to_owned(),
+                    candidate: None
+                }]
+                .try_into()
+            ),
             environment: vec![],
-            package: None,
-            locales: None,
-            format_config: None,
+            adapter: declaration::Adapter::Facet {
+                language: declaration::FacetLanguage::Swift,
+                destination: "output.txt".to_owned(),
+            },
             committed,
         }),
     }]
@@ -244,4 +249,258 @@ fn dry_run_does_not_invoke_tools_or_write_outputs() {
     assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
     assert!(!workspace.0.join("output.txt").exists());
     assert!(!workspace.0.join("target").exists());
+}
+
+#[rstest::rstest]
+#[case::facet_apple("kind = 'facet'\nlanguage = 'apple'\ndestination = 'out'")]
+#[case::boltffi_swift("kind = 'boltffi'\nplatform = 'swift'")]
+#[case::facet_missing_destination("kind = 'facet'\nlanguage = 'swift'")]
+#[case::boltffi_irrelevant_destination(
+    "kind = 'boltffi'\nplatform = 'android'\ndestination = 'out'"
+)]
+#[case::empty_commands("kind = 'command'\ncommands = []")]
+#[case::empty_program("kind = 'command'\ncommands = [{program = '', cwd = '.'}]")]
+#[case::just("kind = 'command'\ncommands = [{program = 'just', cwd = '.'}]")]
+#[case::absolute_just(
+    "kind = 'command'\ncommands = [{program = '/usr/local/bin/just', cwd = '.'}]"
+)]
+fn adapter_should_reject_invalid_declarations(#[case] text: &str) {
+    assert_err!(toml::from_str::<declaration::Adapter>(text));
+}
+
+#[rstest::rstest]
+#[case::swift(declaration::FacetLanguage::Swift, "swift")]
+#[case::kotlin(declaration::FacetLanguage::Kotlin, "kotlin")]
+#[case::csharp(declaration::FacetLanguage::Csharp, "csharp")]
+fn facet_should_generate_the_selected_language(
+    #[case] language: declaration::FacetLanguage,
+    #[case] argument: &str,
+) {
+    let workspace = Workspace::new();
+    let commands = assert_ok!(adapters::generation(
+        &workspace.0,
+        Utf8Path::new("producer"),
+        &declaration::Adapter::Facet {
+            language,
+            destination: "generated".to_owned()
+        },
+    ));
+    assert_eq!(
+        commands,
+        vec![
+            CommandSpec::new("cargo")
+                .current_dir(&workspace.0)
+                .args(["run", "--manifest-path"])
+                .arg(workspace.0.join("producer/Cargo.toml").as_str())
+                .args([
+                    "--bin",
+                    "codegen",
+                    "--features",
+                    "codegen,facet_typegen",
+                    "--",
+                    "--language",
+                    argument,
+                    "--output-dir"
+                ])
+                .arg(workspace.0.join("generated").as_str())
+        ]
+    );
+}
+
+#[test]
+fn boltffi_should_package_android_without_a_destination_setting() {
+    let commands = assert_ok!(adapters::generation(
+        Utf8Path::new("/repo"),
+        Utf8Path::new("producer"),
+        &declaration::Adapter::Boltffi {
+            platform: declaration::BoltFfiPlatform::Android
+        },
+    ));
+    assert_eq!(
+        commands,
+        vec![
+            CommandSpec::new("boltffi")
+                .args(["pack", "android"])
+                .current_dir("/repo/producer")
+        ]
+    );
+}
+
+#[test]
+fn command_should_preserve_literal_arguments_order_and_working_directories() {
+    let workspace = Workspace::new();
+    let adapter: declaration::Adapter = assert_ok!(toml::from_str(
+        r#"
+kind = "command"
+commands = [
+  { program = "cargo", args = ["run", "--package", "generate-strings", "--", "swift", "--locales", "app/core/strings"], cwd = "." },
+  { program = "swiftformat", args = ["generated/a file.swift", "$(literal)"], cwd = "consumer" },
+]
+"#
+    ));
+    assert_eq!(
+        assert_ok!(adapters::generation(
+            &workspace.0,
+            Utf8Path::new("producer"),
+            &adapter
+        )),
+        vec![
+            CommandSpec::new("cargo")
+                .args([
+                    "run",
+                    "--package",
+                    "generate-strings",
+                    "--",
+                    "swift",
+                    "--locales",
+                    "app/core/strings"
+                ])
+                .current_dir(workspace.0.join(".")),
+            CommandSpec::new("swiftformat")
+                .args(["generated/a file.swift", "$(literal)"])
+                .current_dir(workspace.0.join("consumer")),
+        ]
+    );
+    assert_eq!(
+        assert_ok!(toml::from_str::<declaration::Adapter>(&assert_ok!(
+            toml::to_string(&adapter)
+        ))),
+        adapter
+    );
+}
+
+#[test]
+fn command_should_reject_a_working_directory_outside_the_repository() {
+    let workspace = Workspace::new();
+    let adapter = assert_ok!(toml::from_str::<declaration::Adapter>(
+        "kind = 'command'\ncommands = [{program = 'cargo', cwd = '../outside'}]"
+    ));
+    assert!(matches!(
+        assert_err!(adapters::generation(
+            &workspace.0,
+            Utf8Path::new("."),
+            &adapter
+        )),
+        Error::Path(_)
+    ));
+}
+
+#[test]
+fn generator_should_keep_candidate_and_output_together_through_serialization() {
+    let generator: declaration::Generator = assert_ok!(toml::from_str(
+        r#"
+inputs = ["src/**/*"]
+outputs = [{ path = "generated/app.html", candidate = "bundle/app.html" }]
+committed = true
+[adapter]
+kind = "command"
+commands = [{program = "bun", args = ["run", "build"], cwd = "."}]
+"#
+    ));
+    assert_eq!(
+        generator.outputs.as_ref(),
+        &[declaration::Output {
+            path: "generated/app.html".to_owned(),
+            candidate: Some("bundle/app.html".to_owned())
+        }]
+    );
+    assert_eq!(
+        assert_ok!(toml::from_str::<declaration::Generator>(&assert_ok!(
+            toml::to_string(&generator)
+        ))),
+        generator
+    );
+}
+
+#[test]
+fn validate_should_expand_into_only_executable_steps() {
+    assert_eq!(
+        Target::Validate.steps(),
+        &[graph::Step::Check, graph::Step::Build, graph::Step::Test]
+    );
+}
+
+#[test]
+fn adapter_should_reject_disagreement_with_output_metadata() {
+    let adapter = declaration::Adapter::Boltffi {
+        platform: declaration::BoltFfiPlatform::Android,
+    };
+    assert_ok!(adapter.validate_output("boltffi_generate", "android"));
+    assert!(
+        matches!(assert_err!(adapter.validate_output("facet_generate", "swift")), Error::UnsupportedGenerator { tool, target } if tool == "facet_generate" && target == "swift")
+    );
+}
+
+#[rstest::rstest]
+#[case::empty_inputs("inputs = []\noutputs = [{path = 'out'}]")]
+#[case::empty_outputs("inputs = ['src']\noutputs = []")]
+fn generator_should_require_inputs_and_outputs(#[case] fields: &str) {
+    let text = format!("{fields}\n[adapter]\nkind = 'boltffi'\nplatform = 'android'");
+    assert_err!(toml::from_str::<declaration::Generator>(&text));
+}
+
+/// A repository-owned generator builds a candidate without rewriting committed output during validation.
+#[test]
+fn command_should_share_generation_freshness_and_committed_output_checks() {
+    let workspace = Workspace::new();
+    assert_ok!(std::fs::write(workspace.0.join("committed.txt"), "old"));
+    assert_ok!(std::fs::write(
+        workspace.0.join("context.toml"),
+        r#"
+namespace = "ROOT"
+purpose = "A repository-owned generator"
+type = "crate"
+[generated_outputs.preview]
+tool = "preview_generator"
+target = "text"
+[execution.generators.preview]
+inputs = ["source.txt"]
+outputs = [{path = "committed.txt", candidate = "output.txt"}]
+committed = true
+[execution.generators.preview.adapter]
+kind = "command"
+commands = [{program = "fake-generator", cwd = "."}]
+"#
+    ));
+    let git = assert_ok!(
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .arg(&workspace.0)
+            .output()
+    );
+    assert!(git.status.success());
+    let mut fs = RealFileSystem;
+    let declarations = assert_ok!(policy_context::declarations(&mut fs, &workspace.0));
+    let plan = assert_ok!(graph::generate(
+        &declarations,
+        Artifact {
+            component: ".".into(),
+            output: "preview".to_owned()
+        }
+    ));
+    let runner = GeneratorRunner {
+        root: workspace.0.clone(),
+        calls: AtomicUsize::new(0),
+        version: "v1".to_owned(),
+        fail: false,
+    };
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut context = CommandContext::new(workspace.0.clone(), &mut fs, &mut out, &mut err);
+    let mut execute = |explicit| {
+        let prepared = prepare(context.fs, &workspace.0, &declarations, plan.clone())?;
+        run_with_runner(&mut context, prepared, false, false, explicit, &runner)
+    };
+    assert!(matches!(assert_err!(execute(false)), Error::Stale(_)));
+    assert_eq!(
+        assert_ok!(std::fs::read_to_string(workspace.0.join("committed.txt"))),
+        "old"
+    );
+    assert_ok!(execute(true));
+    assert_eq!(
+        assert_ok!(std::fs::read_to_string(workspace.0.join("committed.txt"))),
+        "first"
+    );
+    assert_ok!(execute(false));
+    assert_eq!(runner.calls.load(Ordering::SeqCst), 2);
 }

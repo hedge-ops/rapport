@@ -131,14 +131,11 @@ fn prepare(
                             component: artifact.component.clone(),
                             output: artifact.output.clone(),
                         })?;
+                    generator
+                        .adapter
+                        .validate_output(output.tool(), output.target())?;
                     (
-                        adapters::generation(
-                            root,
-                            &artifact.component,
-                            output.tool(),
-                            output.target(),
-                            generator,
-                        )?,
+                        adapters::generation(root, &artifact.component, &generator.adapter)?,
                         Some(generator.clone()),
                     )
                 }
@@ -318,7 +315,13 @@ fn generated<F: FileSystem, O: Write, E: Write>(
         let _ = writeln!(context.out, "reused");
         return Ok(());
     }
-    if config.committed && !explicit && config.candidates.is_empty() {
+    if config.committed
+        && !explicit
+        && config
+            .outputs
+            .iter()
+            .any(|output| output.candidate.is_none())
+    {
         return Err(Error::Stale(format!("{:?}", prepared.operation)));
     }
     if receipt_path.exists() {
@@ -327,8 +330,8 @@ fn generated<F: FileSystem, O: Write, E: Write>(
             source,
         })?;
     }
-    for output in &config.outputs {
-        let output = freshness::inside(root, output)?;
+    for output in config.outputs.iter() {
+        let output = freshness::inside(root, &output.path)?;
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent).map_err(|source| Error::Io {
                 path: parent.to_path_buf(),
@@ -369,9 +372,12 @@ fn reconcile_candidates(
     config: &declaration::Generator,
     explicit: bool,
 ) -> Result<(), Error> {
-    for (candidate, output) in config.candidates.iter().zip(&config.outputs) {
+    for output in config.outputs.iter() {
+        let Some(candidate) = &output.candidate else {
+            continue;
+        };
         let candidate = freshness::inside(root, candidate)?;
-        let output = freshness::inside(root, output)?;
+        let output = freshness::inside(root, &output.path)?;
         let bytes = std::fs::read(&candidate).map_err(|source| Error::Io {
             path: candidate.clone(),
             source,

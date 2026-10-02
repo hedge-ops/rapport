@@ -65,13 +65,9 @@ pub(crate) fn basis(root: &Utf8Path, config: &Generator, identity: &[u8]) -> Res
 }
 
 pub(crate) fn outputs(root: &Utf8Path, config: &Generator) -> Result<String, Error> {
-    if config.outputs.is_empty() {
-        return Err(Error::Declaration(
-            "generation requires output paths".to_owned(),
-        ));
-    }
     let mut files = BTreeSet::new();
-    for output in &config.outputs {
+    for output in config.outputs.iter() {
+        let output = &output.path;
         let path = inside(root, output)?;
         if !path.exists() {
             return Err(Error::MissingOutput(path));
