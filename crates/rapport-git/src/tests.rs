@@ -2,7 +2,7 @@
 
 use super::{BranchName, Git, ObjectId, Revision};
 use claims::{assert_ok, assert_some};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_ne};
 use rapport_command::{CommandOutcome, CommandSpec, Runner, SystemRunner};
 use rapport_files::{Utf8Path, Utf8PathBuf};
 use std::io;
@@ -208,10 +208,9 @@ fn push_branch_should_publish_and_delete_remote_branch_idempotently() {
     let branch = assert_ok!(BranchName::new("feature"));
 
     assert_ok!(git.push_branch(&repository, &branch));
-    assert!(
-        !temporary
-            .git(["ls-remote", "--heads", "origin", "feature"])
-            .is_empty()
+    assert_ne!(
+        temporary.git(["ls-remote", "--heads", "origin", "feature"]),
+        ""
     );
     let tracking = assert_ok!(git.fetch_target(&repository, &branch));
     assert_eq!(tracking.remote(), "origin");
@@ -220,10 +219,9 @@ fn push_branch_should_publish_and_delete_remote_branch_idempotently() {
     assert_eq!(tracking.revision().as_str(), "refs/remotes/origin/feature");
     assert_ok!(git.delete_remote_branch(&repository, &branch));
     assert_ok!(git.delete_remote_branch(&repository, &branch));
-    assert!(
-        temporary
-            .git(["ls-remote", "--heads", "origin", "feature"])
-            .is_empty()
+    assert_eq!(
+        temporary.git(["ls-remote", "--heads", "origin", "feature"]),
+        ""
     );
     let _ = std::fs::remove_dir_all(remote);
 }

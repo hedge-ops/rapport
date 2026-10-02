@@ -282,6 +282,6 @@ includes = []
     assert_eq!(root.context().generated_outputs().len(), 1);
     assert!(app.context().generated_outputs().is_empty());
     assert!(app.context().generated_inputs().is_empty());
-    assert!(app.context().components().is_empty());
-    assert!(app.context().kustomizations().is_empty());
+    assert_eq!(app.context().components(), []);
+    assert_eq!(app.context().kustomizations(), []);
 }
