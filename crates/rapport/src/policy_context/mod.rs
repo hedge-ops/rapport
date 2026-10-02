@@ -7,6 +7,7 @@ mod cli;
 mod command;
 mod domain;
 mod error;
+mod execution;
 mod render;
 mod repository;
 mod validation;
@@ -16,7 +17,9 @@ mod tests;
 
 pub(crate) use cli::Cli;
 pub(crate) use command::run;
+pub(crate) use domain::Context as ComponentContext;
 pub(crate) use error::Error;
+pub(crate) use execution::declarations;
 
 use rapport_files::{FileSystem, Utf8Path};
 use std::collections::{BTreeMap, BTreeSet};

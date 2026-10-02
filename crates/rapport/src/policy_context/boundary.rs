@@ -22,6 +22,7 @@ struct ContextFile {
     #[serde(rename = "type")]
     component_type: Option<String>,
     purpose: String,
+    execution: Option<crate::execution::declaration::Declaration>,
     #[serde(default)]
     components: Vec<String>,
     #[serde(default)]
@@ -179,6 +180,7 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
     )?;
     let mut context = Context::from_parts(id, file.purpose, entries, declarations, ruleset)?;
     context.set_schema(namespaced, file.component_type)?;
+    context.set_execution(file.execution);
     context.validate_identities()?;
     Ok(context)
 }
@@ -317,6 +319,8 @@ struct ContextFileRef<'context> {
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     component_type: Option<&'context str>,
     purpose: &'context str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution: Option<&'context crate::execution::declaration::Declaration>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     components: Vec<&'context str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -428,6 +432,7 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
         namespace: context.namespaced().then(|| context.id().as_str()),
         component_type: context.component_type(),
         purpose: context.purpose(),
+        execution: context.execution(),
         components: context
             .components()
             .iter()

@@ -39,6 +39,12 @@ pub struct Cli {
 pub enum Command {
     /// Show how agents should use Rapport in this project.
     Prime,
+    /// Build components after preparing their generated inputs.
+    Build(crate::execution::Cli),
+    /// Check, build, and test components with generated prerequisites.
+    Validate(crate::execution::Cli),
+    /// Generate one declared component output.
+    Generate(crate::execution::GenerateCli),
     /// Record Rapport usage in repository agent instructions.
     Init,
     /// Define and compose shared repository standards.

@@ -590,7 +590,6 @@ fn review_should_default_to_root_and_treat_former_commands_as_paths() {
 #[rstest]
 #[case::work(&["work", "--help"])]
 #[case::develop(&["develop", "--help"])]
-#[case::build(&["build", "--help"])]
 #[case::integrate(&["integrate", "--help"])]
 #[case::github(&["github", "--help"])]
 #[case::doctor(&["doctor", "--help"])]

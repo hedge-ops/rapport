@@ -12,6 +12,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+rapport-command = { path = "../rapport-command", version = "0.1.0" }
+serde_json.workspace = true
+glob = "0.3"
 rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
 rapport-files = { path = "../rapport-files", version = "0.3.0" }
 rapport-git = { path = "../rapport-git", version = "0.1.2" }

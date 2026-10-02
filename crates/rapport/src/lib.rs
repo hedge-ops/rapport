@@ -5,6 +5,7 @@
 
 mod cli;
 mod context;
+mod execution;
 mod init;
 mod paths;
 mod policy_context;
@@ -95,6 +96,9 @@ where
 {
     match &cli.command {
         Command::Prime => prime::run(context),
+        Command::Build(args) => execution::run(args, execution::BuildTarget::Build, context),
+        Command::Validate(args) => execution::run(args, execution::BuildTarget::Validate, context),
+        Command::Generate(args) => execution::generate(args, context),
         Command::Init => init::run(context),
         Command::Ruleset(ruleset_args) => shared_ruleset::run(ruleset_args, context),
         Command::Context(context_args) => policy_context::run(context_args, context),
@@ -144,7 +148,12 @@ mod tests {
             .get_subcommands()
             .map(|command| command.get_name().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(commands, ["prime", "init", "ruleset", "context", "review"]);
+        assert_eq!(
+            commands,
+            [
+                "prime", "build", "validate", "generate", "init", "ruleset", "context", "review"
+            ]
+        );
         assert_eq!(err, "");
     }
 

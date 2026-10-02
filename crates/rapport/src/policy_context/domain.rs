@@ -450,6 +450,7 @@ pub(crate) struct Context {
     purpose: String,
     component_type: Option<String>,
     namespaced: bool,
+    execution: Option<crate::execution::declaration::Declaration>,
     components: Vec<RepositoryPath>,
     generated_outputs: BTreeMap<DependencyName, GeneratedOutput>,
     generated_inputs: BTreeMap<DependencyName, GeneratedInput>,
@@ -470,6 +471,7 @@ impl Context {
             purpose: required(purpose)?,
             component_type: None,
             namespaced: false,
+            execution: None,
             components: declarations.components,
             generated_outputs: declarations.generated_outputs,
             generated_inputs: declarations.generated_inputs,
@@ -500,6 +502,7 @@ impl Context {
             purpose: required(purpose)?,
             component_type: None,
             namespaced: false,
+            execution: None,
             components: declarations.components,
             generated_outputs: declarations.generated_outputs,
             generated_inputs: declarations.generated_inputs,
@@ -515,6 +518,17 @@ impl Context {
     pub(crate) fn id(&self) -> &ContextId {
         &self.id
     }
+    pub(crate) fn execution(&self) -> Option<&crate::execution::declaration::Declaration> {
+        self.execution.as_ref()
+    }
+
+    pub(crate) fn set_execution(
+        &mut self,
+        declaration: Option<crate::execution::declaration::Declaration>,
+    ) {
+        self.execution = declaration;
+    }
+
     pub(crate) fn component_type(&self) -> Option<&str> {
         self.component_type.as_deref()
     }
@@ -662,6 +676,7 @@ impl fmt::Debug for Context {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Context")
+            .field("execution", &self.execution)
             .field("id", &self.id)
             .field("purpose", &self.purpose)
             .field("component_type", &self.component_type)
