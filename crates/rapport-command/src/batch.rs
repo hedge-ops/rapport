@@ -74,6 +74,7 @@ impl JobOutcome {
         &self.name
     }
 
+    #[must_use = "inspect the job result to handle command failures"]
     pub fn result(&self) -> &io::Result<CommandOutcome> {
         &self.result
     }
