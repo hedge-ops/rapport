@@ -49,7 +49,7 @@ pub(super) fn show(
         .ok_or_else(|| Error::MissingContext(path.to_path_buf()))?;
     let mut output = String::from("# rapport context show\n");
     for record in &records {
-        render_context_record(&mut output, record, repo_root, nearest, &repository);
+        render_context_record(&mut output, record, repo_root, nearest);
     }
 
     let shared = shared_attributions(&records, nearest, &repository)?;
@@ -64,7 +64,6 @@ fn render_context_record(
     record: &Record,
     repo_root: &Utf8Path,
     nearest: &Record,
-    repository: &Repository,
 ) {
     let scope = if record.context().id() == nearest.context().id() {
         "direct"
@@ -126,21 +125,16 @@ fn render_context_record(
             .collect::<Vec<_>>()
             .join("\n"),
     ));
-    render_component_declarations(output, record, repo_root, repository);
+    render_component_declarations(output, record, repo_root);
 }
 
 pub(super) fn render_component_declarations(
     output: &mut String,
     record: &Record,
     repo_root: &Utf8Path,
-    repository: &Repository,
 ) {
     let context = record.context();
-    if context.components().is_empty()
-        && context.generated_outputs().is_empty()
-        && context.generated_inputs().is_empty()
-        && context.kustomizations().is_empty()
-    {
+    if context.components().is_empty() && context.kustomizations().is_empty() {
         return;
     }
 
@@ -151,48 +145,6 @@ pub(super) fn render_component_declarations(
                 .components()
                 .iter()
                 .map(|component| format!("- `{component}`"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-    }
-
-    if !context.generated_outputs().is_empty() {
-        output.push_str("\n\n### Generated Outputs\n\n");
-        output.push_str(
-            &context
-                .generated_outputs()
-                .iter()
-                .map(|(name, output_declaration)| {
-                    format!(
-                        "- `{name}` — tool `{}`, target `{}`",
-                        output_declaration.tool(),
-                        output_declaration.target()
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-    }
-
-    if !context.generated_inputs().is_empty() {
-        output.push_str("\n\n### Generated Inputs\n\n");
-        output.push_str(
-            &context
-                .generated_inputs()
-                .iter()
-                .map(|(name, input)| {
-                    let producer_source = repository
-                        .record_for_component(input.component())
-                        .map_or_else(
-                            || input.component().to_string(),
-                            |producer| display(repo_root, producer.path()),
-                        );
-                    format!(
-                        "- `{name}` — component `{}`, output `{}` — producer source `{producer_source}`",
-                        input.component(),
-                        input.output()
-                    )
-                })
                 .collect::<Vec<_>>()
                 .join("\n"),
         );

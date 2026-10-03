@@ -98,7 +98,7 @@ fn review_should_resolve_architecture_and_deduplicate_inherited_packs_without_wo
 }
 
 #[test]
-fn review_should_render_direct_declarations_and_generated_producer_sources() {
+fn review_should_render_direct_component_declarations() {
     let mut fs = InMemoryFileSystem::default();
     fs.add_directory("/repo/.git");
     assert_ok!(fs.write_string(
@@ -118,10 +118,6 @@ includes = []
 namespace = "SHARED"
 purpose = "Produces shared view inputs."
 
-[generated_outputs.facet_swift]
-tool = "facet_generate"
-target = "swift"
-
 [ruleset]
 includes = []
 "#,
@@ -133,10 +129,6 @@ namespace = "VIEW"
 purpose = "Owns the view."
 kustomizations = ["."]
 
-[generated_inputs.app]
-component = "app/core/shared"
-output = "facet_swift"
-
 [ruleset]
 includes = []
 "#,
@@ -147,144 +139,50 @@ includes = []
     assert_eq!(
         code,
         ExitCode::SUCCESS,
-        "expecting a dependency-aware review: {err}"
+        "expecting direct component declarations: {err}"
     );
-    let expected = format!("{}\n", include_str!("../testdata/review-dependencies.md"));
+    let expected = format!("{}\n", include_str!("../testdata/review-declarations.md"));
     assert_eq!(out, expected);
 }
 
-#[test]
-fn context_validate_should_reject_missing_generated_producer() {
+#[rstest]
+#[case::input("[generated_inputs.app]\ncomponent = 'app/core/shared'\noutput = 'swift'")]
+#[case::output("[generated_outputs.swift]\ntool = 'generate'\ntarget = 'swift'")]
+#[case::empty_inputs("generated_inputs = {}")]
+#[case::empty_outputs("generated_outputs = {}")]
+fn context_commands_should_reject_generated_declarations_without_writing(
+    #[case] declaration: &str,
+) {
     let mut fs = repository();
-    assert_ok!(fs.write_string(
-        "/repo/app/core/workspace_sync/context.toml",
-        r#"version = 1
-namespace = "SYNC"
-purpose = "Coordinates synchronization."
+    let path = "/repo/context.toml";
+    let contents = format!("namespace = 'ROOT'\npurpose = 'Root.'\n{declaration}\n");
+    assert_ok!(fs.write_string(path, &contents));
 
-[generated_inputs.app]
-component = "app/core/missing"
-output = "facet_swift"
-
-[ruleset]
-includes = []
-"#,
-    ));
-
-    let error = review_error(&mut fs, "app/core/workspace_sync");
-
+    for args in [
+        vec!["context", "validate"],
+        vec!["context", "show", "."],
+        vec!["review", "."],
+        vec![
+            "context",
+            "ownership",
+            "add",
+            ".",
+            "--text",
+            "Owns coordination.",
+        ],
+    ] {
+        let (code, out, _) = run(&mut fs, &args);
+        assert_eq!(
+            code,
+            ExitCode::from(2),
+            "expecting removed declarations to fail"
+        );
+        assert_eq!(out, "", "expecting no partial output");
+        assert_eq!(assert_ok!(fs.read_to_string(path)), contents);
+    }
     assert!(matches!(
-        error,
-        Error::MissingGeneratedProducer {
-            path,
-            input,
-            component,
-        } if path == Utf8Path::new("/repo/app/core/workspace_sync/context.toml")
-            && input == "app"
-            && component == "app/core/missing"
-    ));
-}
-
-#[test]
-fn context_validate_should_reject_unknown_generated_output() {
-    let mut fs = repository();
-    assert_ok!(fs.write_string(
-        "/repo/app/core/shared/context.toml",
-        r#"version = 1
-namespace = "SHARED"
-purpose = "Produces shared inputs."
-
-[generated_outputs.facet_swift]
-tool = "facet_generate"
-target = "swift"
-
-[ruleset]
-includes = []
-"#,
-    ));
-    assert_ok!(fs.write_string(
-        "/repo/app/core/workspace_sync/context.toml",
-        r#"version = 1
-namespace = "SYNC"
-purpose = "Coordinates synchronization."
-
-[generated_inputs.app]
-component = "app/core/shared"
-output = "missing_output"
-
-[ruleset]
-includes = []
-"#,
-    ));
-
-    let error = review_error(&mut fs, "app/core/workspace_sync");
-
-    assert!(matches!(
-        error,
-        Error::UnknownGeneratedOutput {
-            path,
-            input,
-            component,
-            output,
-            producer_path,
-        } if path == Utf8Path::new("/repo/app/core/workspace_sync/context.toml")
-            && input == "app"
-            && component == "app/core/shared"
-            && output == "missing_output"
-            && producer_path == Utf8Path::new("/repo/app/core/shared/context.toml")
-    ));
-}
-
-#[test]
-fn context_validate_should_reject_generated_dependency_cycles() {
-    let mut fs = repository();
-    assert_ok!(fs.write_string(
-        "/repo/app/core/first/context.toml",
-        r#"version = 1
-namespace = "FIRST"
-purpose = "First producer."
-
-[generated_outputs.first_output]
-tool = "first_generate"
-target = "first"
-
-[generated_inputs.second]
-component = "app/core/second"
-output = "second_output"
-
-[ruleset]
-includes = []
-"#,
-    ));
-    assert_ok!(fs.write_string(
-        "/repo/app/core/second/context.toml",
-        r#"version = 1
-namespace = "SECOND"
-purpose = "Second producer."
-
-[generated_outputs.second_output]
-tool = "second_generate"
-target = "second"
-
-[generated_inputs.first]
-component = "app/core/first"
-output = "first_output"
-
-[ruleset]
-includes = []
-"#,
-    ));
-
-    let error = review_error(&mut fs, ".");
-
-    assert!(matches!(
-        error,
-        Error::GeneratedDependencyCycle(cycle)
-            if cycle == [
-                "/repo/app/core/first/context.toml",
-                "/repo/app/core/second/context.toml",
-                "/repo/app/core/first/context.toml",
-            ]
+        review_error(&mut fs, "."),
+        Error::Decode { path, .. } if path == Utf8Path::new("/repo/context.toml")
     ));
 }
 
@@ -372,7 +270,7 @@ fn review_should_fail_explicitly_without_partial_prompt(
     assert_ok!(fs.write_string("/repo/context.toml", contents));
     let (code, out, err) = run(&mut fs, &["review", "."]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let error = review_error(&mut fs, ".");
     match (failure, error) {
         (Failure::MissingInclude, Error::UnresolvedInclude { path, included }) => {
@@ -403,7 +301,7 @@ fn review_should_reject_conflicting_local_and_included_identifiers() {
     ));
     let (code, out, err) = run(&mut fs, &["review", "other"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert_conflict(review_error(&mut fs, "other"));
 }
 
@@ -413,7 +311,7 @@ fn review_should_report_missing_context() {
     fs.add_directory("/repo");
     let (code, out, err) = run(&mut fs, &["review", "."]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert!(
         matches!(review_error(&mut fs, "."), Error::MissingContext(path) if path == Utf8Path::new("/repo"))
     );
@@ -542,7 +440,7 @@ fn review_should_reject_duplicate_namespaces() {
     ));
     let (code, out, err) = run(&mut fs, &["review", "other"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert!(matches!(review_error(&mut fs, "other"), Error::DuplicateContext(id) if id == "SYNC"));
 }
 
@@ -559,7 +457,7 @@ fn review_should_reject_persisted_include_cycles() {
     ));
     let (code, out, err) = run(&mut fs, &["review", "."]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let Error::Ruleset(crate::shared_ruleset::Error::IncludeCycle(cycle)) =
         review_error(&mut fs, ".")
     else {
@@ -602,7 +500,7 @@ fn cli_should_reject_removed_lifecycle_commands(#[case] args: &[&str]) {
     let mut fs = repository();
     let (code, out, err) = run(&mut fs, args);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let error = assert_err!(crate::cli::Cli::try_parse_from(
         std::iter::once("rapport").chain(args.iter().copied())
     ));
@@ -630,7 +528,7 @@ fn context_validate_should_reject_removed_fields(
     ));
     let (code, out, err) = run(&mut fs, &["context", "validate"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let Error::LifecycleField { path, field } = review_error(&mut fs, ".") else {
         panic!("expected retired lifecycle field");
     };
@@ -689,7 +587,7 @@ fn context_validate_should_find_effective_conflicts_in_descendants() {
     ));
     let (code, out, err) = run(&mut fs, &["context", "validate"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert_conflict(review_error(&mut fs, "other"));
 }
 

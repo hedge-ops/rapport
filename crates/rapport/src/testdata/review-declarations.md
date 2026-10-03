@@ -40,10 +40,6 @@ Boundaries — Avoid Here:
 Source: `app/core/view/context.toml`
 
 
-### Generated Inputs
-
-- `app` — component `app/core/shared`, output `facet_swift` — producer source `app/core/shared/context.toml`
-
 ### Kustomizations
 
 Paths are relative to `app/core/view`.
