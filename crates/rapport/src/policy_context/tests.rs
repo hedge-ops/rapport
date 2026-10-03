@@ -280,6 +280,6 @@ includes = []
 
     assert_eq!(root.context().components().len(), 1);
     assert_eq!(root.context().kustomizations().len(), 1);
-    assert!(app.context().components().is_empty());
-    assert!(app.context().kustomizations().is_empty());
+    assert_eq!(app.context().components(), []);
+    assert_eq!(app.context().kustomizations(), []);
 }

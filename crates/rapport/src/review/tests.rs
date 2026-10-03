@@ -177,7 +177,7 @@ fn context_commands_should_reject_generated_declarations_without_writing(
             ExitCode::from(2),
             "expecting removed declarations to fail"
         );
-        assert!(out.is_empty(), "expecting no partial output");
+        assert_eq!(out, "", "expecting no partial output");
         assert_eq!(assert_ok!(fs.read_to_string(path)), contents);
     }
     assert!(matches!(
@@ -270,7 +270,7 @@ fn review_should_fail_explicitly_without_partial_prompt(
     assert_ok!(fs.write_string("/repo/context.toml", contents));
     let (code, out, err) = run(&mut fs, &["review", "."]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let error = review_error(&mut fs, ".");
     match (failure, error) {
         (Failure::MissingInclude, Error::UnresolvedInclude { path, included }) => {
@@ -301,7 +301,7 @@ fn review_should_reject_conflicting_local_and_included_identifiers() {
     ));
     let (code, out, err) = run(&mut fs, &["review", "other"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert_conflict(review_error(&mut fs, "other"));
 }
 
@@ -311,7 +311,7 @@ fn review_should_report_missing_context() {
     fs.add_directory("/repo");
     let (code, out, err) = run(&mut fs, &["review", "."]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert!(
         matches!(review_error(&mut fs, "."), Error::MissingContext(path) if path == Utf8Path::new("/repo"))
     );
@@ -440,7 +440,7 @@ fn review_should_reject_duplicate_namespaces() {
     ));
     let (code, out, err) = run(&mut fs, &["review", "other"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert!(matches!(review_error(&mut fs, "other"), Error::DuplicateContext(id) if id == "SYNC"));
 }
 
@@ -457,7 +457,7 @@ fn review_should_reject_persisted_include_cycles() {
     ));
     let (code, out, err) = run(&mut fs, &["review", "."]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let Error::Ruleset(crate::shared_ruleset::Error::IncludeCycle(cycle)) =
         review_error(&mut fs, ".")
     else {
@@ -500,7 +500,7 @@ fn cli_should_reject_removed_lifecycle_commands(#[case] args: &[&str]) {
     let mut fs = repository();
     let (code, out, err) = run(&mut fs, args);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let error = assert_err!(crate::cli::Cli::try_parse_from(
         std::iter::once("rapport").chain(args.iter().copied())
     ));
@@ -528,7 +528,7 @@ fn context_validate_should_reject_removed_fields(
     ));
     let (code, out, err) = run(&mut fs, &["context", "validate"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     let Error::LifecycleField { path, field } = review_error(&mut fs, ".") else {
         panic!("expected retired lifecycle field");
     };
@@ -587,7 +587,7 @@ fn context_validate_should_find_effective_conflicts_in_descendants() {
     ));
     let (code, out, err) = run(&mut fs, &["context", "validate"]);
     assert_eq!(code, ExitCode::from(2), "{err}");
-    assert!(out.is_empty());
+    assert_eq!(out, "");
     assert_conflict(review_error(&mut fs, "other"));
 }
 

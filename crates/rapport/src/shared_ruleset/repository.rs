@@ -474,7 +474,7 @@ mod tests {
             &code,
             Utf8Path::new("/repo/.rapport/rules/code.toml")
         ));
-        assert!(ruleset.includes().is_empty());
+        assert_eq!(ruleset.includes(), []);
     }
 
     #[test]
