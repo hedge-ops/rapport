@@ -4,6 +4,22 @@ All notable changes to `rapport` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this crate
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-03
+
+### Removed
+
+- Removed `generated_inputs` and `generated_outputs` from the context schema,
+  context/review output, and domain model, including producer/output resolution
+  and generated dependency cycle validation.
+- Consumers must remove these declarations from `context.toml` and maintain
+  executable prerequisites in repository-owned Just workflows or native build
+  systems. See `docs/lifecycle-migration.md` for migration steps.
+
+### Changed
+
+- Preserved component membership, kustomization paths, architecture, standards,
+  and stateless, read-only context inspection and review prompts.
+
 ## [0.7.2] - 2026-09-07
 
 ### Added

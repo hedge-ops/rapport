@@ -253,9 +253,8 @@ fn component_declarations_should_remain_direct_to_their_context() {
 id = "ROOT"
 purpose = "Repository architecture."
 
-[generated_outputs.root_output]
-tool = "root_generate"
-target = "root"
+components = ["app"]
+kustomizations = ["."]
 
 [ruleset]
 includes = []
@@ -279,9 +278,8 @@ includes = []
     let root = assert_ok!(repository.at(rapport_files::Utf8Path::new(".")));
     let app = assert_ok!(repository.at(rapport_files::Utf8Path::new("app")));
 
-    assert_eq!(root.context().generated_outputs().len(), 1);
-    assert!(app.context().generated_outputs().is_empty());
-    assert!(app.context().generated_inputs().is_empty());
+    assert_eq!(root.context().components().len(), 1);
+    assert_eq!(root.context().kustomizations().len(), 1);
     assert!(app.context().components().is_empty());
     assert!(app.context().kustomizations().is_empty());
 }

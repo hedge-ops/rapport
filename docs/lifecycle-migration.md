@@ -33,6 +33,24 @@ Validation checks discovered contexts and installed packs; selected components
 are checked for conflicting effective standards. It never executes a build or
 inspects generated workflows.
 
+## Generated dependencies
+
+Remove all `[generated_inputs.*]` and `[generated_outputs.*]` tables, including
+empty `generated_inputs` and `generated_outputs` declarations, from every
+consumer `context.toml`. These fields are rejected as unknown schema fields.
+Rapport no longer resolves producers or outputs, checks generated dependency
+cycles, or includes generated dependencies in context and review output.
+
+Maintain generation and validation prerequisites in repository-owned Just
+recipes or native build systems. Ensure consuming build/test recipes depend on
+their generators, and update CI change filters to run them when producer inputs
+change. Run the repository's Just CI workflow to verify those prerequisites,
+then run `rapport context validate` to check the remaining declarations.
+
+Component membership, kustomization paths, architecture, standards, and stateless
+review prompts remain supported. Context inspection, validation, and review stay
+read-only; they never execute builds, generators, or Just.
+
 ## Existing repositories
 
 Finish or export active Work using an older binary before upgrading if you still

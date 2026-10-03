@@ -5,7 +5,7 @@
 use super::Error;
 use super::domain::{
     Boundary, ComponentRelativePath, Context, ContextDeclarations, ContextEntries, ContextId,
-    DependencyName, Entry, GeneratedInput, GeneratedOutput, RepositoryPath, SCHEMA_VERSION,
+    Entry, RepositoryPath, SCHEMA_VERSION,
 };
 use crate::shared_ruleset::{NewRule, Reference, Ruleset, RulesetId};
 use rapport_files::Utf8Path;
@@ -24,10 +24,6 @@ struct ContextFile {
     purpose: String,
     #[serde(default)]
     components: Vec<String>,
-    #[serde(default)]
-    generated_outputs: BTreeMap<String, GeneratedOutputFile>,
-    #[serde(default)]
-    generated_inputs: BTreeMap<String, GeneratedInputFile>,
     #[serde(default)]
     kustomizations: Vec<String>,
     next_ownership: Option<u16>,
@@ -71,20 +67,6 @@ struct EntryFile {
 struct BoundaryFile {
     text: String,
     owner: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GeneratedOutputFile {
-    tool: String,
-    target: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GeneratedInputFile {
-    component: String,
-    output: String,
 }
 
 #[derive(Default, Deserialize)]
@@ -148,13 +130,7 @@ pub(super) fn parse(contents: &str, path: &Utf8Path) -> Result<Context, Error> {
     } else {
         id.embedded_ruleset_id()?
     };
-    let declarations = parse_declarations(
-        file.components,
-        file.generated_outputs,
-        file.generated_inputs,
-        file.kustomizations,
-        path,
-    )?;
+    let declarations = parse_declarations(file.components, file.kustomizations, path)?;
     let rules = file
         .ruleset
         .rules
@@ -214,8 +190,6 @@ fn parse_entries(
 
 fn parse_declarations(
     components: Vec<String>,
-    generated_outputs: BTreeMap<String, GeneratedOutputFile>,
-    generated_inputs: BTreeMap<String, GeneratedInputFile>,
     kustomizations: Vec<String>,
     path: &Utf8Path,
 ) -> Result<ContextDeclarations, Error> {
@@ -223,40 +197,12 @@ fn parse_declarations(
         .into_iter()
         .map(|component| RepositoryPath::try_new(component, path, "components".to_owned()))
         .collect::<Result<Vec<_>, Error>>()?;
-    let generated_outputs = generated_outputs
-        .into_iter()
-        .map(|(name, output)| {
-            let name = DependencyName::try_new(name, path, "generated_outputs".to_owned())?;
-            let output = GeneratedOutput::try_new(&name, output.tool, output.target, path)?;
-            Ok((name, output))
-        })
-        .collect::<Result<BTreeMap<_, _>, Error>>()?;
-    let generated_inputs = generated_inputs
-        .into_iter()
-        .map(|(name, input)| {
-            let input_name =
-                DependencyName::try_new(name.clone(), path, "generated_inputs".to_owned())?;
-            let component = RepositoryPath::try_new(
-                input.component,
-                path,
-                format!("generated_inputs.{name}.component"),
-            )?;
-            let output = DependencyName::try_new(
-                input.output,
-                path,
-                format!("generated_inputs.{name}.output"),
-            )?;
-            Ok((input_name, GeneratedInput::from_parts(component, output)))
-        })
-        .collect::<Result<BTreeMap<_, _>, Error>>()?;
     let kustomizations = kustomizations
         .into_iter()
         .map(|target| ComponentRelativePath::try_new(target, path, "kustomizations".to_owned()))
         .collect::<Result<Vec<_>, Error>>()?;
     Ok(ContextDeclarations {
         components,
-        generated_outputs,
-        generated_inputs,
         kustomizations,
     })
 }
@@ -319,10 +265,6 @@ struct ContextFileRef<'context> {
     purpose: &'context str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     components: Vec<&'context str>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    generated_outputs: BTreeMap<&'context str, GeneratedOutputFileRef<'context>>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    generated_inputs: BTreeMap<&'context str, GeneratedInputFileRef<'context>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     kustomizations: Vec<&'context str>,
     next_ownership: u16,
@@ -344,18 +286,6 @@ struct BoundaryFileRef<'context> {
     text: &'context str,
     #[serde(skip_serializing_if = "Option::is_none")]
     owner: Option<&'context str>,
-}
-
-#[derive(Serialize)]
-struct GeneratedOutputFileRef<'context> {
-    tool: &'context str,
-    target: &'context str,
-}
-
-#[derive(Serialize)]
-struct GeneratedInputFileRef<'context> {
-    component: &'context str,
-    output: &'context str,
 }
 
 #[derive(Serialize)]
@@ -433,32 +363,6 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
             .iter()
             .map(RepositoryPath::as_str)
             .collect(),
-        generated_outputs: context
-            .generated_outputs()
-            .iter()
-            .map(|(name, output)| {
-                (
-                    name.as_str(),
-                    GeneratedOutputFileRef {
-                        tool: output.tool(),
-                        target: output.target(),
-                    },
-                )
-            })
-            .collect(),
-        generated_inputs: context
-            .generated_inputs()
-            .iter()
-            .map(|(name, input)| {
-                (
-                    name.as_str(),
-                    GeneratedInputFileRef {
-                        component: input.component().as_str(),
-                        output: input.output().as_str(),
-                    },
-                )
-            })
-            .collect(),
         kustomizations: context
             .kustomizations()
             .iter()
@@ -521,14 +425,6 @@ purpose = "Owns the view."
 components = ["app/core/shared", "app/core/view"]
 kustomizations = [".", "overlays/staging"]
 
-[generated_outputs.facet_swift]
-tool = "facet_generate"
-target = "swift"
-
-[generated_inputs.app]
-component = "app/core/shared"
-output = "facet_swift"
-
 [ruleset]
 includes = []
 "#;
@@ -554,22 +450,6 @@ includes = []
                 toml::Value::String("overlays/staging".to_owned()),
             ])
         );
-        assert_eq!(
-            document["generated_outputs"]["facet_swift"]["tool"].as_str(),
-            Some("facet_generate")
-        );
-        assert_eq!(
-            document["generated_outputs"]["facet_swift"]["target"].as_str(),
-            Some("swift")
-        );
-        assert_eq!(
-            document["generated_inputs"]["app"]["component"].as_str(),
-            Some("app/core/shared")
-        );
-        assert_eq!(
-            document["generated_inputs"]["app"]["output"].as_str(),
-            Some("facet_swift")
-        );
     }
 
     #[rstest]
@@ -582,11 +462,6 @@ includes = []
         "kustomizations = ['../overlays/staging']",
         "kustomizations",
         "../overlays/staging"
-    )]
-    #[case::parent_producer(
-        "[generated_inputs.app]\ncomponent = '../shared'\noutput = 'facet_swift'",
-        "generated_inputs.app.component",
-        "../shared"
     )]
     fn parse_should_reject_non_relative_declaration_paths(
         #[case] declaration: &str,
@@ -608,51 +483,6 @@ includes = []
             } if path == Utf8Path::new("/repo/context.toml")
                 && actual_field == field
                 && actual_value == value
-        ));
-    }
-
-    #[rstest]
-    #[case::uppercase_output(
-        "[generated_outputs.FacetSwift]\ntool = 'facet_generate'\ntarget = 'swift'"
-    )]
-    #[case::uppercase_input(
-        "[generated_inputs.App]\ncomponent = 'app/core/shared'\noutput = 'facet_swift'"
-    )]
-    fn parse_should_reject_noncanonical_dependency_names(#[case] declaration: &str) {
-        let contents = format!(
-            "version = 1\nnamespace = 'VIEW'\npurpose = 'Owns the view.'\n{declaration}\n[ruleset]\nincludes = []"
-        );
-
-        let error = assert_err!(parse(&contents, Utf8Path::new("/repo/context.toml")));
-
-        assert!(
-            matches!(error, Error::InvalidDependencyName { path, .. } if path == Utf8Path::new("/repo/context.toml"))
-        );
-    }
-
-    #[rstest]
-    #[case::empty_tool("", "swift", "tool")]
-    #[case::empty_target("facet_generate", "", "target")]
-    fn parse_should_require_generated_output_fields(
-        #[case] tool: &str,
-        #[case] target: &str,
-        #[case] field: &str,
-    ) {
-        let contents = format!(
-            "version = 1\nnamespace = 'VIEW'\npurpose = 'Owns the view.'\n[generated_outputs.facet_swift]\ntool = '{tool}'\ntarget = '{target}'\n[ruleset]\nincludes = []"
-        );
-
-        let error = assert_err!(parse(&contents, Utf8Path::new("/repo/context.toml")));
-
-        assert!(matches!(
-            error,
-            Error::EmptyGeneratedOutputField {
-                path,
-                output,
-                field: actual_field,
-            } if path == Utf8Path::new("/repo/context.toml")
-                && output == "facet_swift"
-                && actual_field == field
         ));
     }
 }
