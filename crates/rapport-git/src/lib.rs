@@ -3,6 +3,7 @@
 //! The crate root exposes validated Git domain values, repository operations,
 //! and one primary error while focused modules own their implementations.
 
+mod changes;
 mod domain;
 mod error;
 mod repository;

@@ -114,7 +114,11 @@ fn status_should_report_repository_and_source_side_changes() {
     let changes = assert_ok!(git.source_side_changes(&repository, &target));
     let source_commits = assert_ok!(git.source_commits(&repository, &target));
 
-    assert_eq!(repository.root(), temporary.root());
+    assert_eq!(
+        assert_ok!(std::fs::canonicalize(repository.root())),
+        assert_ok!(std::fs::canonicalize(temporary.root())),
+        "expecting discovery to identify the same directory through filesystem aliases"
+    );
     assert_eq!(status.branch().map(BranchName::as_str), Some("feature"));
     let local = assert_some!(status.local_branch());
     assert_eq!(local.name().as_str(), "feature");

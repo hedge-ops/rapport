@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "comparison": null,
+  "pending": {
+    "included": true,
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "components": [
+    {
+      "path": "app",
+      "changed_files": [
+        "app/file"
+      ],
+      "policy_sources": [
+        "context.toml"
+      ]
+    }
+  ]
+}

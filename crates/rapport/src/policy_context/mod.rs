@@ -2,6 +2,7 @@
 //!
 //! Composes context storage, inherited standards, validation, and sourced prompts.
 
+mod affected;
 mod boundary;
 mod cli;
 mod command;

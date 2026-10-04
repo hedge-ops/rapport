@@ -18,12 +18,20 @@ pub(super) struct Repository {
 
 impl Repository {
     pub(super) fn load(fs: &mut impl FileSystem, repo_root: &Utf8Path) -> Result<Self, Error> {
-        let shared = SharedRulesets::load(fs, repo_root)?;
         let paths =
             find_named_files(fs, repo_root, "context.toml").map_err(|source| Error::Io {
                 path: repo_root.to_path_buf(),
                 source,
             })?;
+        Self::load_paths(fs, repo_root, paths)
+    }
+
+    pub(super) fn load_paths(
+        fs: &mut impl FileSystem,
+        repo_root: &Utf8Path,
+        paths: Vec<Utf8PathBuf>,
+    ) -> Result<Self, Error> {
+        let shared = SharedRulesets::load(fs, repo_root)?;
         let mut records = Vec::new();
         for path in paths {
             let contents = fs.read_to_string(&path).map_err(|source| Error::Io {

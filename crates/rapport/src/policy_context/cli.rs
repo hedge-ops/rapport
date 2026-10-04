@@ -25,6 +25,8 @@ impl fmt::Debug for Cli {
 
 #[derive(Subcommand)]
 pub(super) enum Action {
+    /// Select components affected by an explicit local Git changeset.
+    Affected(super::affected::Args),
     /// Create a Context for a meaningful repository area.
     Init {
         path: Utf8PathBuf,
@@ -66,6 +68,7 @@ pub(super) enum Action {
 impl Action {
     fn name(&self) -> &'static str {
         match self {
+            Self::Affected(_) => "affected",
             Self::Init { .. } => "init",
             Self::List { .. } => "list",
             Self::Show { .. } => "show",
