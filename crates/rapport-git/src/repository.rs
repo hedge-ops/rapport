@@ -537,7 +537,7 @@ impl<R: Runner> Git<R> {
         Ok(SourceSideChanges { paths })
     }
 
-    fn run_in<const N: usize>(
+    pub(crate) fn run_in<const N: usize>(
         &self,
         repository: &Repository,
         args: [&str; N],
@@ -546,6 +546,7 @@ impl<R: Runner> Git<R> {
         self.run(
             &CommandSpec::new("git")
                 .args(args)
+                .env("GIT_OPTIONAL_LOCKS", "0")
                 .current_dir(repository.root()),
             operation,
         )

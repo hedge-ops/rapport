@@ -16,6 +16,16 @@ benchmark declarations.
 See the [repository guide](https://github.com/hedge-ops/rapport#readme) for schema,
 inheritance, and compatibility details.
 
+## Affected components (0.9.0)
+
+Use `rapport context affected --pending` for local edits, `--base origin/main`
+for committed branch changes, or both for a full local review. PR callers use
+`rapport context affected --base <base-sha> --head <head-sha> --json` and pass
+`components[].path` as individual arguments to `rapport review --`.
+
+See the [affected component contract](https://github.com/hedge-ops/rapport/blob/main/docs/affected-components.md)
+for JSON schema version 1, examples, policy provenance, and errors.
+
 ## License
 
 Licensed under either of:

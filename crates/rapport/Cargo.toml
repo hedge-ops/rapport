@@ -4,7 +4,7 @@ description = "Repository architecture and component review CLI"
 keywords = ["cli", "architecture", "agent", "developer-tools", "review"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
-version = "0.8.0"
+version = "0.9.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -14,11 +14,12 @@ authors.workspace = true
 [dependencies]
 rapport-prose = { path = "../rapport-prose", version = "0.1.0" }
 rapport-files = { path = "../rapport-files", version = "0.3.0" }
-rapport-git = { path = "../rapport-git", version = "0.1.2" }
+rapport-git = { path = "../rapport-git", version = "0.2.0" }
 clap.workspace = true
 derive_more.workspace = true
 nonempty.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 toml.workspace = true

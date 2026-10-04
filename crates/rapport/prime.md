@@ -11,6 +11,9 @@
 - `rapport context show <path>` - inspect architecture, direct declarations, and inherited standards
 - `rapport ruleset catalog list` - discover reusable standards packs
 - `rapport ruleset catalog install <ID>` - install a standards pack before including it
+- `rapport context affected --pending` - select components owning staged, unstaged, and non-ignored untracked changes
+- `rapport context affected --base <ref> [--pending]` - select branch changes since the merge base, optionally combined with pending changes
+- `rapport context affected --base <base-sha> --head <head-sha> --json` - select components with revision and policy provenance for automation
 - `rapport review <path> [<path> ...]` - print a complete Markdown review prompt with source paths
 - Pass the prompt and relevant code or diff to your reviewer.
 

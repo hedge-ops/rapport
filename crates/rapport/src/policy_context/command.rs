@@ -22,6 +22,9 @@ where
     O: Write,
     E: Write,
 {
+    if let Action::Affected(args) = &cli.command {
+        return super::affected::run(args, context);
+    }
     let result = execute(&cli.command, context.fs, &context.repo_root);
     match result {
         Ok(output) => {
@@ -41,6 +44,7 @@ fn execute(
     repo_root: &Utf8Path,
 ) -> Result<String, Error> {
     match action {
+        Action::Affected(_) => unreachable!("affected has its own output boundary"),
         Action::Init {
             path,
             purpose,
