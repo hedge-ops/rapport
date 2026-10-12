@@ -1,181 +1,115 @@
-# Discover affected components
+# Discover and review affected components
 
-Available in Rapport **0.9.0** (with `rapport-git` **0.2.0**). This is a local,
-read-only discovery command. It never fetches refs, changes checkouts, executes a
-review, or creates lifecycle records. Supply locally available refs yourself.
+Rapport **0.10.0** returns schema **2**, including revision-tagged review prompts
+for surviving and removed components. Discovery is local and read-only: it never
+fetches refs, changes checkouts, executes reviews, or creates lifecycle records.
+Supply locally available refs yourself.
 
 ## Scopes
 
 ```sh
-# Staged, unstaged, and untracked files; excludes ignored untracked files.
+# Staged, unstaged, and non-ignored untracked changes.
 rapport context affected --pending
 
-# Committed branch changes since the merge base with origin/main.
+# Committed changes since the merge base with origin/main.
 rapport context affected --base origin/main
 
-# Full local review, including committed and pending changes.
+# Committed and pending changes together.
 rapport context affected --base origin/main --pending
 
-# Automated PR callers supply the exact comparison revisions.
+# Exact revisions for automated PR review, regardless of the checkout.
 rapport context affected --base "$BASE_SHA" --head "$HEAD_SHA" --json
 ```
 
-An explicit scope is required. `--head` requires `--base` and defaults to `HEAD`;
-Rapport never infers a source branch. Branch comparison resolves both revisions,
-finds their merge base, and compares that ancestor through the selected head.
-Changes unique to the base branch are excluded. Pending scope excludes already
-committed changes. Combined scope requires the selected head to resolve to the
-checkout's `HEAD`, even when supplied through an alias or SHA.
+An explicit scope is required. `--head` requires `--base` and defaults to `HEAD`.
+Rapport resolves both revisions and compares their merge base through the selected
+head. Changes unique to the base branch are excluded. Combined scope requires the
+selected head to equal the checkout's `HEAD`. The checkout must have a commit.
 
-The checkout must have a commit. Resolve merge conflicts before using pending
-scope. Invalid refs, missing merge bases, a missing Git repository, invalid policy,
-unmapped files, and removed components fail with exit status 2, diagnostics on
-stderr, and no partial result on stdout. An empty changeset succeeds with an
-empty component array (or no text output).
+Invalid refs, unavailable history or merge bases, missing repositories, invalid
+policy, unmapped files, and pending merge conflicts fail with exit status 2,
+diagnostics on stderr, and no partial stdout. An empty changeset succeeds.
 
 ## Ownership and policy
 
-Every changed path belongs to its nearest enclosing `context.toml`. Ordinary
-source edits select only their owners; parent selection does not imply child
-selection. Additions, deletions, and both sides of renames participate. Historical
-ownership is read from the earlier tree, so a deleted file retains its owner.
+Every changed path belongs to its nearest enclosing `context.toml` in each
+relevant snapshot. Additions, deletions, and both sides of renames participate.
+Parent selection does not imply child selection. A moved declaration selects both
+its old and new component paths. Removing only a declaration still selects its
+historical component; any surviving changed files also select their new owner.
 
-Branch discovery resolves policy from the merge-base and selected-head trees;
-unrelated working-tree edits cannot affect it. Pending discovery compares HEAD
-to the index and the index to the working tree, including untracked files. This
-preserves staged evidence even when an unstaged edit reverses it. Combined scope
-unions both selections. Context files and installed shared packs must be valid
-in every evaluated snapshot, including the index. Stage related context and pack
-changes together if an intermediate index otherwise has unresolved includes.
+Committed comparisons load policy from the merge-base and selected-head trees.
+Unrelated working-tree edits cannot affect discovery or prompt generation.
+Pending discovery compares HEAD to the index and the index to the worktree,
+including untracked files. Staged evidence survives unstaged reversals. Combined
+scope unions these selections. Context and installed shared packs must be valid
+in every evaluated snapshot, including the index. Stage related changes together
+if an intermediate index would otherwise have unresolved includes.
 
-Inherited architecture and rules, including transitive shared standards, are
-resolved by the same policy machinery as `rapport review`. When effective review
-guidance changes, affected consumers are selected with the responsible policy
-sources. Formatting-only policy edits select their file owner without expanding
-to consumers. Changes to explicit `components` membership do not recursively
-select members; that field retains its documented architecture-only meaning.
+Inherited architecture, rules, and transitive shared standards use the same
+policy machinery and prompt builder as `rapport review`. Effective guidance
+changes select affected consumers with responsible policy sources. Formatting
+changes select their file owner without expanding to consumers. Explicit
+`components` membership remains architecture-only.
 
-A selected component whose declaration is absent from the final selected tree
-(or worktree for pending scope) causes an explicit error. Rapport cannot produce
-a current review prompt for that removed component. Review the deletion against
-the earlier tree explicitly; substituting the parent would lose its guidance.
+Each selected component has exactly one entry in `reviews`, matched by `path`:
 
-For an explicit head other than the checkout, returned paths describe that head.
-Generate review prompts in a checkout of that revision. Discovery itself does
-not switch revisions. Run it without concurrent index or worktree edits; local
-Git and filesystem reads are not an atomic snapshot.
+- A surviving declaration uses the selected-head policy for committed-only scope,
+  or final worktree policy when pending changes are included.
+- A removed declaration uses the last compared snapshot in which it existed:
+  merge base for committed deletion, HEAD for staged deletion, or index for
+  unstaged deletion. Its prompt includes its earlier ancestors and shared packs,
+  even when those policies are changed or removed in the final tree.
+- Pending intermediate components can have an index policy snapshot even when
+  they exist in neither HEAD nor the final worktree. Index and worktree sources
+  are labeled explicitly; their `head` is a baseline commit, not a claim that
+  their policy was committed there.
 
-## Output contract (schema version 1)
+These prompts describe policy and scope; callers must still supply the diff and
+inspect relevant code. Retain comparison, pending, changed-file, policy-source,
+and policy-snapshot metadata with the review input. Concurrent index/worktree
+edits are unsupported: local reads are not an atomic snapshot.
 
-Default output is sorted, unique repository-relative paths, one per line, using
-`.` for the root. Paths containing spaces or shell metacharacters use POSIX
-single-quote escaping, for example:
+## JSON contract (schema version 2)
 
-```text
-.
-app
-'other space'
-```
-
-For automation, use JSON and pass each `components[].path` as a separate argument
-to `rapport review --`. Do not split paths on whitespace or evaluate output as
-shell code. JSON paths are literal repository-relative strings, without quoting.
-All arrays of paths and the component array are sorted lexicographically and
-deduplicated. Fields remain present even when null or empty:
+JSON paths are literal repository-relative strings, with `.` for the root.
+Component, review, and path arrays are sorted lexicographically and deduplicated.
+Fields remain present when null or empty. Reject unsupported schema versions;
+tolerate additive object fields within version 2.
 
 | Field | Meaning |
 | --- | --- |
-| `schema_version` | Integer `1`; consumers should reject unsupported versions. |
-| `comparison` | Null for pending-only; otherwise the object below. |
-| `comparison.base` | Resolved base commit ID. |
-| `comparison.head` | Resolved selected head commit ID. |
-| `comparison.merge_base` | Resolved merge-base commit ID used for the diff. |
+| `schema_version` | Integer `2`. |
+| `comparison` | Null for pending-only; otherwise comparison revisions. |
+| `comparison.base` | Resolved requested base commit. |
+| `comparison.head` | Resolved selected head commit. |
+| `comparison.merge_base` | Actual earlier commit used for the diff. |
 | `pending.included` | Whether pending scope was requested. |
-| `pending.head` | Checkout commit ID for pending scope; otherwise null. |
-| `components[].path` | Component directory relative to the repository root. |
-| `components[].changed_files` | Changed paths actually owned by this component in a compared snapshot. Includes old and new rename paths under their respective owners. |
-| `components[].policy_sources` | Context or shared-pack paths whose changed effective policy caused selection. These need not be files owned by the selected component. |
+| `pending.head` | Checkout commit for pending scope; otherwise null. |
+| `components[].path` | Selected component directory. |
+| `components[].changed_files` | Changed paths owned in a compared snapshot, including both sides of moves. |
+| `components[].policy_sources` | Changed context/shared-pack sources causing effective policy selection. |
+| `reviews[].path` | Component directory; exactly matches a selected component. |
+| `reviews[].removed` | Whether the declaration is absent from the final selected tree. |
+| `reviews[].policy_snapshot.kind` | `commit`, `index`, or `worktree`. |
+| `reviews[].policy_snapshot.revision` | Full policy commit ID; present only for `commit`. |
+| `reviews[].policy_snapshot.head` | Full baseline commit ID; present only for `index` and `worktree`. |
+| `reviews[].prompt` | Complete Markdown review prompt with scope, policy provenance, architecture, and standards. |
 
-Commit IDs are full Git object IDs (SHA-1 or SHA-256 depending on the repository).
-Consumers should tolerate additive object fields within schema version 1.
+Git object IDs are full SHA-1 or SHA-256 IDs as applicable to the repository.
+`reviews` is empty exactly when `components` is empty.
 
-Complete pending-only example, after an ancestor policy edit:
+Default text output remains shell-quoted component paths, one per line. It fails
+explicitly if any component was removed, directing callers to `--json`; bare
+paths cannot preserve historical prompt provenance. Do not split paths on
+whitespace or evaluate text output as shell code.
 
-```json
-{
-  "schema_version": 1,
-  "comparison": null,
-  "pending": {
-    "included": true,
-    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  },
-  "components": [
-    {
-      "path": ".",
-      "changed_files": ["context.toml"],
-      "policy_sources": ["context.toml"]
-    },
-    {
-      "path": "app",
-      "changed_files": [],
-      "policy_sources": ["context.toml"]
-    }
-  ]
-}
-```
+## Automated consumers and migration from schema 1
 
-Complete committed-only example (illustrative commit IDs):
-
-```json
-{
-  "schema_version": 1,
-  "comparison": {
-    "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "head": "cccccccccccccccccccccccccccccccccccccccc",
-    "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  },
-  "pending": { "included": false, "head": null },
-  "components": [
-    {
-      "path": "app",
-      "changed_files": ["app/src/lib.rs"],
-      "policy_sources": []
-    }
-  ]
-}
-```
-
-Complete combined example for committed and pending changes in the same component:
-
-```json
-{
-  "schema_version": 1,
-  "comparison": {
-    "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "head": "cccccccccccccccccccccccccccccccccccccccc",
-    "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  },
-  "pending": {
-    "included": true,
-    "head": "cccccccccccccccccccccccccccccccccccccccc"
-  },
-  "components": [
-    {
-      "path": "app",
-      "changed_files": ["app/README.md", "app/src/lib.rs"],
-      "policy_sources": []
-    }
-  ]
-}
-```
-
-A successful empty pending selection uses `comparison: null`, the same pending
-metadata, and `components: []`.
-
-## Downstream integration
-
-This Python example passes paths without shell parsing and avoids calling review
-with no paths (which would otherwise review the root):
+Schema 1 consumers generated current prompts with `rapport review <paths>` and
+failed discovery for deletions. Schema 2 consumers should use the embedded
+prompts for **all** components, so mixed scope and explicit heads require no
+checkout restoration or duplicate ownership mapper:
 
 ```python
 import json
@@ -188,35 +122,35 @@ result = subprocess.run(
     check=True, capture_output=True, text=True,
 )
 selection = json.loads(result.stdout)
-if selection["schema_version"] != 1:
+if selection["schema_version"] != 2:
     raise RuntimeError("Unsupported Rapport affected schema")
-paths = [component["path"] for component in selection["components"]]
-if paths:
-    subprocess.run(["rapport", "review", "--", *paths], check=True)
+components = {component["path"]: component for component in selection["components"]}
+assert set(components) == {review["path"] for review in selection["reviews"]}
+for review in selection["reviews"]:
+    component = components[review["path"]]
+    # Supply review["prompt"], component evidence, selection provenance,
+    # and the actual diff/code to the automated reviewer.
+    print(review["prompt"])
 ```
 
-Run prompt generation at the selected head. Keep the changed-file and policy-source
-evidence alongside the review input. `prs` owns PR comparison selection and
-orchestration; Rapport owns component selection and prompt generation.
+An empty selection performs no review. Never regenerate a removed component's
+prompt from its parent or selected head. `prs` owns PR orchestration; Rapport owns
+complete component selection and snapshot-specific prompt generation.
 
 ## Release and People Work adoption
 
-This change prepares `rapport` 0.9.0 and `rapport-git` 0.2.0; these versions are
-not released merely by editing the manifests. After review, commit and merge the
-change, then dispatch the repository's **Publish** workflow on that commit:
+The manifest prepares Rapport 0.10.0; it does not publish it. After review and
+merge, dispatch the repository's Publish workflow on the merged commit:
 
 ```sh
-gh workflow run publish.yml --ref main -f crate=rapport-git
-# Wait for rapport-git 0.2.0 publication to succeed before publishing Rapport.
 gh workflow run publish.yml --ref main -f crate=rapport
 ```
 
-The workflow runs `just ci`, publishes to crates.io, and creates tags
-`rapport-git-v0.2.0` and `rapport-v0.9.0`. Rapport's release also builds the
-platform archives consumed by `cargo binstall`. Verify both publication and the
-archive jobs before telling downstream consumers the release is ready.
+The workflow runs `just ci`, publishes to crates.io, and creates the
+`rapport-v0.10.0` tag and platform archives. Verify publication and archive jobs
+before updating downstream version pins. `rapport-git` 0.2.0 is unchanged.
 
-People Work can then require Rapport 0.9.0 or later, update provisioning/version
-pins, replace its internal file-to-component mapping with the explicit-SHA JSON
-command, and pass every returned path to review. Keep its local skill and PR
-integration changes in the existing People Work development-process PR.
+People Work's automated PR consumer must accept schema 2 and use `reviews[].prompt`
+instead of invoking current-tree review for each path. Verify mixed surviving and
+removed scope using PR #1947's explicit comparison revisions after provisioning
+the new release. No consumer should silently drop removed entries.

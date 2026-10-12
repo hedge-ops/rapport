@@ -32,11 +32,7 @@ where
         paths.iter().map(Utf8PathBuf::as_path),
     ) {
         Ok(policy) => {
-            let _ = writeln!(
-                context.out,
-                "# Component Review\n\nReview the selected components and the changes supplied by the caller. Inspect the code before drawing conclusions. Use the architecture below to assess responsibilities and boundaries, and evaluate every applicable benchmark.\n\nReport actionable findings with severity, code path and line, benchmark or architecture identifier, source context path, evidence, and a concrete correction. Distinguish verified issues from questions and state any review limitations. If no issues are found, say so. This prompt does not contain a diff or execute a review.\n\n{}",
-                policy.markdown
-            );
+            let _ = context.out.write_all(prompt(&policy.markdown).as_bytes());
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -44,6 +40,12 @@ where
             ExitCode::from(2)
         }
     }
+}
+
+pub(crate) fn prompt(markdown: &str) -> String {
+    format!(
+        "# Component Review\n\nReview the selected components and the changes supplied by the caller. Inspect the code before drawing conclusions. Use the architecture below to assess responsibilities and boundaries, and evaluate every applicable benchmark.\n\nReport actionable findings with severity, code path and line, benchmark or architecture identifier, source context path, evidence, and a concrete correction. Distinguish verified issues from questions and state any review limitations. If no issues are found, say so. This prompt does not contain a diff or execute a review.\n\n{markdown}\n"
+    )
 }
 
 #[cfg(test)]

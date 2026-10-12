@@ -65,6 +65,19 @@ impl Fixture {
         self.write(&format!("{directory}/context.toml"), &format!("version = 1\nid = {id:?}\npurpose = {purpose:?}\nnext_ownership = 1\nnext_boundary = 1\n[ruleset]\nincludes = {includes:?}\n"));
     }
 
+    fn review_prompt(&self, path: &str) -> String {
+        let mut out = Vec::new();
+        let code = crate::run_with_environment(
+            ["review", "--", path].map(str::to_owned),
+            &mut rapport_files::RealFileSystem,
+            self.root.clone(),
+            &mut out,
+            &mut Vec::new(),
+        );
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_ok!(String::from_utf8(out))
+    }
+
     fn commit(&self) -> String {
         self.git(&["add", "."]);
         self.git(&["commit", "-qm", "fixture change"]);
@@ -230,19 +243,181 @@ fn discover_should_cover_moves_and_deletions(#[case] pending: bool) {
     );
 }
 
-/// Removed declarations fail explicitly instead of substituting an ancestor component.
+/// Removed declarations retain earlier review policy instead of substituting their parent.
 #[rstest::rstest]
 #[case::committed(false)]
 #[case::pending(true)]
-fn discover_should_report_removed_components(#[case] pending: bool) {
+fn discover_should_review_removed_components(#[case] pending: bool) {
     let fixture = Fixture::new();
     let base = fixture.git(&["rev-parse", "HEAD"]);
+    let git = Git::default();
+    let repository = assert_ok!(git.discover(&fixture.root));
+    let earlier = assert_ok!(Snapshot::committed(
+        &git,
+        &repository,
+        &assert_ok!(resolve(&git, &repository, &base))
+    ));
     fixture.git(&["rm", "app/context.toml"]);
     if !pending {
         fixture.commit();
     }
+    let result =
+        assert_ok!(fixture.discover(if pending { None } else { Some(&base) }, None, pending));
+    assert_eq!(
+        result.components,
+        [component_with("app", &["app/context.toml"], &[])]
+    );
+    assert_eq!(result.reviews, [Review::new("app", &earlier, true)]);
     assert!(
-        matches!(assert_err!(fixture.discover(if pending { None } else { Some(&base) }, None, pending)), Error::RemovedComponent(path) if path == "app")
+        matches!(assert_err!(render(&result, false)), Error::RemovedComponent(path) if path == "app")
+    );
+    assert_ok!(render(&result, true));
+}
+
+/// Mixed deletion and moves preserve all owners and isolate historical prompts from dirty policy.
+#[rstest::rstest]
+#[case::whole(false, false)]
+#[case::nested(true, false)]
+#[case::moved(false, true)]
+fn discover_should_preserve_mixed_deletion_scope(#[case] nested: bool, #[case] moved: bool) {
+    let fixture = Fixture::new();
+    let deleted = if nested { "app/child" } else { "app" };
+    if nested {
+        fixture.context(deleted, "CHILD", "Nested policy.", &[]);
+        fixture.write("app/child/file", "child source");
+    }
+    fixture.write(
+        ".rapport/rules/shared.toml",
+        "version = 1\nid = 'SHARED'\npurpose = 'Historical standards.'\nincludes = []\n[rules.SHARED_001]\ntext = 'Review retirement dependencies.'\nrationale = 'Retired components may retain callers.'\n[rules.SHARED_001.avoid]\nlanguage = 'text'\ntext = 'Leave callers behind.'\n[rules.SHARED_001.prefer]\nlanguage = 'text'\ntext = 'Remove retired callers.'\n",
+    );
+    fixture.context(".", "ROOT", "Historical inherited policy.", &["SHARED"]);
+    let base = fixture.commit();
+    let historical_prompt = fixture.review_prompt(deleted);
+    let git = Git::default();
+    let repository = assert_ok!(git.discover(&fixture.root));
+    let earlier = assert_ok!(Snapshot::committed(
+        &git,
+        &repository,
+        &assert_ok!(resolve(&git, &repository, &base))
+    ));
+    if moved {
+        fixture.git(&["mv", deleted, "moved"]);
+    } else {
+        fixture.git(&["rm", "-r", deleted]);
+    }
+    fixture.context(".", "ROOT", "Selected head policy.", &[]);
+    fixture.git(&["rm", ".rapport/rules/shared.toml"]);
+    fixture.write("other space/file", "surviving change");
+    let head = fixture.commit();
+    let final_tree = assert_ok!(Snapshot::committed(
+        &git,
+        &repository,
+        &assert_ok!(resolve(&git, &repository, &head))
+    ));
+    fixture.write("context.toml", "invalid dirty policy");
+    let result = assert_ok!(fixture.discover(Some(&base), Some(&head), false));
+    assert_eq!(result.schema_version, 2);
+    assert_eq!(
+        result.comparison,
+        Some(Comparison {
+            base: base.clone(),
+            head: head.clone(),
+            merge_base: base
+        })
+    );
+    let mut expected = vec![
+        component_with(
+            ".",
+            &[".rapport/rules/shared.toml", "context.toml"],
+            &[".rapport/rules/shared.toml", "context.toml"],
+        ),
+        component_with(
+            deleted,
+            &[
+                &format!("{deleted}/context.toml"),
+                &format!("{deleted}/file"),
+            ],
+            &[],
+        ),
+        component_with(
+            "other space",
+            &["other space/file"],
+            &[".rapport/rules/shared.toml", "context.toml"],
+        ),
+    ];
+    if nested {
+        expected.push(component_with(
+            "app",
+            &[],
+            &[".rapport/rules/shared.toml", "context.toml"],
+        ));
+    }
+    if moved {
+        expected.push(component_with(
+            "moved",
+            &["moved/context.toml", "moved/file"],
+            &[],
+        ));
+    }
+    expected.sort_by(|left, right| left.path.cmp(&right.path));
+    assert_eq!(result.components, expected);
+    let expected_reviews: Vec<_> = result
+        .components
+        .iter()
+        .map(|component| {
+            if component.path == deleted {
+                Review::new(deleted, &earlier, true)
+            } else {
+                Review::new(&component.path, &final_tree, false)
+            }
+        })
+        .collect();
+    assert_eq!(result.reviews, expected_reviews);
+    let removed_review = result.reviews.iter().find(|review| review.path == deleted);
+    let removed_review = claims::assert_some!(removed_review);
+    let comparison = claims::assert_some!(result.comparison.as_ref());
+    let revision = &comparison.merge_base;
+    assert_eq!(
+        removed_review.policy_snapshot,
+        PolicySnapshot::Commit {
+            revision: revision.clone()
+        }
+    );
+    assert_eq!(
+        removed_review.prompt,
+        format!(
+            "# Review Scope\n\nComponent `{deleted}`: removed component; review its deletion using the earlier policy. Policy snapshot: commit `{revision}`. Compare the changes using the selection's comparison and pending provenance.\n\n{historical_prompt}"
+        )
+    );
+}
+
+/// A component created in the index and removed locally retains its index policy.
+#[test]
+fn discover_should_preserve_removed_index_policy() {
+    let fixture = Fixture::new();
+    fixture.context("temporary", "TEMP", "Staged policy.", &[]);
+    fixture.write("temporary/file", "staged source");
+    fixture.git(&["add", "."]);
+    let git = Git::default();
+    let repository = assert_ok!(git.discover(&fixture.root));
+    let head = assert_ok!(resolve(&git, &repository, "HEAD"));
+    let index = assert_ok!(Snapshot::index(&git, &repository, &head));
+    assert_ok!(std::fs::remove_dir_all(fixture.root.join("temporary")));
+    let result = assert_ok!(fixture.discover(Some("HEAD"), None, true));
+    assert_eq!(
+        result.components,
+        [component_with(
+            "temporary",
+            &["temporary/context.toml", "temporary/file"],
+            &[]
+        )]
+    );
+    assert_eq!(result.reviews, [Review::new("temporary", &index, true)]);
+    assert_eq!(
+        result.reviews[0].policy_snapshot,
+        PolicySnapshot::Index {
+            head: head.as_str().into()
+        }
     );
 }
 
@@ -373,13 +548,21 @@ fn discover_should_report_typed_failures() {
 #[test]
 fn render_should_preserve_complete_json_contract() {
     let result = Selection {
-        schema_version: 1,
+        schema_version: 2,
         comparison: None,
         pending: Pending {
             included: true,
             head: Some("a".repeat(40)),
         },
         components: vec![component_with("app", &["app/file"], &["context.toml"])],
+        reviews: vec![Review {
+            path: "app".into(),
+            removed: true,
+            policy_snapshot: PolicySnapshot::Commit {
+                revision: "b".repeat(40),
+            },
+            prompt: "complete historical prompt\n".into(),
+        }],
     };
     assert_eq!(
         assert_ok!(render(&result, true)),
@@ -390,6 +573,7 @@ fn render_should_preserve_complete_json_contract() {
         assert_ok!(render(
             &Selection {
                 components: vec![],
+                reviews: vec![],
                 ..result
             },
             false
