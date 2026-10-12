@@ -55,6 +55,7 @@ struct Selection {
     comparison: Option<Comparison>,
     pending: Pending,
     components: Vec<Component>,
+    reviews: Vec<Review>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -77,6 +78,48 @@ struct Component {
     policy_sources: BTreeSet<String>,
 }
 
+/// Each selected component carries policy from its final or last existing snapshot.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct Review {
+    path: String,
+    removed: bool,
+    policy_snapshot: PolicySnapshot,
+    prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PolicySnapshot {
+    Commit { revision: String },
+    Index { head: String },
+    Worktree { head: String },
+}
+
+impl Review {
+    fn new(path: &str, snapshot: &Snapshot, removed: bool) -> Self {
+        let policy = &snapshot.components[path];
+        let source = match &snapshot.source {
+            PolicySnapshot::Commit { revision } => format!("commit `{revision}`"),
+            PolicySnapshot::Index { head } => format!("index based on `{head}`"),
+            PolicySnapshot::Worktree { head } => format!("worktree based on `{head}`"),
+        };
+        let scope = if removed {
+            "removed component; review its deletion using the earlier policy"
+        } else {
+            "surviving component; review using the selected final policy"
+        };
+        Self {
+            path: path.into(),
+            removed,
+            policy_snapshot: snapshot.source.clone(),
+            prompt: format!(
+                "# Review Scope\n\nComponent `{path}`: {scope}. Policy snapshot: {source}. Compare the changes using the selection's comparison and pending provenance.\n\n{}",
+                crate::review::prompt(&policy.markdown)
+            ),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error("supply --pending, --base, or both; --head requires --base")]
@@ -86,7 +129,7 @@ enum Error {
     #[error("resolve unmerged paths before discovering affected components: {0:?}")]
     Unmerged(BTreeSet<Utf8PathBuf>),
     #[error(
-        "component {0:?} was removed; it cannot be reviewed at the selected head/worktree; review its deletion against the earlier tree explicitly"
+        "component {0:?} was removed; use --json and its revision-tagged reviews[].prompt to review the deletion"
     )]
     RemovedComponent(String),
     #[error(
@@ -133,17 +176,19 @@ fn discover(args: &Args, cwd: &Utf8Path) -> Result<Selection, Error> {
     } else {
         None
     };
-    let head_snapshot = Snapshot::committed(&git, &repo, Some(&head))?;
+    let head_snapshot = Snapshot::committed(&git, &repo, &head)?;
     let mut selected = BTreeMap::new();
+    let mut historical = BTreeMap::new();
     let comparison = if let Some(base) = &args.base {
         let base = resolve(&git, &repo, base)?;
         let merge_base = git.merge_base_between(&repo, &base, &head)?;
-        let before = Snapshot::committed(&git, &repo, Some(&merge_base))?;
+        let before = Snapshot::committed(&git, &repo, &merge_base)?;
         select(
             &before,
             &head_snapshot,
             &git.changed_paths(&repo, &merge_base, &head)?,
             &mut selected,
+            &mut historical,
         )?;
         Some(Comparison {
             base: base.as_str().into(),
@@ -154,34 +199,43 @@ fn discover(args: &Args, cwd: &Utf8Path) -> Result<Selection, Error> {
         None
     };
     let final_snapshot = if let Some(status) = &checkout {
-        let index = Snapshot::committed(&git, &repo, None)?;
-        let worktree = Snapshot::working(&git, &repo)?;
+        let index = Snapshot::index(&git, &repo, &head)?;
+        let worktree = Snapshot::working(&git, &repo, &head)?;
         select(
             &head_snapshot,
             &index,
             &git.pending_paths(&repo, true)?,
             &mut selected,
+            &mut historical,
         )?;
         let mut unstaged = git.pending_paths(&repo, false)?;
         unstaged.extend(status.untracked().iter().cloned());
-        select(&index, &worktree, &unstaged, &mut selected)?;
+        select(&index, &worktree, &unstaged, &mut selected, &mut historical)?;
         worktree
     } else {
         head_snapshot
     };
-    for path in selected.keys() {
-        if !final_snapshot.components.contains_key(path) {
-            return Err(Error::RemovedComponent(path.clone()));
-        }
-    }
+    let reviews = selected
+        .keys()
+        .map(|path| {
+            if final_snapshot.components.contains_key(path) {
+                Ok(Review::new(path, &final_snapshot, false))
+            } else {
+                historical
+                    .remove(path)
+                    .ok_or_else(|| Error::Unmappable(path.clone()))
+            }
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
     Ok(Selection {
-        schema_version: 1,
+        schema_version: 2,
         comparison,
         pending: Pending {
             included: args.pending,
             head: checkout.map(|status| status.head().as_str().into()),
         },
         components: selected.into_values().collect(),
+        reviews,
     })
 }
 
@@ -190,7 +244,13 @@ fn select(
     after: &Snapshot,
     changed: &BTreeSet<Utf8PathBuf>,
     selected: &mut BTreeMap<String, Component>,
+    historical: &mut BTreeMap<String, Review>,
 ) -> Result<(), Error> {
+    for path in before.components.keys() {
+        if !after.components.contains_key(path) {
+            historical.insert(path.clone(), Review::new(path, before, true));
+        }
+    }
     for file in changed {
         let mut mapped = false;
         for snapshot in [before, after] {
@@ -238,6 +298,9 @@ fn component<'a>(selected: &'a mut BTreeMap<String, Component>, path: &str) -> &
 fn render(result: &Selection, json: bool) -> Result<String, Error> {
     if json {
         return Ok(format!("{}\n", serde_json::to_string_pretty(result)?));
+    }
+    if let Some(review) = result.reviews.iter().find(|review| review.removed) {
+        return Err(Error::RemovedComponent(review.path.clone()));
     }
     let mut output = String::new();
     for component in &result.components {

@@ -30,10 +30,10 @@ rapport context affected --base origin/main --pending
 rapport context affected --base "$BASE_SHA" --head "$HEAD_SHA" --json
 ```
 
-Rapport 0.9.0 selects component owners from Git changes, including inherited and
+Rapport 0.10.0 selects component owners from Git changes, including inherited and
 shared policy consumers. Branch scope uses the merge base; pending scope covers
-staged, unstaged, and non-ignored untracked files. Selection is separate from
-`rapport review`, which generates the prompt. See the
+staged, unstaged, and non-ignored untracked files. JSON selection includes complete revision-tagged prompts for surviving and
+removed components. See the
 [affected component guide](docs/affected-components.md) for the stable JSON
 contract, complete examples, failure boundaries, and release/adoption steps.
 

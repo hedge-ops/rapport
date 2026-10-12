@@ -1,12 +1,13 @@
 //! In-memory policy trees resolved with the ordinary Context repository.
 
 use super::super::{boundary, repository::Repository, review_policy};
-use super::Error;
+use super::{Error, PolicySnapshot};
 use rapport_files::{InMemoryFileSystem, Utf8Path, Utf8PathBuf};
 use rapport_git::{Git, ObjectId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct Snapshot {
+    pub(super) source: PolicySnapshot,
     pub(super) files: BTreeSet<Utf8PathBuf>,
     pub(super) components: BTreeMap<String, Policy>,
     repository: Repository,
@@ -17,29 +18,61 @@ impl Snapshot {
     pub(super) fn committed(
         git: &Git,
         repo: &rapport_git::Repository,
-        commit: Option<&ObjectId>,
+        commit: &ObjectId,
     ) -> Result<Self, Error> {
-        let files = git.snapshot_paths(repo, commit)?;
-        Self::load(repo.root(), files, |path| {
-            Ok(git.snapshot_file(repo, commit, path)?)
-        })
+        let files = git.snapshot_paths(repo, Some(commit))?;
+        Self::load(
+            repo.root(),
+            files,
+            PolicySnapshot::Commit {
+                revision: commit.as_str().into(),
+            },
+            |path| Ok(git.snapshot_file(repo, Some(commit), path)?),
+        )
     }
 
-    pub(super) fn working(git: &Git, repo: &rapport_git::Repository) -> Result<Self, Error> {
+    pub(super) fn index(
+        git: &Git,
+        repo: &rapport_git::Repository,
+        head: &ObjectId,
+    ) -> Result<Self, Error> {
+        Self::load(
+            repo.root(),
+            git.snapshot_paths(repo, None)?,
+            PolicySnapshot::Index {
+                head: head.as_str().into(),
+            },
+            |path| Ok(git.snapshot_file(repo, None, path)?),
+        )
+    }
+
+    pub(super) fn working(
+        git: &Git,
+        repo: &rapport_git::Repository,
+        head: &ObjectId,
+    ) -> Result<Self, Error> {
         let files = git
             .working_tree_files(repo)?
             .into_iter()
             .filter(|path| repo.root().join(path).symlink_metadata().is_ok())
             .collect();
-        Self::load(repo.root(), files, |path| {
-            let path = repo.root().join(path);
-            std::fs::read_to_string(&path).map_err(|source| Error::Io { path, source })
-        })
+        Self::load(
+            repo.root(),
+            files,
+            PolicySnapshot::Worktree {
+                head: head.as_str().into(),
+            },
+            |path| {
+                let path = repo.root().join(path);
+                std::fs::read_to_string(&path).map_err(|source| Error::Io { path, source })
+            },
+        )
     }
 
     fn load(
         root: &Utf8Path,
         files: BTreeSet<Utf8PathBuf>,
+        source: PolicySnapshot,
         mut read: impl FnMut(&Utf8Path) -> Result<String, Error>,
     ) -> Result<Self, Error> {
         let mut fs = InMemoryFileSystem::default();
@@ -83,6 +116,7 @@ impl Snapshot {
             components.insert(path, Policy { markdown, sources });
         }
         Ok(Self {
+            source,
             files,
             components,
             repository,
