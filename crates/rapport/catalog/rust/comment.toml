@@ -3,8 +3,8 @@ id = "RUST_COMMENT"
 includes = []
 
 [rules.RUST_COMMENT_001]
-text = "Use API documentation to explain ownership and intent that signatures and types do not fully express. Do not use method-body comments for ordinary narration."
-rationale = "Ownership and intent survive refactoring better than comments that merely narrate visible statements."
+text = "Prefer API documentation for ownership and intent."
+rationale = "Types and signatures express much of an API, but they may not express who owns a transition or which invariant the operation preserves. Put that stable contract in API documentation so it remains useful when the implementation changes. Avoid method-body comments that merely narrate ordinary statements; they duplicate code without preserving intent."
 
 [rules.RUST_COMMENT_001.avoid]
 language = "rust"
@@ -17,24 +17,24 @@ text = '''/// Applies an event while preserving parent-owned workspace state.
 pub fn update(&mut self, event: Event);'''
 
 [rules.RUST_COMMENT_002]
-text = "Begin module documentation with a brief description. In a separate paragraph, explain what the module owns and, when useful, what it deliberately does not own."
-rationale = "A consistent opening gives maintainers both immediate orientation and a clear responsibility boundary."
+text = "Open module docs with a brief description."
+rationale = "A long inventory of responsibilities makes a module difficult to identify at a glance. Begin with a brief description, then use a separate paragraph to explain what the module owns and, when useful, what it deliberately does not own. The opening should orient the reader before asking them to understand detailed boundaries."
 
 [rules.RUST_COMMENT_002.avoid]
-language = "text"
+language = "rust"
 text = '''//! Owns readiness, scheduling, task ordering, effect construction, checkpoint
-//! resolution, and transition coordination, but does not own transport or persistence.'''
+//! resolution, and transition coordination, but not transport or persistence.'''
 
 [rules.RUST_COMMENT_002.prefer]
-language = "text"
+language = "rust"
 text = '''//! Schedules workspace synchronization.
 //!
 //! Owns readiness and task ordering. Transport and persistence remain effect
 //! responsibilities.'''
 
 [rules.RUST_COMMENT_003]
-text = "Use API documentation to preserve important responsibilities, collaborators, transitions, invariants, compatibility constraints, and accepted tradeoffs."
-rationale = "Recording non-obvious contracts prevents future changes from accidentally violating essential behavior."
+text = "Document contracts that types cannot express."
+rationale = "A caller or future maintainer can violate an invariant that is not visible in the type or signature. Use API documentation to preserve important responsibilities, collaborators, transitions, compatibility constraints, and accepted tradeoffs when they affect correct use or modification. Include the relevant contract rather than cataloging every implementation detail."
 
 [rules.RUST_COMMENT_003.avoid]
 language = "rust"
@@ -48,29 +48,29 @@ text = '''/// Owns loading until storage and service responses are ready, then r
 pub struct Loading;'''
 
 [rules.RUST_COMMENT_004]
-text = "Keep public item documentation to one concise contract sentence by default. Add more only when callers need a real behavioral, error, or safety contract."
-rationale = "Concise contracts are faster to scan, while additional detail remains available for genuine caller obligations."
+text = "Prefer one concise API contract sentence."
+rationale = "Callers need to find an operation's contract quickly; several sentences that restate the signature slow that search without adding useful information. Default to one concise sentence that states meaningful behavior beyond the obvious signature. Add more when a real behavioral, error, or safety obligation requires it, rather than treating brevity as a reason to omit the contract."
 
 [rules.RUST_COMMENT_004.avoid]
 language = "rust"
-text = '''/// This function takes an identifier and looks up the person.
+text = '''/// Looks up the person.
 ///
-/// It returns a person if one can be found.
+/// Takes an identifier and returns a person if found.
 pub fn person(identifier: PersonId) -> Option<&Person>;'''
 
 [rules.RUST_COMMENT_004.prefer]
 language = "rust"
-text = '''/// Returns the person with the given identifier.
+text = '''/// Searches admitted contacts only; pending invitations are excluded.
 pub fn person(identifier: PersonId) -> Option<&Person>;'''
 
 [rules.RUST_COMMENT_005]
-text = "As an exception to avoiding method-body comments, place a comment immediately before code whose non-obvious reason, invariant, compatibility constraint, or tradeoff cannot be expressed through code shape."
-rationale = "A local reason comment preserves an invariant that code shape alone cannot make discoverable."
+text = "Prefer local comments for non-obvious constraints."
+rationale = "Some reasons cannot be made clear through names or code structure alone, such as a compatibility requirement or why an operation is safe to retry. As an exception to avoiding method-body comments, put a concise reason immediately before the code it governs. Explain the invariant or tradeoff rather than repeating the action the statement already expresses."
 
 [rules.RUST_COMMENT_005.avoid]
 language = "rust"
-text = '''retry();
-// Retry the operation.'''
+text = '''// Retry the operation.
+retry();'''
 
 [rules.RUST_COMMENT_005.prefer]
 language = "rust"
@@ -78,46 +78,50 @@ text = '''// Authentication refresh is idempotent, so a single retry is safe.
 retry();'''
 
 [rules.RUST_COMMENT_006]
-text = "Avoid narrative tours that walk through an implementation."
-rationale = "Implementation tours become stale as steps change and obscure the stable contract."
+text = "Avoid narrative implementation tours."
+rationale = "Documentation that lists implementation steps becomes stale when the mechanics change and obscures the stable behavior callers need. State the operation's contract instead of walking through its sequence of calls. Describe a sequence only when the ordering itself is a meaningful externally visible obligation."
 
 [rules.RUST_COMMENT_006.avoid]
-language = "text"
-text = '''/// First this creates the request, then sends it, and finally processes the
-/// response.'''
+language = "rust"
+text = '''/// Creates the request, sends it, then processes the response.
+pub fn refresh(&mut self) -> Result<(), Error>;'''
 
 [rules.RUST_COMMENT_006.prefer]
-language = "text"
-text = '''/// Refreshes the authenticated client from the authoritative service.'''
+language = "rust"
+text = '''/// Refreshes the authenticated client from the authoritative service.
+pub fn refresh(&mut self) -> Result<(), Error>;'''
 
 [rules.RUST_COMMENT_007]
-text = "Avoid documentation that inventories every dependency or collaborator."
-rationale = "Responsibility matters to maintainers; dependency inventories duplicate imports and couple prose to implementation."
+text = "Avoid dependency inventories in documentation."
+rationale = "Imports and fields already expose many collaborators, and an inventory of them couples prose to incidental implementation choices. Describe the responsibility or meaningful relationship the collaboration supports. Name a collaborator when that relationship is part of the contract, rather than listing everything the implementation touches."
 
 [rules.RUST_COMMENT_007.avoid]
-language = "text"
-text = '''/// Uses HttpClient, TokenStore, Clock, Runtime, and ClientRepository.'''
+language = "rust"
+text = '''/// Uses HttpClient, TokenStore, Clock, Runtime, and ClientRepository.
+pub struct ClientRefresh;'''
 
 [rules.RUST_COMMENT_007.prefer]
-language = "text"
-text = '''/// Owns authenticated client refresh across the service and local store.'''
+language = "rust"
+text = '''/// Owns authenticated client refresh across the service and local store.
+pub struct ClientRefresh;'''
 
 [rules.RUST_COMMENT_008]
-text = "Avoid backstory, marketing language, and agent-style summaries."
-rationale = "Neutral domain language communicates behavior without unverifiable claims or historical noise."
+text = "Avoid promotional or historical code documentation."
+rationale = "Marketing claims and implementation backstory do not help a maintainer determine what the code owns or guarantees. They also become unverifiable or stale as the code changes. Use direct domain language instead of praise, agent-style summaries, or historical narration so the documentation describes the current contract."
 
 [rules.RUST_COMMENT_008.avoid]
-language = "text"
-text = '''/// This robust and comprehensive implementation elegantly handles every
-/// synchronization scenario.'''
+language = "rust"
+text = '''/// This robust implementation elegantly handles every synchronization scenario.
+pub struct Synchronization;'''
 
 [rules.RUST_COMMENT_008.prefer]
-language = "text"
-text = '''/// Coordinates synchronization until every required child is ready.'''
+language = "rust"
+text = '''/// Coordinates synchronization until every required child is ready.
+pub struct Synchronization;'''
 
 [rules.RUST_COMMENT_009]
-text = "Avoid documentation that repeats the signature, type name, or obvious control flow."
-rationale = "Documentation earns its cost only when it adds meaning beyond names, types, and visible control flow."
+text = "Avoid documentation that repeats obvious code."
+rationale = "A comment earns its maintenance cost by adding meaning that a reader cannot already obtain from a name, type, or visible control flow. Repeating the signature hides useful documentation among predictable prose. State the non-obvious contract instead, and omit redundant explanation when there is no additional contract to preserve."
 
 [rules.RUST_COMMENT_009.avoid]
 language = "rust"
@@ -130,12 +134,12 @@ text = '''/// Reports whether every required sync input has resolved.
 pub fn is_ready(&self) -> bool;'''
 
 [rules.RUST_COMMENT_010]
-text = "Do not use documentation to compensate for unclear names or poor structure. Fix the code shape so the documentation can state a concise contract."
-rationale = "Clear structure carries meaning mechanically and prevents prose from becoming a permanent patch over confusing code."
+text = "Fix unclear structure before explaining it."
+rationale = "A long explanation of confusing names leaves every future reader dependent on prose that can drift away from the implementation. Fix the names and code structure first so they express the responsibilities directly. Then use documentation for the remaining contract or judgment that the improved structure cannot carry."
 
 [rules.RUST_COMMENT_010.avoid]
 language = "rust"
-text = '''/// Processes x by checking whether y is present and then updating z.
+text = '''/// Processes x by checking y, then updates z.
 fn process(x: X, y: Option<Y>, z: &mut Z);'''
 
 [rules.RUST_COMMENT_010.prefer]
@@ -144,52 +148,60 @@ text = '''/// Applies the resolved identity to the workspace.
 fn apply_identity(identity: Identity, workspace: &mut Workspace);'''
 
 [rules.RUST_COMMENT_011]
-text = "Write documentation for maintainers and future agents working in the repository. Optimize for quick orientation rather than public-library completeness."
-rationale = "Repository maintainers need rapid ownership context more than exhaustive public-package exposition."
+text = "Prefer documentation that orients repository maintainers."
+rationale = "Maintainers and future agents need to locate the relevant owner and contract before making a change. Broad public-library prose about hypothetical uses delays that orientation without helping the repository's actual work. Optimize documentation for a quick understanding of current responsibility rather than exhaustive descriptions of every possible application."
 
 [rules.RUST_COMMENT_011.avoid]
-language = "text"
-text = '''/// This structure can be used in a wide variety of applications where
-/// synchronization of arbitrary data may be desired.'''
+language = "rust"
+text = '''/// Can be used in many applications requiring synchronization of arbitrary data.
+pub struct WorkspaceSync;'''
 
 [rules.RUST_COMMENT_011.prefer]
-language = "text"
-text = '''/// Owns synchronization progress for one workspace.'''
+language = "rust"
+text = '''/// Owns synchronization progress for one workspace.
+pub struct WorkspaceSync;'''
 
 [rules.RUST_COMMENT_012]
-text = "Include only the context needed to understand what enters, what leaves, what changes, who collaborates, or what must remain true."
-rationale = "Selective context keeps documentation useful and reduces the surface that can become stale."
+text = "Prefer only contract-relevant documentation context."
+rationale = "Details about every call and match arm make it harder to find the behavior that must survive a refactor. Include the context needed to understand inputs, outputs, mutations, meaningful collaborators, and invariants. Leave incidental mechanics in the code so the documentation remains selective and stable."
 
 [rules.RUST_COMMENT_012.avoid]
-language = "text"
-text = '''/// Receives an event, matches the current state, calls the child update
-/// method, maps its command, and returns the resulting outcome.'''
+language = "rust"
+text = '''/// Receives an event, matches the state, calls the child update, maps its command,
+/// and returns the outcome.
+pub fn update(&mut self, event: Event) -> Command;'''
 
 [rules.RUST_COMMENT_012.prefer]
-language = "text"
-text = '''/// Routes child events while preserving parent-owned workspace state.'''
+language = "rust"
+text = '''/// Routes child events while preserving parent-owned workspace state.
+pub fn update(&mut self, event: Event) -> Command;'''
 
 [rules.RUST_COMMENT_013]
-text = "Avoid section banners and prose headings inside source files. Let modules, types, functions, and their ordering provide structure."
-rationale = "Code structure is searchable and compiler-aware; decorative banners create noise without ownership."
+text = "Avoid section banners inside source files."
+rationale = "Decorative headings divide a file visually without creating a searchable ownership boundary. They can conceal the need for better modules or item ordering and add noise to ordinary navigation. Let modules, types, functions, and their ordering provide structure instead of using banners or prose headings within source files."
 
 [rules.RUST_COMMENT_013.avoid]
 language = "rust"
-text = '''// =========================================================================
+text = '''// ================================================================
 // Event handling
-// ========================================================================='''
+// ================================================================
+impl Model {
+    fn update(&mut self, event: Event) {
+        self.apply(event);
+    }
+}'''
 
 [rules.RUST_COMMENT_013.prefer]
 language = "rust"
 text = '''impl Model {
-    pub fn update(&mut self, event: Event) -> Command<Effect, Event> {
-        // ...
+    fn update(&mut self, event: Event) {
+        self.apply(event);
     }
 }'''
 
 [rules.RUST_COMMENT_014]
-text = "Use structured logs for runtime narration. Documentation describes ownership and contracts; logs describe what a running operation is doing."
-rationale = "Separating stable contracts from runtime events keeps both documentation and diagnostics useful."
+text = "Prefer structured logs for runtime narration."
+rationale = "A comment describes the source but cannot tell an operator which action a running process is taking. Use structured logs for meaningful runtime actions, and reserve documentation for ownership and stable contracts. This keeps diagnostics useful without filling method bodies with narration of statements."
 
 [rules.RUST_COMMENT_014.avoid]
 language = "rust"
@@ -202,13 +214,15 @@ text = '''tracing::debug!(%workspace_id, "fetching workspace");
 let workspace = client.fetch().await?;'''
 
 [rules.RUST_COMMENT_015]
-text = "Use current domain vocabulary consistently. When documentation uses stale or generic terminology, correct the vocabulary instead of adding more explanation."
-rationale = "Consistent domain vocabulary lets maintainers search, reason, and communicate without translating synonyms."
+text = "Use current domain vocabulary."
+rationale = "Stale or generic terms force readers to translate between the documentation and the code, making searches and responsibility checks less reliable. Use the repository's current domain vocabulary consistently. Correct a vague name or outdated term rather than adding more prose to explain the translation."
 
 [rules.RUST_COMMENT_015.avoid]
-language = "text"
-text = '''/// Finishes processing the data object.'''
+language = "rust"
+text = '''/// Finishes processing the data object.
+pub fn resolve_checkpoint(&mut self);'''
 
 [rules.RUST_COMMENT_015.prefer]
-language = "text"
-text = '''/// Resolves the workspace checkpoint after every asset becomes ready.'''
+language = "rust"
+text = '''/// Resolves the workspace checkpoint after every asset is ready.
+pub fn resolve_checkpoint(&mut self);'''

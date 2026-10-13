@@ -188,6 +188,7 @@ pub(super) enum ComposeAction {
 }
 
 #[derive(Args)]
+#[command(after_help = crate::prime::RULE_AUTHORING_HELP)]
 #[command(arg_required_else_help = true)]
 pub(super) struct ContextRuleArgs {
     #[command(subcommand)]
@@ -206,6 +207,7 @@ pub(super) enum ContextRuleAction {
 }
 
 #[derive(Args)]
+#[command(after_help = crate::prime::RULE_AUTHORING_HELP)]
 pub(super) struct RuleAddArgs {
     pub(super) path: Utf8PathBuf,
     #[arg(long)]
@@ -227,6 +229,7 @@ pub(super) struct RuleAddArgs {
 }
 
 #[derive(Args)]
+#[command(after_help = crate::prime::RULE_AUTHORING_HELP)]
 pub(super) struct RuleUpdateArgs {
     pub(super) path: Utf8PathBuf,
     #[arg(long = "rule")]

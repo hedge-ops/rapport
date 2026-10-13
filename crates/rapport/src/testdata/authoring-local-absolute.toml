@@ -1,0 +1,18 @@
+namespace = "API"
+purpose = "Owns API authentication diagnostics."
+
+[ruleset.rules.API_001]
+text = "Never log bearer tokens in authentication diagnostics."
+rationale = "A bearer token grants access to anyone who possesses it, so copying it into a log creates another usable credential store with its own readers and retention policy. Authentication diagnostics must preserve the operation and failure without recording the credential. This invariant applies to token values even in debug logs; log the request identifier instead so operators can investigate the failure."
+
+[ruleset.rules.API_001.avoid]
+language = "rust"
+text = '''
+tracing::debug!(%request_id, %bearer_token, "authentication failed");
+'''
+
+[ruleset.rules.API_001.prefer]
+language = "rust"
+text = '''
+tracing::debug!(%request_id, "authentication failed");
+'''
