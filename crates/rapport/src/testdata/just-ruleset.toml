@@ -1,0 +1,29 @@
+version = 1
+id = "BUILD"
+purpose = "Reproducible build commands."
+includes = []
+
+[rules.BUILD_001]
+text = "Make CI run every required check."
+rationale = "One recipe keeps local and automated validation consistent."
+
+[rules.BUILD_001.avoid]
+language = "just"
+text = """ci:
+    cargo build
+"""
+
+[rules.BUILD_001.prefer]
+language = "just"
+text = """ci: check build test
+
+check:
+    cargo fmt --all -- --check
+    cargo clippy --all --all-targets -- -D warnings
+
+build:
+    cargo build --all
+
+test:
+    cargo nextest run --workspace
+"""
