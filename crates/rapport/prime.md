@@ -34,15 +34,20 @@ adopting the style of the Effective C#, Java, Rust, and TypeScript books. These
 books are references for the teaching style, not sources of rules to copy.
 Author original recommendations, rationale, and examples for the repository:
 
-- `text` is the item title: a short, specific engineering recommendation that
-  tells the reader what to do. Use prefer, avoid, always, or never according to
-  the recommendation's strength and scope. Absolutes are valid for justified
-  invariants; do not force every title into one verb or weaken a real invariant.
-- `rationale` is the opening paragraph: explain why the recommendation matters,
-  the failure it prevents, and relevant tradeoffs or scope. Teach the judgment
-  so the reader can apply it in another situation; do not just repeat the title.
-- `avoid` and `prefer` are paired, concrete examples of the same lesson in the
-  relevant language. Keep the scenario comparable so the change is apparent.
+- `text` is a short item title in the form
+  `Prefer|Avoid|Always|Never [best practice stated]`. State one specific practice;
+  put the explanation in `rationale`, not in a second sentence or a long title.
+  Choose the verb according to the recommendation's strength and scope.
+  Absolutes are valid for justified invariants; do not force every title into
+  one verb or weaken a real invariant.
+- `rationale` is the item's first paragraph, explaining why: why the practice
+  matters, the failure it prevents, and relevant tradeoffs or scope. Teach the
+  judgment so the reader can apply it in another situation; do not just repeat
+  the title.
+- `avoid` and `prefer` are paired, realistic examples of bad and good behavior
+  in the target language, demonstrating the same practice. Show actual code
+  rather than describing what code should do. Keep the scenario comparable so
+  the change is apparent.
   For tools or configuration, use the relevant shell, TOML, YAML, or other syntax
   rather than vague prose. Set each `language` to the example's actual syntax.
 - Keep the tone direct, patient, and practical. Explain one actionable lesson
