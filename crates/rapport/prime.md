@@ -23,6 +23,77 @@
 - Ancestor context and included packs apply alongside local declarations. Conflicting or missing standards fail explicitly.
 - `rapport context validate [path]` checks architecture and effective standards.
 
+## Authoring rules
+
+This is the authoritative authoring guidance for both shared repository rulesets
+under `.rapport/rules/` and rules owned by component `context.toml` files. Apply
+it when adding, updating, or directly editing a rule.
+
+Write like a senior engineer explaining a recommendation to a junior engineer,
+modeled on an item in Effective C#, Java, Rust, or TypeScript:
+
+- `text` is the item title: a short, specific engineering recommendation that
+  tells the reader what to do. Use prefer, avoid, always, or never according to
+  the recommendation's strength and scope. Absolutes are valid for justified
+  invariants; do not force every title into one verb or weaken a real invariant.
+- `rationale` is the opening paragraph: explain why the recommendation matters,
+  the failure it prevents, and relevant tradeoffs or scope. Teach the judgment
+  so the reader can apply it in another situation; do not just repeat the title.
+- `avoid` and `prefer` are paired, concrete examples of the same lesson in the
+  relevant language. Keep the scenario comparable so the change is apparent.
+  For tools or configuration, use the relevant shell, TOML, YAML, or other syntax
+  rather than vague prose. Set each `language` to the example's actual syntax.
+- Keep the tone direct, patient, and practical. Explain one actionable lesson
+  per rule; avoid slogans and unrelated improvements in the examples.
+
+For example, a complete repository-owned ruleset at `.rapport/rules/api.toml`:
+
+```toml
+version = 1
+id = "API"
+purpose = "Error handling at Rust API boundaries."
+includes = []
+
+[rules.API_001]
+text = "Prefer typed errors at reusable API boundaries."
+rationale = "Callers parsing a port may need to distinguish malformed digits from an out-of-range value so they can explain how to correct the input. Converting the parse failure to a string discards its structured cause and encourages callers to parse messages. Preserve that cause in a domain error when callers act on the failure; a formatted message can still be sufficient at a final display boundary."
+
+[rules.API_001.avoid]
+language = "rust"
+text = '''
+fn load_port(input: &str) -> Result<u16, String> {
+    input.parse().map_err(|error| format!("invalid port: {error}"))
+}
+'''
+
+[rules.API_001.prefer]
+language = "rust"
+text = '''
+enum PortError {
+    InvalidPort(std::num::ParseIntError),
+}
+
+fn load_port(input: &str) -> Result<u16, PortError> {
+    input.parse().map_err(PortError::InvalidPort)
+}
+'''
+```
+
+For a component with `namespace = "API"`, put the same rule in
+`[ruleset.rules.API_001]`, with examples in `[ruleset.rules.API_001.avoid]` and
+`[ruleset.rules.API_001.prefer]`. Keep the component's purpose and architecture;
+do not copy the shared ruleset's top-level `version`, `id`, or `includes` into
+that context. Legacy contexts using `id = "API"` use `API_RULE_001` instead.
+
+Use `rapport ruleset rule add <ID>` or `rapport ruleset rule update <ID>` for
+shared rules, and `rapport context ruleset rule add <path>` or
+`rapport context ruleset rule update <path>` for component rules. Pass the title
+as `--text`, the paragraph as `--rationale`, and the paired examples as
+`--avoid-example`/`--avoid-language` and `--prefer-example`/`--prefer-language`.
+When updating a lesson, keep its title, paragraph, and examples consistent.
+Run `rapport context validate` and inspect the rule with `rapport ruleset show
+<ID> --rule <RULE_ID>` or `rapport context show <path> --declared`.
+
 ## Next
 
 Run `rapport context show .`.

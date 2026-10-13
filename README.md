@@ -75,6 +75,12 @@ Ownership and boundary IDs use `<NAMESPACE>_OWNERSHIP_001` and
 Namespaces must be unique across contexts. `purpose` and declaration text must
 be nonempty. Each rule requires rationale and both examples.
 
+Run `rapport prime` for the authoritative rule-authoring guide and a complete
+TOML example. Shared rulesets and component rules follow the same Effective-series
+style: a specific recommendation, an explanatory opening paragraph, and paired
+examples in the relevant language or tool syntax. Rule add/update help also
+points to this guide.
+
 Example language tags are preserved as Markdown fence labels. Supported tags are
 `rust`, `swift`, `kotlin`, `csharp`, `xaml`, `html`, `javascript`, `typescript`,
 `toml`, `json`, `yaml`, `markdown`, `shell`, and `text`.

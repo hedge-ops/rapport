@@ -141,6 +141,7 @@ enum ComposeAction {
 }
 
 #[derive(Args)]
+#[command(after_help = crate::prime::RULE_AUTHORING_HELP)]
 #[command(arg_required_else_help = true)]
 struct RuleArgs {
     #[command(subcommand)]
@@ -162,6 +163,7 @@ enum RuleAction {
 }
 
 #[derive(Args)]
+#[command(after_help = crate::prime::RULE_AUTHORING_HELP)]
 struct RuleAddArgs {
     id: String,
     #[arg(long = "id")]
@@ -183,6 +185,7 @@ struct RuleAddArgs {
 }
 
 #[derive(Args)]
+#[command(after_help = crate::prime::RULE_AUTHORING_HELP)]
 struct RuleUpdateArgs {
     id: String,
     #[arg(long = "rule")]

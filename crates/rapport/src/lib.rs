@@ -11,6 +11,8 @@ mod policy_context;
 mod prime;
 mod repository_files;
 mod review;
+#[cfg(test)]
+mod rule_authoring_tests;
 mod shared_ruleset;
 mod view;
 
