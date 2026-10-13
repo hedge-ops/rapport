@@ -32,22 +32,27 @@ it when adding, updating, or directly editing a rule.
 Write like a senior engineer explaining a recommendation to a junior engineer,
 adopting the style of the Effective C#, Java, Rust, and TypeScript books. These
 books are references for the teaching style, not sources of rules to copy.
+See the [Effective Rust item titles](https://effective-rust.com/types.html),
+the [type-system explanation and examples](https://effective-rust.com/use-types.html),
+and the [discussion of generics and trait objects](https://effective-rust.com/generics.html)
+for examples of concise recommendations, practical teaching, and tradeoffs.
 Author original recommendations, rationale, and examples for the repository:
 
-- `text` is a short item title in the form
-  `Prefer|Avoid|Always|Never [best practice stated]`. State one specific practice;
-  put the explanation in `rationale`, not in a second sentence or a long title.
-  Choose the verb according to the recommendation's strength and scope.
-  Absolutes are valid for justified invariants; do not force every title into
-  one verb or weaken a real invariant.
-- `rationale` is the item's first paragraph, explaining why: why the practice
-  matters, the failure it prevents, and relevant tradeoffs or scope. Teach the
-  judgment so the reader can apply it in another situation; do not just repeat
+- `text` is a concise, specific engineering recommendation in natural language.
+  Choose the verb that expresses the judgment: use, prefer, avoid, consider,
+  minimize, or another suitable verb. Reserve always and never for justified
+  invariants. Put the explanation in `rationale`; do not impose a fixed verb
+  template or word count, or weaken a real invariant to fit a style.
+- `rationale` is a short explanatory paragraph that teaches why the
+  recommendation matters. Include the failure it prevents, its scope, or its
+  tradeoffs where useful, rather than mechanically covering a checklist.
+  Teach judgment the reader can apply in another situation; do not just repeat
   the title.
-- `avoid` and `prefer` are paired, realistic examples of bad and good behavior
-  in the target language, demonstrating the same practice. Show actual code
-  rather than describing what code should do. Keep the scenario comparable so
-  the change is apparent.
+- `avoid` and `prefer` are paired, concrete examples in the target language,
+  demonstrating the same lesson. Show why the discouraged approach causes
+  trouble in the stated context and how the recommended approach helps; an
+  alternative need not be universally wrong. Keep the scenarios comparable
+  and show actual code rather than describing what code should do.
   For tools or configuration, use the relevant shell, TOML, YAML, or other syntax
   rather than vague prose. Set each `language` to the example's actual syntax.
 - Keep the tone direct, patient, and practical. Explain one actionable lesson

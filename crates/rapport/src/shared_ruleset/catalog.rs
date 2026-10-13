@@ -23,28 +23,28 @@ const CATALOG_FILES: &[CatalogFile] = &[
     ),
     CatalogFile::new(
         "RUST_CODING",
-        "1.0.1",
+        "1.0.2",
         "Standards for clear, safe, and maintainable Rust implementation.",
         "rust/coding.toml",
         include_str!("../../catalog/rust/coding.toml"),
     ),
     CatalogFile::new(
         "RUST_TEST",
-        "1.0.2",
+        "1.0.3",
         "Standards for Rust tests as readable executable specifications.",
         "rust/test.toml",
         include_str!("../../catalog/rust/test.toml"),
     ),
     CatalogFile::new(
         "RUST_COMMENT",
-        "1.0.0",
+        "1.0.1",
         "Standards for concise Rust documentation and meaningful comments.",
         "rust/comment.toml",
         include_str!("../../catalog/rust/comment.toml"),
     ),
     CatalogFile::new(
         "RUST_CRATE",
-        "1.0.3",
+        "1.0.4",
         "Complete coding, testing, and documentation policy for a Rust crate.",
         "rust/crate.toml",
         include_str!("../../catalog/rust/crate.toml"),
@@ -79,7 +79,7 @@ const CATALOG_FILES: &[CatalogFile] = &[
     ),
     CatalogFile::new(
         "CRUX_APP",
-        "1.0.2",
+        "1.0.3",
         "Complete Rust and Crux policy for a cross-platform application.",
         "crux/app.toml",
         include_str!("../../catalog/crux/app.toml"),
@@ -538,28 +538,28 @@ mod tests {
             assert_ok!(catalog.get("RUST_CODING"))
                 .ruleset()
                 .catalog_version(),
-            Some("1.0.1"),
+            Some("1.0.2"),
             "expecting the changed Rust coding policy to receive the patch version"
         );
         assert_eq!(
             assert_ok!(catalog.get("RUST_CRATE"))
                 .ruleset()
                 .catalog_version(),
-            Some("1.0.3"),
+            Some("1.0.4"),
             "expecting the Rust aggregate to version its changed effective policy"
         );
         assert_eq!(
             assert_ok!(catalog.get("CRUX_APP"))
                 .ruleset()
                 .catalog_version(),
-            Some("1.0.2"),
+            Some("1.0.3"),
             "expecting the Crux aggregate to version its changed effective policy"
         );
         assert_eq!(
             assert_ok!(catalog.get("RUST_TEST"))
                 .ruleset()
                 .catalog_version(),
-            Some("1.0.2"),
+            Some("1.0.3"),
             "expecting the changed Rust test policy to receive the patch version"
         );
     }

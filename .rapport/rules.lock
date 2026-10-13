@@ -2,24 +2,24 @@ version = 1
 
 [[rulesets]]
 id = "RUST_CODING"
-catalog_version = "1.0.1"
+catalog_version = "1.0.2"
 path = "rust/coding.toml"
-digest = "2ef0f176be5cada0a062a7a6d66284bca68bd0a93344f91916f14d913fbbb58c"
+digest = "ab19a7beeb4e47df77d235a5ea89c94b33891c0115a0498e44a44bcf9f81189b"
 
 [[rulesets]]
 id = "RUST_COMMENT"
-catalog_version = "1.0.0"
+catalog_version = "1.0.1"
 path = "rust/comment.toml"
-digest = "66d1373a16db5c5d2652712612720562c6cab24778cf712e693ea6c52fbe6adf"
+digest = "b5a582e7972f5cde963ef0ed7862364e0e4a66f7aaeb015b8d339c3fc434c118"
 
 [[rulesets]]
 id = "RUST_CRATE"
-catalog_version = "1.0.1"
+catalog_version = "1.0.4"
 path = "rust/crate.toml"
-digest = "fd90e4893081d7bb78a2a64ed240fc4e02ca46ff7fe5919ef8bcf24a89dbed2a"
+digest = "1254fb0b9b3a2a333933508e4a1f9aa88ffc9c89db2915d2242efe9e2b575723"
 
 [[rulesets]]
 id = "RUST_TEST"
-catalog_version = "1.0.0"
+catalog_version = "1.0.3"
 path = "rust/test.toml"
-digest = "ab9dae1b78615cd2d13e0af6e9068664030ff6c9de121fb0fbf4b60064ad2649"
+digest = "ad3e814e5063473d768acdcf371db70bbeb7c0471ac070a4343f0b4fab2bc3d9"

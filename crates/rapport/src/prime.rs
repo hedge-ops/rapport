@@ -7,7 +7,7 @@ use rapport_files::FileSystem;
 use std::io::Write;
 use std::process::ExitCode;
 
-pub(crate) const RULE_AUTHORING_HELP: &str = "Rule authoring: run `rapport prime` for the authoritative Effective-series guide and a complete TOML example. Write --text as a short title: Prefer|Avoid|Always|Never [best practice stated]. Write --rationale as the first paragraph explaining why, including the failure, scope, and tradeoffs. Pair realistic bad and good behavior in the target language or tool syntax. Choose the title verb as justified by the rule.";
+pub(crate) const RULE_AUTHORING_HELP: &str = "Rule authoring: run `rapport prime` for the authoritative Effective-series guide, linked style references, and a complete TOML example. Write --text as a concise, specific recommendation in natural language; choose the verb that expresses the judgment and reserve always or never for justified invariants. Explain why in --rationale, with scope or tradeoffs where useful. Pair concrete examples showing the discouraged and recommended approaches in the target language or tool syntax.";
 
 pub fn run<F, O, E>(context: &mut CommandContext<'_, F, O, E>) -> ExitCode
 where

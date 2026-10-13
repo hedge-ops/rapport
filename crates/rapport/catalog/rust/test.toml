@@ -3,222 +3,334 @@ id = "RUST_TEST"
 includes = []
 
 [rules.RUST_TEST_001]
-text = "Treat tests as executable specifications. When a test fails, investigate and understand the behavior before changing the test or regenerating expected output."
-rationale = "A failing specification is evidence; changing it before finding the cause can silently legitimize a regression."
+text = "Investigate failures before changing test expectations."
+rationale = "A failing test is evidence that the implementation, the specification, or the setup needs attention. Regenerating expected output before identifying the cause can silently turn a regression into accepted behavior. Treat tests as executable specifications: understand the mismatch first, then change either the code or the expectation according to the intended behavior."
 
 [rules.RUST_TEST_001.avoid]
-language = "text"
-text = '''regenerating a failing snapshot without investigation.'''
+language = "shell"
+text = '''INSTA_UPDATE=always cargo nextest run'''
 
 [rules.RUST_TEST_001.prefer]
-language = "text"
-text = '''identify whether implementation or specification is wrong first.'''
+language = "shell"
+text = '''cargo nextest run
+git diff -- src testdata'''
 
 [rules.RUST_TEST_002]
-text = "Treat test code with the same care as production code: clear ownership, meaningful types, readable structure, and deliberate error handling."
-rationale = "Test code is maintained alongside production code and must communicate behavior without fragile shortcuts."
+text = "Write tests with production-level clarity."
+rationale = "A test is maintained alongside the behavior it specifies, so unclear inputs and careless error handling make failures harder to interpret. Give test code coherent ownership, meaningful types, readable structure, and deliberate failure handling. Use named fixtures for incidental construction details so the reader can focus on the scenario."
 
 [rules.RUST_TEST_002.avoid]
 language = "rust"
-text = '''let x = make("a", true, None, 7).unwrap()'''
+text = '''let person = make("michael", true, None, 7).unwrap();
+workspace.admit(person);'''
 
 [rules.RUST_TEST_002.prefer]
-language = "text"
-text = '''a named `PersonBuilder::for_testing()` fixture.'''
+language = "rust"
+text = '''let michael = assert_ok!(PersonBuilder::for_testing().name("Michael").build());
+workspace.admit(michael);'''
 
 [rules.RUST_TEST_003]
-text = "Prefer many fast, isolated tests without I/O. Reserve the smaller integration-test layer for real boundaries such as databases, filesystems, processes, networks, FFI, and framework integration."
-rationale = "Fast isolated tests provide broad feedback, while scarce boundary tests cover risks that pure tests cannot."
+text = "Prefer fast isolated tests for domain behavior."
+rationale = "Testing a pure operation through a database or network adds latency and unrelated failure modes without exercising more of that operation's contract. Cover most behavior with fast isolated tests that avoid I/O. Reserve a smaller integration layer for real boundaries such as databases, filesystems, processes, networks, FFI, and framework integration."
 
 [rules.RUST_TEST_003.avoid]
-language = "text"
-text = '''starting a database to test a pure rename.'''
+language = "rust"
+text = '''#[test]
+fn rename_should_change_name() {
+    let database = TestDatabase::start();
+    let mut person = database.load_person();
+    person.rename("Michael");
+    assert_eq!(person.name(), "Michael");
+}'''
 
 [rules.RUST_TEST_003.prefer]
-language = "text"
-text = '''mutate a `Person` directly and assert its name.'''
+language = "rust"
+text = '''#[test]
+fn rename_should_change_name() {
+    let mut person = PersonBuilder::for_testing().build();
+    person.rename("Michael");
+    assert_eq!(person.name(), "Michael");
+}'''
 
 [rules.RUST_TEST_004]
-text = "Organize tests using Setup, Exercise, Verify, and Teardown thinking, but do not add comments or section markers that merely label those phases."
-rationale = "A visible behavioral flow improves readability without comments that restate test mechanics."
+text = "Prefer test structure that needs no phase labels."
+rationale = "A test should make its setup, exercise, verification, and any teardown apparent through the order and names of its operations. Comments that merely label those phases repeat mechanics and can hide a confusing flow. Organize the test using those phases as a design aid, then let the code express them directly."
 
 [rules.RUST_TEST_004.avoid]
-language = "text"
-text = '''`// Setup`, `// Exercise`, and `// Verify` banners.'''
+language = "rust"
+text = '''#[test]
+fn rename_should_change_name() {
+    // Setup
+    let mut person = michael();
+    // Exercise
+    person.rename("Mike");
+    // Verify
+    assert_eq!(person.name(), "Mike");
+}'''
 
 [rules.RUST_TEST_004.prefer]
 language = "rust"
-text = '''assert_eq!(
-    count,
-    1,
-    "expecting one person after admitting a contact",
-)'''
+text = '''#[test]
+fn rename_should_change_name() {
+    let mut person = michael();
+    person.rename("Mike");
+    assert_eq!(person.name(), "Mike");
+}'''
 
 [rules.RUST_TEST_005]
-text = "Name ordinary tests `$FUNCTION_should_$BEHAVIOR`, identifying the operation under test and the observable behavior being specified."
-rationale = "Behavioral names make failures self-explanatory in test output and during code search."
+text = "Name tests for the behavior they specify."
+rationale = "A numbered or generic test name gives little help when the test fails or appears in a search result. Use FUNCTION_should_BEHAVIOR for ordinary tests so the operation and its expected outcome are visible without opening the body. Describe observable behavior rather than an internal implementation step."
 
 [rules.RUST_TEST_005.avoid]
-language = "text"
-text = '''test_admit_1'''
+language = "rust"
+text = '''#[test]
+fn test_admit_1() {
+    let mut workspace = empty_workspace();
+    workspace.admit(michael());
+    assert_eq!(workspace.people().count(), 1);
+}'''
 
 [rules.RUST_TEST_005.prefer]
-language = "text"
-text = '''admit_should_add_person'''
+language = "rust"
+text = '''#[test]
+fn admit_should_add_person() {
+    let mut workspace = empty_workspace();
+    workspace.admit(michael());
+    assert_eq!(workspace.people().count(), 1);
+}'''
 
 [rules.RUST_TEST_006]
-text = "Use `rstest` for parameterized tests instead of duplicating test functions. Give each case a descriptive `#[case::name]`."
-rationale = "Named parameter cases remove duplication while preserving the scenario represented by each input."
+text = "Use named rstest cases for repeated scenarios."
+rationale = "Duplicated test functions obscure the shared behavior and make it easy to update one case but miss another. Use rstest for parameterized tests, giving each case a descriptive #[case::name] so failures still identify the scenario. Share the exercise and verification while keeping the meaningful inputs visible."
 
 [rules.RUST_TEST_006.avoid]
-language = "text"
-text = '''separate functions for empty and whitespace names.'''
+language = "rust"
+text = '''#[test]
+fn name_should_reject_empty() {
+    assert_err!(Name::try_new(""));
+}
+
+#[test]
+fn name_should_reject_whitespace() {
+    assert_err!(Name::try_new("   "));
+}'''
 
 [rules.RUST_TEST_006.prefer]
 language = "rust"
-text = '''#[case::empty("")]
-#[case::whitespace("   ")]'''
+text = '''#[rstest]
+#[case::empty("")]
+#[case::whitespace("   ")]
+fn name_should_reject_blank(#[case] input: &str) {
+    assert_err!(Name::try_new(input));
+}'''
 
 [rules.RUST_TEST_007]
-text = "Use `claims` assertions for fallible and optional values: `assert_ok!`, `assert_err!`, `assert_some!`, and `assert_none!`."
-rationale = "Purpose-built assertions fail with clearer diagnostics and avoid panic-oriented extraction."
+text = "Use claims to assert fallible test outcomes."
+rationale = "Unwrapping a Result or Option in a test expresses extraction but obscures the expectation that the operation succeeded, failed, or returned a value. Use claims assertions to make that expectation explicit and improve the diagnostic at the point where it matters. Use assert_ok!, assert_err!, assert_some!, and assert_none! according to the scenario."
 
 [rules.RUST_TEST_007.avoid]
 language = "rust"
-text = '''let person = result.unwrap()'''
+text = '''let person = result.unwrap();'''
 
 [rules.RUST_TEST_007.prefer]
 language = "rust"
-text = '''let person = assert_ok!(result)'''
+text = '''let person = assert_ok!(result);'''
 
 [rules.RUST_TEST_008]
-text = "Use `pretty_assertions::assert_eq` for equality assertions so failures show readable structural differences."
-rationale = "Readable structural diffs shorten diagnosis when complex values diverge."
+text = "Use pretty_assertions for readable equality failures."
+rationale = "A failed equality check is useful only when the difference is easy to inspect. Use pretty_assertions::assert_eq so structural mismatches produce readable diffs, especially for nested domain values and complete generated output. Keep the assertion about observable behavior rather than incidental representation."
 
 [rules.RUST_TEST_008.avoid]
-language = "text"
-text = '''the standard equality macro for structural comparisons.'''
+language = "rust"
+text = '''use std::assert_eq;
+assert_eq!(actual_workspace, expected_workspace);'''
 
 [rules.RUST_TEST_008.prefer]
-language = "text"
-text = '''use pretty_assertions::assert_eq'''
+language = "rust"
+text = '''use pretty_assertions::assert_eq;
+assert_eq!(actual_workspace, expected_workspace);'''
 
 [rules.RUST_TEST_009]
-text = "Assertion messages must be lowercase, begin with `expecting`, and describe the domain behavior or invariant being checked. The message explains the scenario rather than duplicating expected and actual values."
-rationale = "Consistent scenario-focused messages explain why an assertion matters when the raw comparison is insufficient."
+text = "Explain the invariant in assertion messages."
+rationale = "The actual and expected values show what differed, but they may not show why the comparison matters. Write lowercase assertion messages beginning with expecting and describe the domain behavior or invariant being checked. Avoid repeating the values already printed by the assertion; explain the scenario that makes those values significant."
 
 [rules.RUST_TEST_009.avoid]
 language = "rust"
-text = '''assert_eq!(workspace.people().count(), 2)'''
+text = '''assert_eq!(workspace.people().count(), 2, "Expected 2, got another count");'''
 
 [rules.RUST_TEST_009.prefer]
 language = "rust"
-text = '''assert_eq!(workspace.people().count(), 2, "expecting the workspace to contain both admitted contacts")'''
+text = '''assert_eq!(workspace.people().count(), 2, "expecting both admitted contacts in the workspace");'''
 
 [rules.RUST_TEST_010]
-text = "Assert meaningful preconditions when later verification depends on setup output. Prefix precondition assertion messages with `precondition: ` so setup failures are distinguishable from failures in the behavior under test."
-rationale = "Explicit preconditions distinguish broken setup from a failure in the behavior being specified."
+text = "Check preconditions that affect test verification."
+rationale = "A later assertion can produce a misleading failure when setup did not establish the state the scenario assumes. Assert meaningful preconditions when verification depends on setup output, and prefix those messages with precondition: so setup failures are distinguishable from behavior failures. Do not add checks for incidental setup details that the scenario does not rely on."
 
 [rules.RUST_TEST_010.avoid]
-language = "text"
-text = '''assuming the loaded workspace is empty.'''
+language = "rust"
+text = '''let mut workspace = load_workspace();
+workspace.admit(michael());
+assert_eq!(workspace.people().count(), 1);'''
 
 [rules.RUST_TEST_010.prefer]
 language = "rust"
-text = '''assert!(workspace.people().next().is_none(), "precondition: load_workspace has no people in it")'''
+text = '''let mut workspace = load_workspace();
+assert!(workspace.people().next().is_none(), "precondition: the loaded workspace has no people");
+workspace.admit(michael());
+assert_eq!(workspace.people().count(), 1);'''
 
 [rules.RUST_TEST_011]
-text = "Prefer hand-written fakes over mocking libraries. Model only the collaborator behavior the test needs and keep the fake's state inspectable."
-rationale = "Small fakes expose domain interactions directly and avoid tests coupled to mocking framework mechanics."
+text = "Prefer inspectable hand-written fakes."
+rationale = "A mock configured around call counts can bind a test to interaction mechanics instead of the result the user cares about. Prefer a small hand-written fake that models only the collaborator behavior the scenario needs and exposes its resulting state. This lets verification inspect saved values or other domain effects without maintaining a large imitation of the production dependency."
 
 [rules.RUST_TEST_011.avoid]
-language = "text"
-text = '''configuring mock call counts.'''
+language = "rust"
+text = '''let mut repository = MockRepository::new();
+repository.expect_save().times(1).returning(|_| Ok(()));
+assert_ok!(save_workspace(&mut repository, workspace));'''
 
 [rules.RUST_TEST_011.prefer]
-language = "text"
-text = '''inspect `FakeRepository::saved_workspaces()`.'''
+language = "rust"
+text = '''let mut repository = FakeRepository::default();
+assert_ok!(save_workspace(&mut repository, workspace.clone()));
+assert_eq!(repository.saved_workspaces(), &[workspace]);'''
 
 [rules.RUST_TEST_012]
-text = "Inject a clock whenever behavior depends on current time or time movement. Use a `FakeClock` when tests advance time and a fixed instant when they do not. Tests must never read the production system clock."
-rationale = "Controlled time makes tests deterministic and allows time-dependent transitions to be exercised intentionally."
+text = "Never read the production clock in tests."
+rationale = "A test that reads current time depends on when it runs, which makes boundaries and time-dependent transitions difficult to reproduce. Inject a clock whenever behavior depends on current time or time movement. Use a fixed instant when time stays still and a FakeClock when the scenario advances it; verification must not consult the production clock."
 
 [rules.RUST_TEST_012.avoid]
 language = "rust"
-text = '''Date::today()'''
+text = '''let mut session = Session::new(SystemClock);
+session.start();
+std::thread::sleep(timeout);
+assert!(session.is_expired());'''
 
 [rules.RUST_TEST_012.prefer]
 language = "rust"
 text = '''let clock = FakeClock::at(fixed_instant);
-clock.advance(duration);'''
+let mut session = Session::new(clock.clone());
+session.start();
+clock.advance(timeout);
+assert!(session.is_expired());'''
 
 [rules.RUST_TEST_013]
-text = "Helpers that bypass ordinary validation or error handling must be available only under `cfg(test)` or a `testing` feature. Dependent crates enable the source crate's `testing` feature through `dev-dependencies`, never production dependencies."
-rationale = "Validation bypasses are unsafe production API and should exist only for controlled test construction."
+text = "Never expose validation bypasses to production."
+rationale = "A helper that skips ordinary validation or error handling is useful for controlled fixtures but gives production callers a way to violate the domain contract. Make it available only under cfg(test) or a testing feature. Dependent crates must enable that feature through dev-dependencies, never production dependencies, so the bypass remains confined to tests."
 
 [rules.RUST_TEST_013.avoid]
-language = "text"
-text = '''an always-public `from_str_unchecked`.'''
+language = "rust"
+text = '''impl WorkspaceId {
+    pub fn from_str_unchecked(value: String) -> Self {
+        Self(value)
+    }
+}'''
 
 [rules.RUST_TEST_013.prefer]
-language = "text"
-text = '''#[cfg(any(test, feature = "testing"))]` and `{ features = ["testing"] }` under `[dev-dependencies]'''
+language = "rust"
+text = '''impl WorkspaceId {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn from_str_unchecked(value: String) -> Self {
+        Self(value)
+    }
+}'''
 
 [rules.RUST_TEST_014]
-text = "Use `cargo-mutants` selectively to audit important domain behavior, not as a coverage quota. Add a test only when a surviving mutant represents observable behavior worth specifying. Exclude or accept irrelevant mutants narrowly, with a concise rationale."
-rationale = "Mutation testing is valuable when it reveals missing observable behavior, not when it rewards implementation pinning."
+text = "Prefer mutation audits of observable behavior."
+rationale = "A surviving mutation matters when it reveals an untested outcome that callers can observe. Use cargo-mutants selectively to audit important domain behavior, rather than treating its score as a quota. Add a test for a meaningful missing contract, and narrowly exclude or accept irrelevant mutants with a concise rationale instead of pinning internal comparisons."
 
 [rules.RUST_TEST_014.avoid]
-language = "text"
-text = '''pinning an internal comparison solely to kill a mutant.'''
+language = "rust"
+text = '''#[test]
+fn limit_should_equal_configured_value() {
+    let workspace = workspace_at_person_limit();
+    assert_eq!(workspace.limit(), PLAN_PERSON_LIMIT);
+}'''
 
 [rules.RUST_TEST_014.prefer]
-language = "text"
-text = '''specify observable plan-limit behavior.'''
+language = "rust"
+text = '''#[test]
+fn admit_should_reject_person_beyond_limit() {
+    let mut workspace = workspace_at_person_limit();
+    assert_eq!(workspace.admit(michael()), Err(Error::PersonLimitReached));
+}'''
 
 [rules.RUST_TEST_015]
-text = "Avoid property-based testing. Prefer a small set of named examples that communicate domain behavior and make failures immediately understandable."
-rationale = "Named examples communicate the intended domain partition more clearly than opaque generated counterexamples."
+text = "Avoid property-based testing."
+rationale = "This repository favors a small set of named scenarios that explain the domain partition and make each failure immediately understandable. Generated cases can obscure that explanation when the failure is reported as an unfamiliar counterexample. Express behavior with deliberate examples, such as admitting a person and rejecting a duplicate, so a maintainer can connect the failing test to its contract."
 
 [rules.RUST_TEST_015.avoid]
-language = "text"
-text = '''generated arbitrary people for ordinary admit behavior.'''
+language = "rust"
+text = '''proptest! {
+    #[test]
+    fn admit_increases_count(person in arbitrary_person()) {
+        let mut workspace = empty_workspace();
+        assert_ok!(workspace.admit(person));
+        prop_assert_eq!(workspace.people().count(), 1);
+    }
+}'''
 
 [rules.RUST_TEST_015.prefer]
-language = "text"
-text = '''named tests for adding a person and rejecting a duplicate.'''
+language = "rust"
+text = '''#[test]
+fn admit_should_add_person() {
+    let mut workspace = empty_workspace();
+    assert_ok!(workspace.admit(michael()));
+    assert_eq!(workspace.people().count(), 1);
+}
+
+#[test]
+fn admit_should_reject_duplicate() {
+    let mut workspace = workspace_with_michael();
+    assert_eq!(workspace.admit(michael()), Err(Error::DuplicatePerson));
+}'''
 
 [rules.RUST_TEST_016]
-text = "Avoid comments that narrate test mechanics. Use selective structured logs to tell the story of meaningful domain actions and transitions. Do not log every setup step, and do not assert against log text."
-rationale = "Tests should narrate through behavior and selective diagnostics, not comments or assertions coupled to log wording."
+text = "Avoid comments that narrate test mechanics."
+rationale = "A comment that repeats the next statement adds maintenance work without explaining the scenario. Let names and operations carry the test, and use selective structured logs when meaningful domain transitions need diagnostic narration. Do not log every setup step or assert against log text; those details should not become the behavior the test specifies."
 
 [rules.RUST_TEST_016.avoid]
-language = "text"
-text = '''// Add the person'''
+language = "rust"
+text = '''// Add the person.
+assert_ok!(workspace.admit(michael()));'''
 
 [rules.RUST_TEST_016.prefer]
 language = "rust"
-text = '''tracing::debug!("admitting person");'''
+text = '''tracing::debug!(person = "Michael", "admitting person");
+assert_ok!(workspace.admit(michael()));'''
 
 [rules.RUST_TEST_017]
-text = "Give scenario and integration tests a short business-level doc sentence beginning with “When…” or another direct description of the situation and expected outcome."
-rationale = "Business-level scenario documentation states the contract an integration test protects without touring its mechanics."
+text = "Document the contract of scenario tests."
+rationale = "Scenario and integration tests often cross several boundaries, so a reader needs a quick statement of the situation and expected outcome. Give these tests a short business-level doc sentence beginning with When or another direct description. Explain the contract it protects rather than touring setup, calls, or assertions."
 
 [rules.RUST_TEST_017.avoid]
-language = "text"
-text = '''/// Tests adding a contact.'''
+language = "rust"
+text = '''/// Creates a workspace, calls admit, and checks the count.
+#[test]
+fn admit_should_add_person() {
+    let mut workspace = empty_workspace();
+    assert_ok!(workspace.admit(michael()));
+    assert_eq!(workspace.people().count(), 1);
+}'''
 
 [rules.RUST_TEST_017.prefer]
-language = "text"
-text = '''/// When a contact is admitted, the workspace contains one additional person.'''
+language = "rust"
+text = '''/// When a contact is admitted, the workspace contains one additional person.
+#[test]
+fn admit_should_add_person() {
+    let mut workspace = empty_workspace();
+    assert_ok!(workspace.admit(michael()));
+    assert_eq!(workspace.people().count(), 1);
+}'''
 
 [rules.RUST_TEST_018]
-text = "Avoid magic constants inside tests. Give domain-significant values names that explain what they represent, and hide unimportant construction details behind fixtures or helpers so the test reads as a specification."
-rationale = "Named domain values keep the specification legible and prevent incidental fixture details from dominating the test."
+text = "Avoid unexplained constants in tests."
+rationale = "A literal that carries domain meaning forces the reader to infer why that particular value matters. Name meaningful limits and identities, and hide incidental construction details in fixtures or helpers. Keep the inputs that distinguish the scenario visible so the test remains a specification rather than a puzzle about arbitrary numbers."
 
 [rules.RUST_TEST_018.avoid]
 language = "rust"
-text = '''workspace.set_limit(42); workspace.admit(person("abc", "Michael", true))'''
+text = '''workspace.set_limit(42);
+workspace.admit(person("abc", "Michael", true));'''
 
 [rules.RUST_TEST_018.prefer]
 language = "rust"
@@ -226,15 +338,15 @@ text = '''workspace.set_limit(PLAN_PERSON_LIMIT);
 workspace.admit(michael());'''
 
 [rules.RUST_TEST_019]
-text = "Test logic rather than static string data. Do not assert fragments of checked-in strings; assert text when production logic generates or transforms it."
-rationale = "Tests should specify behavior. Searching an included fixture only proves the fixture contains data; it does not exercise production logic. Generated or transformed text is observable behavior and should be tested."
+text = "Compare complete output from owned text builders."
+rationale = "Tests should exercise production behavior rather than search checked-in string data for expected fragments. For generated or transformed text, compare complete output from the owned builder or renderer so omissions and unwanted additions are visible. Use readable fixture files for longer output, structured values and typed errors for non-text behavior, and avoid asserting dependency-generated help or error wording."
 
 [rules.RUST_TEST_019.avoid]
 language = "rust"
-text = '''let guide = include_str!("../prime.md");
-assert!(guide.contains("rapport review <path>"));'''
+text = '''let generated = facet_generate(schema);
+assert!(generated.contains("pub struct Person"));'''
 
 [rules.RUST_TEST_019.prefer]
 language = "rust"
 text = '''let generated = facet_generate(schema);
-assert!(generated.contains("pub struct Person"));'''
+assert_eq!(generated, include_str!("testdata/person.rs"));'''

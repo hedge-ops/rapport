@@ -4,37 +4,37 @@ purpose = "Rapport-specific classification and diagnostic handling for local dev
 includes = []
 
 [rules.RAPPORT_PRIVACY_001]
-text = "Treat repository paths, branch names, commit IDs, Context and Ruleset IDs, Work and Task metadata, Just targets, and ordinary command details as local operational evidence, not sensitive data."
-rationale = "Rapport is a local developer tool, and users need exact operational evidence to understand state and diagnose failures."
+text = "Preserve non-sensitive operational evidence."
+rationale = "Rapport is a local developer tool, and users need concrete operational evidence to locate failures and reproduce them. Repository paths, branch names, commit IDs, Context and Ruleset IDs, Work and Task metadata, Just targets, and ordinary command details are operational values, not sensitive data merely because they describe local work. Preserve them in diagnostics unless the domain explicitly classifies a particular value as sensitive."
 
 [rules.RAPPORT_PRIVACY_001.avoid]
-language = "text"
-text = "reporting that a build failed in [redacted] on revision [redacted]"
+language = "rust"
+text = '''tracing::error!(repository = "[redacted]", revision = "[redacted]", "running validation failed");'''
 
 [rules.RAPPORT_PRIVACY_001.prefer]
-language = "text"
-text = "reporting that just ci failed in /workspace/rapport on branch work/policy at revision 7f3466a"
+language = "rust"
+text = '''tracing::error!(%repository, %revision, target = "ci", "running validation failed");'''
 
 [rules.RAPPORT_PRIVACY_002]
-text = "Redact only values the Rapport domain explicitly classifies as sensitive, including credentials, authentication tokens, secret environment values, and encryption material; preserve the non-sensitive operation surrounding them."
-rationale = "Narrow redaction protects actual secrets without erasing the context required to remediate a local tool failure."
+text = "Never emit domain-classified secrets in diagnostics."
+rationale = "A diagnostic that copies a credential or token creates another place from which it can be used. Redact values the Rapport domain explicitly classifies as sensitive, including credentials, authentication tokens, secret environment values, and encryption material. Keep the non-sensitive operation and destination around the redaction so the failure remains actionable without exposing the secret."
 
 [rules.RAPPORT_PRIVACY_002.avoid]
-language = "text"
-text = "authentication failed with token ghp_example_secret"
+language = "rust"
+text = '''tracing::error!(host = "api.github.com", token = %token.raw(), "authenticating failed");'''
 
 [rules.RAPPORT_PRIVACY_002.prefer]
-language = "text"
-text = "authentication failed for api.github.com with token [redacted]"
+language = "rust"
+text = '''tracing::error!(host = "api.github.com", token = "[redacted]", "authenticating failed");'''
 
 [rules.RAPPORT_PRIVACY_003]
-text = "Debug output, errors, logs, and command-failure reports retain actionable non-sensitive values; do not replace them with lengths, counts, or redacted markers solely as a generic privacy precaution."
-rationale = "Concrete local values make Rapport state inspectable and failures reproducible, while generic summaries conceal the evidence the user invoked Rapport to obtain."
+text = "Avoid replacing useful values with generic summaries."
+rationale = "Lengths, counts, and blanket redaction can conceal the exact evidence a user requested without protecting anything classified as sensitive. Keep actionable non-sensitive values in Debug output, errors, logs, and command-failure reports. Apply focused redaction only where the domain requires it, so ordinary diagnostics retain enough detail to identify the operation and correct the failure."
 
 [rules.RAPPORT_PRIVACY_003.avoid]
-language = "text"
-text = 'Work { repository: "[redacted]", title_length: 18, starting_source: "[redacted]" }'
+language = "rust"
+text = '''tracing::debug!(title_length = title.len(), repository = "[redacted]", revision = "[redacted]", "reviewing component");'''
 
 [rules.RAPPORT_PRIVACY_003.prefer]
-language = "text"
-text = 'Work { repository: "/workspace/rapport", title: "tighten catalog rules", starting_source: "7f3466a" }'
+language = "rust"
+text = '''tracing::debug!(%title, %repository, %revision, "reviewing component");'''
