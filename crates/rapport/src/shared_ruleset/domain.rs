@@ -93,6 +93,7 @@ pub(crate) enum ExampleLanguage {
     Yaml,
     Markdown,
     Shell,
+    Just,
     Text,
 }
 
@@ -114,6 +115,7 @@ impl FromStr for ExampleLanguage {
             "yaml" => Ok(Self::Yaml),
             "markdown" => Ok(Self::Markdown),
             "shell" => Ok(Self::Shell),
+            "just" => Ok(Self::Just),
             "text" => Ok(Self::Text),
             _ => Err(Error::UnsupportedLanguage),
         }
@@ -142,6 +144,7 @@ impl ExampleLanguage {
             Self::Yaml => "yaml",
             Self::Markdown => "markdown",
             Self::Shell => "shell",
+            Self::Just => "just",
             Self::Text => "text",
         }
     }
@@ -466,8 +469,10 @@ fn required_text(field: &'static str, value: impl Into<String>) -> Result<String
 
 #[cfg(test)]
 mod tests {
-    use super::{Example, NewRule, Rule, RulesetId};
+    use super::{Example, ExampleLanguage, NewRule, Rule, RulesetId};
+    use crate::shared_ruleset::Error;
     use claims::{assert_err, assert_ok};
+    use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     #[rstest]
@@ -503,10 +508,51 @@ mod tests {
         );
     }
 
-    #[test]
-    fn example_should_accept_yaml_and_preserve_its_fence_label() {
-        let example = assert_ok!(Example::try_new("yaml", "command: just ci"));
+    #[rstest]
+    #[case::rust("rust", ExampleLanguage::Rust)]
+    #[case::swift("swift", ExampleLanguage::Swift)]
+    #[case::kotlin("kotlin", ExampleLanguage::Kotlin)]
+    #[case::csharp("csharp", ExampleLanguage::Csharp)]
+    #[case::xaml("xaml", ExampleLanguage::Xaml)]
+    #[case::html("html", ExampleLanguage::Html)]
+    #[case::javascript("javascript", ExampleLanguage::Javascript)]
+    #[case::typescript("typescript", ExampleLanguage::Typescript)]
+    #[case::toml("toml", ExampleLanguage::Toml)]
+    #[case::json("json", ExampleLanguage::Json)]
+    #[case::yaml("yaml", ExampleLanguage::Yaml)]
+    #[case::markdown("markdown", ExampleLanguage::Markdown)]
+    #[case::shell("shell", ExampleLanguage::Shell)]
+    #[case::just("just", ExampleLanguage::Just)]
+    #[case::text("text", ExampleLanguage::Text)]
+    fn example_should_preserve_supported_language_tags(
+        #[case] tag: &str,
+        #[case] language: ExampleLanguage,
+    ) {
+        let example = assert_ok!(Example::try_new(tag, "example"));
 
-        assert_eq!(example.language().as_str(), "yaml");
+        assert_eq!(
+            example.language(),
+            language,
+            "expecting the authored language"
+        );
+        assert_eq!(
+            example.language().as_str(),
+            tag,
+            "expecting the original fence label"
+        );
+    }
+
+    #[rstest]
+    #[case::unknown("python")]
+    #[case::empty("")]
+    #[case::capitalized("Just")]
+    #[case::whitespace(" just ")]
+    fn example_should_reject_unsupported_language_tags(#[case] tag: &str) {
+        let error = assert_err!(Example::try_new(tag, "example"));
+
+        assert!(
+            matches!(error, Error::UnsupportedLanguage),
+            "expecting a typed unsupported-language error"
+        );
     }
 }

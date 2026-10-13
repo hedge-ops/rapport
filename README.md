@@ -83,7 +83,7 @@ points to this guide.
 
 Example language tags are preserved as Markdown fence labels. Supported tags are
 `rust`, `swift`, `kotlin`, `csharp`, `xaml`, `html`, `javascript`, `typescript`,
-`toml`, `json`, `yaml`, `markdown`, `shell`, and `text`.
+`toml`, `json`, `yaml`, `markdown`, `shell`, `just`, and `text`.
 
 `type` is an optional nonempty classification. It accepts `group`, `crate`,
 `swift_package`, `apple_shell`, `cloudflare_worker`, `kustomize`,

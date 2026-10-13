@@ -651,3 +651,45 @@ fn review_should_render_transitive_benchmarks_once_with_their_defining_sources()
     assert_eq!(code, ExitCode::SUCCESS, "{err}");
     assert_eq!(out, include_str!("../testdata/review-transitive.md"));
 }
+
+/// Justfile standards validate and render complete examples in ruleset display and review guidance.
+#[test]
+fn review_should_accept_and_render_just_examples() {
+    let mut fs = InMemoryFileSystem::default();
+    fs.add_directory("/repo/.git");
+    assert_ok!(fs.write_string(
+        "/repo/context.toml",
+        "namespace = 'ROOT'\npurpose = 'Repository architecture.'\n[ruleset]\nincludes = ['BUILD']\n",
+    ));
+    assert_ok!(fs.write_string(
+        "/repo/.rapport/rules/build.toml",
+        include_str!("../testdata/just-ruleset.toml"),
+    ));
+
+    let (code, out, err) = run(&mut fs, &["context", "validate"]);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting valid Justfile standards: {err}"
+    );
+    assert_eq!(out, include_str!("../testdata/context-validate-one.md"));
+
+    let (code, out, err) = run(
+        &mut fs,
+        &["ruleset", "show", "BUILD", "--rule", "BUILD_001"],
+    );
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting an inspectable Justfile rule: {err}"
+    );
+    assert_eq!(out, include_str!("../testdata/just-ruleset-show.md"));
+
+    let (code, out, err) = run(&mut fs, &["review", "."]);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting Justfile review guidance: {err}"
+    );
+    assert_eq!(out, include_str!("../testdata/review-just.md"));
+}

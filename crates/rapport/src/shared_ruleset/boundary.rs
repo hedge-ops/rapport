@@ -169,7 +169,7 @@ pub(super) fn path_for_repository_ruleset(root: &Utf8Path, ruleset: &Ruleset) ->
 mod tests {
     use super::{parse_catalog, parse_repository, render};
     use crate::shared_ruleset::Error;
-    use claims::{assert_err, assert_ok};
+    use claims::{assert_err, assert_ok, assert_some};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -206,6 +206,32 @@ text = "let person_count = value;"
         assert_eq!(
             round_trip, ruleset,
             "expecting canonical TOML to preserve the complete Ruleset"
+        );
+    }
+
+    /// Justfile examples retain their language and complete recipe text through TOML persistence.
+    #[test]
+    fn render_should_round_trip_just_examples() {
+        let path = "/repo/.rapport/rules/build.toml".into();
+        let ruleset = assert_ok!(parse_repository(
+            include_str!("../testdata/just-ruleset.toml"),
+            path,
+        ));
+        let rendered = assert_ok!(render(&ruleset));
+        let round_trip = assert_ok!(parse_repository(&rendered, path));
+        let rule = assert_some!(round_trip.rules().next());
+
+        assert_eq!(
+            rule.avoid().language(),
+            super::super::domain::ExampleLanguage::Just
+        );
+        assert_eq!(
+            rule.prefer().language(),
+            super::super::domain::ExampleLanguage::Just
+        );
+        assert_eq!(
+            round_trip, ruleset,
+            "expecting complete Justfile examples to survive persistence"
         );
     }
 
