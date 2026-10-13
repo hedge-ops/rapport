@@ -30,7 +30,9 @@ under `.rapport/rules/` and rules owned by component `context.toml` files. Apply
 it when adding, updating, or directly editing a rule.
 
 Write like a senior engineer explaining a recommendation to a junior engineer,
-modeled on an item in Effective C#, Java, Rust, or TypeScript:
+adopting the style of the Effective C#, Java, Rust, and TypeScript books. These
+books are references for the teaching style, not sources of rules to copy.
+Author original recommendations, rationale, and examples for the repository:
 
 - `text` is the item title: a short, specific engineering recommendation that
   tells the reader what to do. Use prefer, avoid, always, or never according to
