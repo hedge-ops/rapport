@@ -389,9 +389,35 @@ pub(super) fn render(context: &Context) -> Result<String, Error> {
 mod tests {
     use super::{parse, render};
     use crate::policy_context::Error;
-    use claims::{assert_err, assert_ok};
+    use claims::{assert_err, assert_ok, assert_some};
+    use pretty_assertions::assert_eq;
     use rapport_files::Utf8Path;
     use rstest::rstest;
+
+    /// Component-owned Ruby examples preserve complete domain values through TOML persistence.
+    #[test]
+    fn render_should_round_trip_ruby_examples() {
+        let path = Utf8Path::new("/repo/context.toml");
+        let context = assert_ok!(parse(include_str!("../testdata/ruby-context.toml"), path));
+        let rendered = assert_ok!(render(&context));
+        let round_trip = assert_ok!(parse(&rendered, path));
+        let rule = assert_some!(round_trip.ruleset().rules().next());
+
+        assert_eq!(
+            rule.avoid().language().as_str(),
+            "ruby",
+            "expecting the authored avoid language"
+        );
+        assert_eq!(
+            rule.prefer().language().as_str(),
+            "ruby",
+            "expecting the authored prefer language"
+        );
+        assert_eq!(
+            round_trip, context,
+            "expecting complete component examples to survive persistence"
+        );
+    }
 
     #[test]
     fn parse_should_identify_legacy_context_schema() {

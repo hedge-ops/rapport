@@ -82,7 +82,7 @@ examples in the relevant language or tool syntax. Rule add/update help also
 points to this guide.
 
 Example language tags are preserved as Markdown fence labels. Supported tags are
-`rust`, `swift`, `kotlin`, `csharp`, `xaml`, `html`, `javascript`, `typescript`,
+`rust`, `ruby`, `swift`, `kotlin`, `csharp`, `xaml`, `html`, `javascript`, `typescript`,
 `toml`, `json`, `yaml`, `markdown`, `shell`, `just`, and `text`.
 
 `type` is an optional nonempty classification. It accepts `group`, `crate`,

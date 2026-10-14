@@ -81,6 +81,7 @@ impl fmt::Debug for RuleId {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExampleLanguage {
     Rust,
+    Ruby,
     Swift,
     Kotlin,
     Csharp,
@@ -103,6 +104,7 @@ impl FromStr for ExampleLanguage {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "rust" => Ok(Self::Rust),
+            "ruby" => Ok(Self::Ruby),
             "swift" => Ok(Self::Swift),
             "kotlin" => Ok(Self::Kotlin),
             "csharp" => Ok(Self::Csharp),
@@ -132,6 +134,7 @@ impl ExampleLanguage {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Rust => "rust",
+            Self::Ruby => "ruby",
             Self::Swift => "swift",
             Self::Kotlin => "kotlin",
             Self::Csharp => "csharp",
@@ -510,6 +513,7 @@ mod tests {
 
     #[rstest]
     #[case::rust("rust", ExampleLanguage::Rust)]
+    #[case::ruby("ruby", ExampleLanguage::Ruby)]
     #[case::swift("swift", ExampleLanguage::Swift)]
     #[case::kotlin("kotlin", ExampleLanguage::Kotlin)]
     #[case::csharp("csharp", ExampleLanguage::Csharp)]
@@ -544,6 +548,8 @@ mod tests {
 
     #[rstest]
     #[case::unknown("python")]
+    #[case::capitalized_ruby("Ruby")]
+    #[case::whitespace_ruby(" ruby ")]
     #[case::empty("")]
     #[case::capitalized("Just")]
     #[case::whitespace(" just ")]

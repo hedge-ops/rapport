@@ -1,0 +1,23 @@
+version = 1
+id = "CHEF_TESTING"
+purpose = "Chef directory standards."
+includes = []
+
+[rules.CHEF_TESTING_001]
+text = "Declare directory permissions explicitly."
+rationale = "Explicit permissions keep Chef directory resources reproducible."
+
+[rules.CHEF_TESTING_001.avoid]
+language = "ruby"
+text = """directory '/var/lib/people-work' do
+  owner 'root'
+end
+"""
+
+[rules.CHEF_TESTING_001.prefer]
+language = "ruby"
+text = """directory '/var/lib/people-work' do
+  owner 'root'
+  mode '0700'
+end
+"""
