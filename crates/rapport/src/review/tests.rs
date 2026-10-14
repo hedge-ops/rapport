@@ -693,3 +693,69 @@ fn review_should_accept_and_render_just_examples() {
     );
     assert_eq!(out, include_str!("../testdata/review-just.md"));
 }
+
+/// Shared and component-owned Ruby standards validate and preserve complete code in inspection and review.
+#[rstest]
+#[case::shared(false, include_str!("../testdata/ruby-ruleset-show.md"), include_str!("../testdata/review-ruby-shared.md"))]
+#[case::component(true, include_str!("../testdata/ruby-context-show.md"), include_str!("../testdata/review-ruby-component.md"))]
+fn review_should_accept_and_render_ruby_examples(
+    #[case] component_owned: bool,
+    #[case] expected_inspection: &str,
+    #[case] expected_review: &str,
+) {
+    let mut fs = InMemoryFileSystem::default();
+    fs.add_directory("/repo/.git");
+    let context = if component_owned {
+        include_str!("../testdata/ruby-context.toml")
+    } else {
+        "namespace = 'ROOT'\npurpose = 'Repository architecture.'\n[ruleset]\nincludes = ['CHEF_TESTING']\n"
+    };
+    assert_ok!(fs.write_string("/repo/context.toml", context));
+    if !component_owned {
+        assert_ok!(fs.write_string(
+            "/repo/.rapport/rules/chef/testing.toml",
+            include_str!("../testdata/ruby-ruleset.toml"),
+        ));
+    }
+
+    let (code, out, err) = run(&mut fs, &["context", "validate"]);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting valid Ruby standards: {err}"
+    );
+    assert_eq!(out, include_str!("../testdata/context-validate-one.md"));
+
+    let inspection_args = if component_owned {
+        vec!["context", "show", ".", "--declared"]
+    } else {
+        vec![
+            "ruleset",
+            "show",
+            "CHEF_TESTING",
+            "--rule",
+            "CHEF_TESTING_001",
+        ]
+    };
+    let (code, out, err) = run(&mut fs, &inspection_args);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting inspectable Ruby examples: {err}"
+    );
+    assert_eq!(
+        out, expected_inspection,
+        "expecting complete Ruby inspection output"
+    );
+
+    let (code, out, err) = run(&mut fs, &["review", "."]);
+    assert_eq!(
+        code,
+        ExitCode::SUCCESS,
+        "expecting Ruby review guidance: {err}"
+    );
+    assert_eq!(
+        out, expected_review,
+        "expecting complete Ruby review guidance"
+    );
+}

@@ -168,9 +168,10 @@ pub(super) fn path_for_repository_ruleset(root: &Utf8Path, ruleset: &Ruleset) ->
 #[cfg(test)]
 mod tests {
     use super::{parse_catalog, parse_repository, render};
-    use crate::shared_ruleset::Error;
+    use crate::shared_ruleset::{Error, domain::ExampleLanguage};
     use claims::{assert_err, assert_ok, assert_some};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     #[test]
     fn render_should_round_trip_a_complete_repository_ruleset() {
@@ -209,29 +210,33 @@ text = "let person_count = value;"
         );
     }
 
-    /// Justfile examples retain their language and complete recipe text through TOML persistence.
-    #[test]
-    fn render_should_round_trip_just_examples() {
-        let path = "/repo/.rapport/rules/build.toml".into();
-        let ruleset = assert_ok!(parse_repository(
-            include_str!("../testdata/just-ruleset.toml"),
-            path,
-        ));
+    /// Authored examples retain their language and complete code through TOML persistence.
+    #[rstest]
+    #[case::just(include_str!("../testdata/just-ruleset.toml"), ExampleLanguage::Just)]
+    #[case::ruby(include_str!("../testdata/ruby-ruleset.toml"), ExampleLanguage::Ruby)]
+    fn render_should_round_trip_supported_examples(
+        #[case] input: &str,
+        #[case] language: ExampleLanguage,
+    ) {
+        let path = "/repo/.rapport/rules/standards.toml".into();
+        let ruleset = assert_ok!(parse_repository(input, path));
         let rendered = assert_ok!(render(&ruleset));
         let round_trip = assert_ok!(parse_repository(&rendered, path));
         let rule = assert_some!(round_trip.rules().next());
 
         assert_eq!(
             rule.avoid().language(),
-            super::super::domain::ExampleLanguage::Just
+            language,
+            "expecting the authored avoid language"
         );
         assert_eq!(
             rule.prefer().language(),
-            super::super::domain::ExampleLanguage::Just
+            language,
+            "expecting the authored prefer language"
         );
         assert_eq!(
             round_trip, ruleset,
-            "expecting complete Justfile examples to survive persistence"
+            "expecting complete examples to survive persistence"
         );
     }
 
