@@ -1,5 +1,9 @@
 # Rapport
 
+> **Rapport is no longer developed here.** This repository is a snapshot as of October 15, 2026. I'm continuing to develop these ideas inside the People Work monorepo, where Rapport is part of the toolchain I use to build software with AI agents. The code stays here for reference, and you're welcome to read it, copy ideas, or fork it. If you have questions or want to talk about the approach, reach out at michael@hedge-ops.com.
+
+Already-published crates stay on crates.io; no final release is planned.
+
 Let your agents have rapport with your repository.
 
 Rapport helps you create structured architecture and review benchmarks for your
